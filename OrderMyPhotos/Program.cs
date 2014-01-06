@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.IO;
 using System.Linq;
 using System.Text;
+using System.Text.RegularExpressions;
 using System.Threading.Tasks;
 using ExifLib;
 
@@ -21,7 +22,8 @@ namespace OrderMyPhotos
 
         private static void OrganizePhotosInDirectory(DirectoryInfo dir, bool recursive = true)
         {
-            foreach (var file in dir.EnumerateFiles("*.jpg", recursive ? SearchOption.AllDirectories : SearchOption.TopDirectoryOnly))
+            var pattern = new Regex(@"\.jpg|\.jpeg|\.mp4");
+            foreach (var file in dir.EnumerateFiles("*", recursive ? SearchOption.AllDirectories : SearchOption.TopDirectoryOnly).Where(f => pattern.IsMatch(f.Extension)))
             {
                 var time = GetTakenTime(file);
                 var dateDir = GetAndCreateDateDirectory(dir, time);
@@ -38,16 +40,16 @@ namespace OrderMyPhotos
 
         private static string GenerateDestFileName(DirectoryInfo dateDir, DateTime time, FileInfo file, int count = 0)
         {
-            var name = Path.Combine(dateDir.FullName, GenerateFileNameFromTime(time, count));
+            var name = Path.Combine(dateDir.FullName, GenerateFileNameFromTime(time, count, file.Extension));
             if (file.FullName == name) return name;
             if (File.Exists(name))
                 name = GenerateDestFileName(dateDir, time, file, ++count);
             return name;
         }
 
-        private static string GenerateFileNameFromTime(DateTime time, int count)
+        private static string GenerateFileNameFromTime(DateTime time, int count, string extention)
         {
-            return time.ToString("yyyy-MM-dd HH.mm.ss") + (count == 0 ? "" : " (" + count + ")") + ".jpg";
+            return time.ToString("yyyy-MM-dd HH.mm.ss") + (count == 0 ? "" : " (" + count + ")") + extention;
         }
 
         private static DateTime GetTakenTime(FileInfo file)
