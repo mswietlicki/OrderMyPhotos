@@ -1,0 +1,106 @@
+# Decision log
+
+Short records of the choices that shape v2. New entries go at the bottom; supersede an entry rather than editing it. Mimir's own decisions (D1–D18) are in the [mimir repo](https://github.com/mswietlicki/mimir/blob/main/docs/decisions.md).
+
+## P1 — Restart as v2; v1's results are suggestions only (2026-11-02)
+
+v0 (C#) and v1 (PowerShell + Ollama) are frozen in `archive/` and under the tag `legacy-final`. What they did is recorded in [legacy.md](legacy.md). v2 starts from the design docs, in the same repository. **The user decided** that v2 redoes everything, including the 575 albums v1 already culled. v1's picks (`_archived/`, `burst_*.json`) and its captions are shown only as hints and used as a baseline, never as decisions.
+
+## P2 — Python on Mimir, not PowerShell on the workstation (2026-11-02)
+
+The models, both GPUs and the OneDrive mirror are all on Mimir, so the work goes where the data is. Python has the libraries (PyTorch CUDA/XPU, onnxruntime/OpenVINO, pillow-heif, rawpy, OpenCV, exiftool bindings). PowerShell's `System.Drawing` was Windows-only and ignored EXIF orientation. The code is one `omp` package with a CLI, run in containers like Mimir's other services.
+
+## P3 — Local only; no external API in the pipeline (2026-11-02)
+
+Hundreds of GB of private photos, GPS tracks and faces stay on Mimir. Every stage has a local model good enough for it ([models.md](models.md)). OpenRouter, or any external API, isn't part of the design. If one is ever wanted, it needs its own decision here and may only see text that contains no coordinates or names. Reverse geocoding is offline too (P12). v1 leaked GPS to Nominatim.
+
+## P4 — Changes go through reviewed plans; archive first, delete later (2026-11-02)
+
+The mirror stays read-only ([mimir D15](https://github.com/mswietlicki/mimir/blob/main/docs/decisions.md)). The pipeline produces a plan of hash-checked operations, the user approves it, and `mimir-onedrive apply` executes it as the `onedrive` user with server-side moves. Culled files move to a single archive root (`Archive/OrderMyPhotos/<original path>`), so albums stay clean and a restore is one move back. Deleting is a separate plan, and OneDrive's recycle bin adds 30 more days. v1 moved files inside the synced folder, with no review.
+
+## P5 — Metadata embedded in the files, written once (2026-11-02)
+
+OneDrive and Windows read only embedded metadata. Sidecars are seen only by Immich and digiKam. So titles, descriptions, tags, people and rating are written into the photo with exiftool (metadata segments only, no re-encode). Every field the different readers use is written ([design.md](design.md), S9). The write happens **once per file**, after captions and names are final, because each write means re-uploading the whole file (~0.5 TB in total). Videos are not re-uploaded just for metadata; they get the OneDrive item `description` and DB/Immich tags.
+
+## P6 — Immich for browsing, search and people; own UI only for culling, albums and the digest (2026-11-02)
+
+Immich (v3.3.x) already does what a photo UI needs:
+- multilingual CLIP search (SigLIP 2 / NLLB-SigLIP, ~83% recall on Polish queries);
+- face clustering and naming;
+- stacks, albums;
+- a full API.
+
+It reads embedded tags (`TagsList` / `HierarchicalSubject` / IPTC) and MWG face regions. Immich has no culling workflow, so a small FastAPI + HTMX app covers the review of picks, album proposals and the live-mode digest.
+
+Immich runs as a read-only external library on the **final** layout, because it treats a moved file as a new asset. Its ML runs on CUDA when the 4090 is free, or on OpenVINO on the B50, which needs testing because reports on Battlemage are mixed.
+
+*Fallback:* a People view in our own UI, if Immich doesn't fit.
+
+## P7 — GPU model servers under llama-swap; SQLite for state (2026-11-02)
+
+The vision models are served by our own containers, which llama-swap starts on demand with measured `capacities`, like the depth service ([mimir D10](https://github.com/mswietlicki/mimir/blob/main/docs/decisions.md)). The capacity router evicts Qwen3.8 when a bulk vision pass needs the 4090 and brings it back afterwards, with no manual coordination. Live mode stays on the B50 and the resident Qwen3.8, so it never evicts chat.
+
+State is one SQLite file (WAL). At ~200k photos, a few hundred thousand faces and a few embeddings each, it's 1–2 GB. Vector search is a brute-force matmul. Postgres or a vector database would add a service for no gain at this scale.
+
+## P8 — Photos from two-way sync folders are copied, not moved, until tested (2026-11-02)
+
+OneDrive camera upload only uploads, but Samsung Gallery's OneDrive sync may mirror cloud moves and deletes back to the phone. Until a throwaway photo has shown what happens, photos from such folders go into albums as copies, and nothing in them is archived. The test is in [plan.md](plan.md), Phase 5.
+
+## P9 — Video re-encoding is opt-in, VMAF-gated and reversible (2026-11-02)
+
+Re-encoding old high-bitrate video to AV1 (NVENC on the 4090) could free a large part of the 359 GiB, but it's lossy. It runs only on approved candidates. Each file must pass a VMAF threshold, metadata is carried over, and the original goes to the archive until the user deletes it. Savings and playback (OneDrive web, phone) are measured on the sample before anything runs at scale.
+
+## P10 — Small events don't become albums (2026-11-02, default — to confirm)
+
+An event with fewer than ~10 kept photos stays where it is, tagged with its event. One-off snapshots would otherwise turn into hundreds of tiny albums. The threshold is tuned against the existing 632 albums.
+
+## P11 — Ranking: features first, VLM for close calls, both orders, Bradley–Terry (2026-11-02)
+
+Cheap, explainable features decide most bursts: subject-masked sharpness, eyes/expression, Q-ReAlign, exposure. The VLM judges only the near-ties. Each pair is asked in both orders, the verdict is read from token logprobs, and the results are aggregated with Bradley–Terry. Position bias and asymmetry are documented problems of pairwise VLM judging, and v1's single-elimination tournament let one noisy call knock out the best frame. The feature weights are refit from the user's overrides, so the ranker learns the user's taste.
+
+## P12 — Offline reverse geocoding with Photon (2026-11-02)
+
+Photon 1.3 with the OpenStreetMap Europe dump, imported reverse-only (`-reverse-only -languages pl,en`), gives village/town, gmina, region and country names in Polish. It runs as a container on `127.0.0.1`. GeoNames `cities1000` (`reverse_geocoder`) covers the rest of the world. Nominatim was the heavier alternative. The GeoNames-only libraries miss Polish villages and return English admin names.
+
+## P13 — A "burst" is the same scene from the same place, over minutes (2026-11-02, user)
+
+In the user's sense, a burst is several shots of the same scene from the same place: retaken group photos, landscapes, a landmark shot again later. It is not the camera's burst mode, and the shots can be many minutes apart. So grouping has no short time cut-off, unlike v1, which compared only neighbours. Pairs inside one event and within a long window (default ~60 min) are compared. The similarity required grows with the time gap. GPS proximity, a geometric same-viewpoint check and overlapping face identities supply the extra evidence a long gap needs. Average linkage with a maximum diameter prevents chaining. Camera-burst metadata and naming only help: they seed groups and are never required.
+
+## P14 — Absolute quality floor: bad photos go even without a better twin (2026-11-02, user)
+
+v1 always kept at least one frame of every burst and never judged singles. v2 also archives photos that are bad on their own, whether that's a single or a burst whose every frame fails. Bad here means badly blurred, nearly black or white, accidental or failed. Cheap signals pre-screen, the expensive ones confirm, and the VLM gives reasons for borderline cases. The floor is calibrated per camera and era.
+
+Because a bad photo may be the only record of something, value protects it: the only photo of an event or day, a rarely seen named person, or an old photo. Protected photos carry a warning and are never bulk-approved. Floor rejects are always reviewed, and they have their own false-archive metric.
+
+## P15 — The repo stays public; photos purged from its history (2026-11-02, user)
+
+v1's commit "better ai and burst" had committed two personal photos (`scripts/20220331_182829.jpg` with GPS, `scripts/tmp.jpg`), `tmp.jpg_original`, and three `error_log_*.json` files holding base64 images. The user chose to keep the repo public and remove them. History was rewritten with `git filter-branch --index-filter 'git rm --cached …'` over `master`, `delete_logs` and the `legacy-final` tag. Then `master` and `delete_logs` were force-pushed with leases, which also moved PR #1's head ref. A local bundle of the pre-rewrite state was kept outside the repo.
+
+GitHub keeps serving the old commits by direct SHA until its garbage collection runs. Purging them sooner needs a GitHub Support request ("remove cached views"), quoting the old SHAs `911a5bd`, `e52ed56`, `ce2fea9` and `7e861bd`. The only fork (2018) predates these commits. The rule against it happening again is in `.gitignore`: no image, video, DB or log files are ever committed.
+
+## P16 — Reference photos get category albums, learned from the user's own folders (2026-11-02, user)
+
+Documents, receipts, serial-number labels, specs, screens, food and "to remember" shots aren't part of a trip or event. They go to category albums that extend the folders the user already keeps (`Pictures/Info/{Documents, Hardware, Paragony, Topos, …}`, `Pictures/Other/{Food, Meme, …}`). New categories (`Info/Dom`, `Info/Notatki`, `Info/Ekrany`, `Info/Zakupy`) follow the same layout.
+
+Classification is a linear probe on SigLIP 2 embeddings, trained on those already-sorted folders, so it uses the user's own idea of each category. Depth planarity and text density are extra features, and the VLM confirms.
+
+These kinds change other stages:
+- **Grouping:** text must match before two document-like photos can be a burst, so the pages of one document are never culled as duplicates.
+- **Quality floor:** reference photos are judged on legibility, not aesthetics.
+- **Captions:** a full transcription, searchable through FTS5.
+- **Sensitive documents** (IDs, cards, medical) are never moved automatically, and their numbers never go into file metadata.
+- **Ties:** `memory` wins, because moving a memory out of its trip album is the costly mistake.
+
+## Open — for the user
+
+1. **Language** of titles, descriptions and tags: English, Polish, or both. Tags could carry both; descriptions need one.
+2. **Archive and deletion:** is `Archive/OrderMyPhotos/` on OneDrive right, or should culled files leave OneDrive for a local archive on Mimir? How long before a delete?
+3. **Edited copies:** keep both the edit and the original (the default), or only the edit?
+4. **Live mode auto-apply:** which operation classes may skip review once proven safe (exact copies, metadata, bursts with a clear winner)?
+5. **Video re-encoding:** yes or no, and is AV1 acceptable for playback on your devices?
+6. **Folder policy:** confirm which top-level folders are `unsorted` (album candidates), `describe` or `ignore` (e.g. `Obrazy/Historia`, `Obrazy/Druk`, `Pictures/Private`, `Hosting`).
+7. ~~**The public GitHub repo** had personal photos in its history.~~ Resolved by P15.
+8. **Category albums:**
+   - Are the default folders and names right (design.md S3b)? Should new ones be Polish (`Info/Dom`, `Info/Notatki`) or English like `Info/Documents`?
+   - Should trip receipts and tickets go to Receipts (the default), or stay with the trip?
+   - Any retention rules (e.g. suggest archiving receipts after 3 years)?
