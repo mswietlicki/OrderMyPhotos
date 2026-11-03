@@ -22,6 +22,8 @@ class Config:
     policy_file: Path = field(default_factory=lambda: Path(os.environ.get("OMP_POLICY", PACKAGE_DIR / "policy.yaml")))
     workers: int = field(default_factory=lambda: int(os.environ.get("OMP_WORKERS", "20")))
     tz: str = field(default_factory=lambda: os.environ.get("OMP_TZ", "Europe/Warsaw"))
+    # The review bundle (S6) at the root of the library; for OneDrive it's built on Mimir and uploaded.
+    bundle: Path = field(default_factory=lambda: Path(os.environ.get("OMP_BUNDLE", "/library/OrderMyPhotos")))
 
     def preview(self, id_: str) -> Path:
         return self.cache / "preview" / id_[:2] / f"{id_}.jpg"

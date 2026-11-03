@@ -11,7 +11,7 @@ from .db import connect
 def main(argv=None):
     ap = argparse.ArgumentParser(prog="omp")
     ap.add_argument("stage", choices=["inventory", "previews", "signals", "faces", "depth", "group", "rank",
-                                      "judge", "captions", "report", "labels", "stats", "all"])
+                                      "judge", "captions", "report", "labels", "evaluate", "stats", "all"])
     ap.add_argument("--only", help="signals: comma list of dino,siglip,iqa")
     ap.add_argument("--force", action="store_true")
     ap.add_argument("--run", default=datetime.now().strftime("%Y%m%d-%H%M%S"))
@@ -60,6 +60,9 @@ def main(argv=None):
         elif stage == "labels":
             from . import report
             report.import_labels(cfg, con, args.file)
+        elif stage == "evaluate":
+            from . import evaluate
+            evaluate.run(cfg, con, args.run)
         elif stage == "stats":
             for r in con.execute("SELECT stage, items, round(seconds, 1) s, device FROM timing ORDER BY rowid"):
                 print(dict(r))

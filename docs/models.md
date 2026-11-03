@@ -8,12 +8,12 @@ The vision models ran on the B50 next to the always-on RAG models, one at a time
 
 | Model | Runtime | Speed (measured) | Notes |
 |---|---|---|---|
-| DINOv2-B, 448 px long side | B50, PyTorch 2.15 XPU, fp16 | **21 img/s** | Same shot 0.87–0.99 cosine, different scenes 0.0–0.55 |
-| SigLIP 2 So400m NaFlex, ≤ 576 patches | B50, fp16 | **13 img/s** | Zero-shot kinds: 31/33 agree with the VLM; both errors call a memory non-memory |
-| Q-ReAlign Mini 0.8B, 1024 px, quality + aesthetics | B50, bf16 | **2.4 img/s** (two passes) | Reference kernels (no `flash-linear-attention`). Drop the attention mask on XPU, see sample-runs.md |
-| InsightFace `buffalo_l`, det 1024 | CPU, onnxruntime 1.31 | **8.6 img/s** | insightface 2.1 |
-| Depth-Anything-V2-Small via llama-swap | B50 | **82 ms** per image (4.5 img/s end to end) | 768 px input |
-| Qwen3.8-27B judge: 2 images at ~1 MP, 1 output token | 4090 | **1.6 s** per call | ~2,000 prompt tokens. Logprobs work through llama-swap with MTP on |
+| DINOv2-B, 448 px long side | B50, PyTorch 2.15 XPU, fp16 | **21 img/s**, 34 img/s on 396 images (s2) | Same shot 0.87–0.99 cosine, different scenes 0.0–0.55 |
+| SigLIP 2 So400m NaFlex, ≤ 576 patches | B50, fp16 | **13 img/s**, 18 img/s on 396 (s2) | Zero-shot kinds: 31/33 agree with the VLM; both errors call a memory non-memory |
+| Q-ReAlign Mini 0.8B, 1024 px, quality + aesthetics | B50, bf16 | **2.4–2.7 img/s** (two passes) | Reference kernels (no `flash-linear-attention`). Drop the attention mask on XPU, see sample-runs.md |
+| InsightFace `buffalo_l`, det 1024 | CPU, onnxruntime 1.31 | **8.6 img/s** with few faces, 5.2 img/s with 537 faces in 396 (s2) | insightface 2.1 |
+| Depth-Anything-V2-Small via llama-swap | B50 | **82–104 ms** per image (4.5–5.9 img/s end to end) | 768 px input |
+| Qwen3.8-27B judge: 2 images at ~1 MP, 1 output token | 4090 | **1.4–1.6 s** per call | ~2,000 prompt tokens. Logprobs work through llama-swap with MTP on |
 | Qwen3.8-27B caption: 1 image, JSON schema, PL + EN | 4090 | **4.1 s** per photo | ~1,370 prompt + ~300 output tokens |
 | Qwen3-Embedding-4B, tag → vocabulary | B50 | (cheap) | Phrase-to-phrase per synonym, cosine ≥ 0.80 |
 

@@ -45,7 +45,8 @@ h2 small { color: var(--muted); font-weight: 400; }
 .burst .bh { font-size: 12px; color: var(--muted); margin: 0 2px 6px; display: flex; gap: 8px; flex-wrap: wrap; }
 .burst .bh b { color: var(--ink); }
 .burst .strip { display: flex; flex-wrap: wrap; gap: 8px; }
-.card { width: 200px; background: var(--panel); border: 3px solid var(--line); border-radius: 8px; overflow: hidden; outline: none; }
+.card { width: var(--card, 340px); background: var(--panel); border: 3px solid var(--line); border-radius: 8px; overflow: hidden; outline: none; }
+header input[type=range] { width: 120px; vertical-align: middle; }
 .single { border-radius: 8px; }
 .card.keep { border-color: var(--keep); }
 .card.archive { border-color: var(--archive); }
@@ -79,9 +80,18 @@ h2 small { color: var(--muted); font-weight: 400; }
 #lb aside ul { padding-left: 18px; margin: 4px 0; }
 #lb aside pre { white-space: pre-wrap; font-size: 12px; background: #111; padding: 6px; border-radius: 4px; }
 #lb aside button { background: #2c2c2a; border-color: #444; }
+#lb .strip { display: grid; grid-template-columns: repeat(auto-fill, minmax(104px, 1fr)); gap: 6px; margin: 6px 0 10px; }
+#lb .mini { border: 3px solid #555; border-radius: 6px; overflow: hidden; cursor: pointer; background: #000; }
+#lb .mini.keep { border-color: var(--keep); }
+#lb .mini.archive { border-color: var(--archive); }
+#lb .mini.bad { border-color: var(--bad); }
+#lb .mini:not(.confirmed) { border-style: dashed; }
+#lb .mini.here { outline: 3px solid #fff; outline-offset: 1px; }
+#lb .mini img { display: block; width: 100%; aspect-ratio: 4 / 3; object-fit: contain; }
+#lb .mini div { font-size: 11px; padding: 1px 4px; color: #ccc; display: flex; justify-content: space-between; }
 #lb .close { position: absolute; top: 8px; right: 12px; }
 @media (max-width: 700px) {
-  .card { width: calc(50vw - 30px); }
+  .card { width: min(var(--card, 340px), calc(100vw - 54px)); }
   #lb { flex-direction: column; }
   #lb aside { width: 100%; max-width: none; max-height: 45vh; }
   #lb img { max-height: 55vh; }
@@ -90,10 +100,13 @@ h2 small { color: var(--muted); font-weight: 400; }
 </head>
 <body>
 <header>
+  <a href="../index.html" title="all albums">← Albums</a>
   <h1 id="title">Review</h1>
   <span class="stats" id="stats"></span>
   <span class="spacer"></span>
+  <label title="thumbnail size">Size <input type="range" id="size" min="180" max="720" step="20"></label>
   <label>Show <select id="filter"><option value="all">all</option><option value="review">needs review</option><option value="archive">archive proposals</option><option value="open">not labelled yet</option></select></label>
+  <button id="trust" title="accept every proposal you haven't labelled">Trust automatic picks</button>
   <button id="imp">Load labels…</button><input type="file" id="impf" accept=".json" hidden>
   <button class="primary" id="exp">Export labels</button>
 </header>
@@ -104,12 +117,22 @@ h2 small { color: var(--muted); font-weight: 400; }
 <div id="lb"><div class="img"><img id="lbimg" alt=""></div><aside id="lbside"></aside><button class="close" id="lbx">✕ Esc</button></div>
 <script>
 const DATA = /*DATA*/null;
-const KEY = "omp-labels-" + DATA.run;
-let labels = {};
-try { labels = JSON.parse(localStorage.getItem(KEY) || "{}"); } catch (e) { labels = {}; }
-const save = () => { try { localStorage.setItem(KEY, JSON.stringify(labels)); } catch (e) {} render(); };
+const B = DATA.base || "";  // where t/ m/ p/ are, relative to this page
+const KEY = "omp-labels-" + DATA.run + "::" + DATA.album;
 const items = DATA.items;
 const byName = Object.fromEntries(items.map(x => [x.name, x]));
+let labels = {};
+try {
+  labels = JSON.parse(localStorage.getItem(KEY) || "null");
+  if (!labels) {  // labels made on the first, single-album page (key without the album) move here
+    const old = JSON.parse(localStorage.getItem("omp-labels-" + DATA.run) || "{}");
+    labels = Object.fromEntries(Object.entries(old).filter(([n]) => byName[n]));
+    // Otherwise start from the labels already imported into the DB (omp labels), e.g. for a new run.
+    if (!Object.keys(labels).length) labels = Object.assign({}, DATA.user_labels || {});
+    if (Object.keys(labels).length) localStorage.setItem(KEY, JSON.stringify(labels));
+  }
+} catch (e) { labels = Object.assign({}, DATA.user_labels || {}); }
+const save = () => { try { localStorage.setItem(KEY, JSON.stringify(labels)); } catch (e) {} render(); };
 const L = x => labels[x.name] || {};
 const verdictOf = x => L(x).verdict || x.verdict;
 const groupOf = x => (L(x).group !== undefined ? L(x).group : x.group);
@@ -136,6 +159,7 @@ function badges(x) {
   if (x.protected) b.push('<span class="b floor" title="' + esc(x.protected) + '">protected</span>');
   if ((x.cap && x.cap.purpose && x.cap.purpose !== "memory") || (!x.cap && x.f.purpose && x.f.purpose !== "memory"))
     b.push('<span class="b ref">' + esc((x.cap && x.cap.category !== "none" && x.cap.category) || (x.cap && x.cap.purpose) || x.f.purpose) + '</span>');
+  if (L(x).confirmed && L(x).verdict && L(x).verdict !== x.verdict) b.push('<span class="b rev" title="your label differs from the proposal">pipeline: ' + esc(x.verdict) + '</span>');
   if (x.v1) b.push('<span class="b" title="v1 burst culling">v1 ' + (x.v1 === "kept" ? "kept" : "archived") + '</span>');
   if (x.f.bt != null) b.push('<span class="b" title="VLM Bradley–Terry share">VLM ' + Math.round(x.f.bt * 100) + '%</span>');
   if (x.f.p_keep != null) b.push('<span class="b" title="VLM: worth keeping">keep? ' + Math.round(x.f.p_keep * 100) + '%</span>');
@@ -144,7 +168,7 @@ function badges(x) {
 function card(x) {
   const v = verdictOf(x), l = L(x);
   return `<div class="card ${v === "bad" ? "bad" : v} ${l.confirmed ? "confirmed" : ""}" data-n="${esc(x.name)}" tabindex="-1">
-    <img loading="lazy" src="t/${x.id}.jpg" alt="${esc(x.name)}">
+    <img loading="lazy" src="${B}t/${x.id}.jpg" alt="${esc(x.name)}">
     <div class="m"><div class="t"><span>${x.time}</span><span>${esc(x.name.replace(/\.[^.]+$/, "").slice(-6))}${x.v1_archived ? " ·_arch" : ""}</span></div>
     ${x.cap ? `<div class="cap" title="${esc(x.cap.title_pl)}">${esc(x.cap.title_pl)}</div>` : ""}
     <div class="badges">${badges(x)}</div>
@@ -200,18 +224,35 @@ function focusCur(scroll = true) {
   const el = document.querySelector(`.card[data-n="${CSS.escape(x.name)}"]`);
   if (el) { el.classList.add("cur"); if (scroll) el.scrollIntoView({block: "nearest", behavior: "smooth"}); }
 }
-function showLb() {
-  const x = order[cur]; if (!x) return;
+let lbItem = null;  // the photo in the open view; a click on a burst thumbnail can open one outside `order`
+function strip(x) {
+  // The photo's burst (as labelled now), or the photos around a single, to compare without closing the view.
+  const g = groupOf(x);
+  const i = items.indexOf(x);
+  const members = g ? items.filter(y => groupOf(y) === g) : items.slice(Math.max(0, i - 2), i + 3);
+  const head = g ? `Burst ${esc(g)} · ${members.length} photos` : "Single · the photos around it";
+  return `<div class="k">${head}</div><div class="strip">${members.map(y => {
+    const ly = L(y), vy = verdictOf(y);
+    return `<div class="mini ${vy} ${ly.confirmed ? "confirmed" : ""} ${y === x ? "here" : ""}" data-n="${esc(y.name)}" title="${esc(y.name)}">
+      <img src="${B}t/${y.id}.jpg" alt=""><div><span>${y.time}</span><span>${vy}</span></div></div>`;
+  }).join("")}</div>`;
+}
+function showLb(x = lbItem && lbOpen ? lbItem : order[cur]) {
+  if (!x) return;
+  lbItem = x;
   lbOpen = true;
   document.getElementById("lb").classList.add("open");
-  document.getElementById("lbimg").src = "p/" + x.id + ".jpg";
+  const im = document.getElementById("lbimg");
+  im.onerror = () => { im.onerror = null; im.src = B + "t/" + x.id + ".jpg"; };  // original not reachable: thumbnail
+  im.src = x.src;
   const c = x.cap, f = x.f, v = verdictOf(x);
   const num = (k, d = 2) => f[k] == null ? "–" : (+f[k]).toFixed(d);
   const cats = ["none", "documents", "receipts", "labels", "specs", "screens", "home", "to_remember", "maps_topos", "food", "shopping", "memes"];
   const curCat = L(x).category || (c && c.category) || "none";
   document.getElementById("lbside").innerHTML = `
     <h3>${esc(x.name)}</h3><div class="k">${x.date} ${x.time} · ${x.group ? "burst " + x.group + ", rank " + (x.rank + 1) : "single"} · ${x.tier}</div>
-    <p><button data-v="keep">Keep (k)</button> <button data-v="archive">Archive (a)</button> <button data-v="bad">Bad (b)</button> — now <b>${v}</b>${L(x).confirmed ? " ✓" : " (proposed)"}</p>
+    <p><button data-v="keep">Keep (k)</button> <button data-v="archive">Archive (a)</button> <button data-v="bad">Bad (b)</button> — now <b>${v}</b>${L(x).confirmed ? " ✓" : " (proposed)"}${L(x).confirmed && L(x).verdict !== x.verdict ? ` · pipeline: ${x.verdict}` : ""}</p>
+    ${strip(x)}
     <div class="k">Why</div><ul>${(x.reasons || []).map(r => "<li>" + esc(r) + "</li>").join("")}</ul>
     ${x.floor ? `<div class="k">Quality floor</div><ul>${x.floor.map(r => "<li>" + esc(r) + "</li>").join("")}</ul>` : ""}
     <div class="k">Signals</div><div>sharp ${num("sharp")} (vs best ${num("rel_sharp")}) · quality ${num("quality")} · aesthetics ${num("aesthetics")} · motion ${num("motion")} · faces ${f.faces ?? 0} · kind ${esc(f.purpose)} (${num("memory_p")})</div>
@@ -225,6 +266,11 @@ function showLb() {
     <p class="k">v1: ${x.v1 || "not in a v1 burst"}${x.v1_archived ? " (in _archived/)" : ""}</p>
     <p class="k">← → move · k a b set · Enter accept burst · Esc close</p>`;
   document.querySelectorAll("#lbside button[data-v]").forEach(b => b.onclick = () => setLabel(x, {verdict: b.dataset.v}));
+  document.querySelectorAll("#lbside .mini").forEach(m => m.onclick = () => {
+    const y = byName[m.dataset.n];
+    if (order.includes(y)) { cur = order.indexOf(y); focusCur(); }
+    showLb(y);
+  });
   document.getElementById("cat").onchange = e => setLabel(x, {category: e.target.value});
   document.getElementById("note").onchange = e => setLabel(x, {note: e.target.value});
 }
@@ -246,10 +292,15 @@ document.getElementById("list").addEventListener("change", e => {
 });
 document.addEventListener("keydown", e => {
   if (["INPUT", "SELECT", "TEXTAREA"].includes(document.activeElement.tagName)) { if (e.key === "Escape") document.activeElement.blur(); return; }
-  const x = order[cur]; if (!x) return;
+  const x = lbOpen && lbItem ? lbItem : order[cur]; if (!x) return;
   const k = e.key;
-  if (k === "ArrowRight") { cur = Math.min(cur + 1, order.length - 1); focusCur(); if (lbOpen) showLb(); }
-  else if (k === "ArrowLeft") { cur = Math.max(cur - 1, 0); focusCur(); if (lbOpen) showLb(); }
+  const step = d => {
+    const i = order.indexOf(x);
+    cur = Math.min(Math.max((i < 0 ? cur : i) + d, 0), order.length - 1);
+    focusCur(); if (lbOpen) showLb(order[cur]);
+  };
+  if (k === "ArrowRight") step(1);
+  else if (k === "ArrowLeft") step(-1);
   else if (k === "k") setLabel(x, {verdict: "keep"});
   else if (k === "a") setLabel(x, {verdict: "archive"});
   else if (k === "b") setLabel(x, {verdict: "bad"});
@@ -263,9 +314,20 @@ document.addEventListener("keydown", e => {
 });
 document.getElementById("lbx").onclick = closeLb;
 document.getElementById("filter").onchange = render;
+const sizeEl = document.getElementById("size");
+const applySize = v => document.documentElement.style.setProperty("--card", v + "px");
+let size = 340;
+try { size = +localStorage.getItem("omp-card-size") || 340; } catch (e) {}
+sizeEl.value = size; applySize(size);
+sizeEl.oninput = e => { applySize(e.target.value); try { localStorage.setItem("omp-card-size", e.target.value); } catch (err) {} };
+document.getElementById("trust").onclick = () => {
+  items.forEach(y => { if (!L(y).confirmed) labels[y.name] = {group: y.group, verdict: y.verdict, confirmed: true, trusted: true}; });
+  try { localStorage.setItem(KEY + "::trusted", "true"); } catch (e) {}
+  save();
+};
 document.getElementById("exp").onclick = () => {
   const blob = new Blob([JSON.stringify({run: DATA.run, album: DATA.album, exported: new Date().toISOString(), labels}, null, 1)], {type: "application/json"});
-  const a = document.createElement("a"); a.href = URL.createObjectURL(blob); a.download = `labels-${DATA.run}.json`; a.click();
+  const a = document.createElement("a"); a.href = URL.createObjectURL(blob); a.download = `labels-${DATA.run}-${DATA.album.split("/").pop()}.json`; a.click();
 };
 document.getElementById("imp").onclick = () => document.getElementById("impf").click();
 document.getElementById("impf").onchange = async e => {

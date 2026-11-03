@@ -55,9 +55,64 @@ Each run of the pipeline on a sample, with measured numbers. The sample's labels
 - SigLIP: `logit_scale` and `logit_bias` needed `detach()` outside `inference_mode`.
 - v1's captions turned out to cover about 590 albums, not 5 (legacy.md is corrected). Inventory now marks their fields as machine-written.
 
-### Next
+### Measured against the user's labels (2026-11-03)
 
-1. **You label the sample** on the review page (`work/sample-s1/index.html` on the workstation). Fix the bursts, mark the frames to keep, and mark the photos that are bad on their own, then export the labels. `omp labels --file labels-s1.json` imports them.
-2. Calibrate against the labels: the similarity-over-time curve, the diameter, the GPS and viewpoint rules, the keep margin, and the floor thresholds. Report pairwise precision and recall for short and long gaps, and the false-archive rate.
-3. A second sample with people close up (group shots, blinks), plus a slice of the unsorted phone stream with videos.
-4. Bulk setup: vision on the 4090 through a llama-swap entry, the `qwen3.8-27b-batch` variant, and faster previews.
+The user labelled 70 of the 71 photos (`omp labels`, then `omp evaluate --run s1`):
+
+| | s1 | Notes |
+|---|---|---|
+| Burst pairs < 60 s apart | precision **0.95**, recall **1.00** | 3 wrong pairs: one frame added to a neighbouring burst, and one pair 27 s apart at DINOv2 0.94 that the user sees as two shots to keep |
+| Burst pairs ≥ 60 s apart | 2 predicted, **both wrong** | The 13-minute burst: the user split all three frames. GPS (5 m) and SIFT agreed it's the same place, but to the user they are three different photos |
+| Best frame is one the user keeps | **18 / 20** bursts | |
+| **False-archive rate** | **26 %** (11 of 42 keeps) | Far from the ~0 target. 3 come from grouping errors and 1 from a whole burst archived by the floor. The other **7 are extra frames the user keeps**: they kept 28 of 54 burst photos, the run 21 |
+| False keeps | 2 | |
+
+What the labels show:
+- **The user keeps visibly different frames,** with notes like "I like the vista on the mountains here", "the subject is facing better" and "I like the motion". Every frame they archived inside a burst was either near-identical to the kept one (DINOv2 ≥ 0.94) or clearly softer. The extra frames they kept were 0.71–0.93 similar and about as sharp. The old rule (similarity < 0.90, score within 0.12, at most a third of the burst) archived them.
+- **The zero-shot "looks accidental" signal is unreliable.** It flagged 5 frames, and the user kept 3.
+- **The time-dependent similarity threshold is about right for short gaps.** The true pairs closest to it sit at +0.003; the false ones run from +0.06 up to +0.20, so no threshold separates them. For long gaps the user's idea is stricter than "same place, similar look". One album isn't enough to fit that.
+
+## Run s2: rules from s1's labels, four more albums (2026-11-03)
+
+**Changes:**
+- An extra frame in a burst is kept when its DINOv2 similarity to every kept frame is < 0.95 and it isn't clearly worse (sharpness within 0.25 log units of the best, or score within 0.08). There's no longer a cap on how many frames are kept.
+- Zero-shot "accidental" only sends a photo to the VLM's worth-keeping check. It no longer counts toward the floor, and a single only suspected of it is archived only on a clear VLM "no" (P(keep) < 0.2).
+- The review page has one page per album plus an index of albums, bigger cards with a size slider, and the open view shows the burst's thumbnails (or a single's neighbours) to compare against. Labels already imported seed the pages of later runs.
+
+**On s1's album** (the rules were tuned on it, so this is optimistic): false-archive rate **26 % → 7 %** (3 of 42; all three are preference calls between similar frames), false keeps 2 → 9, top-1 unchanged at 18/20. Grouping is unchanged.
+
+**New albums,** chosen for variety and to be labelled the same way. No people or album names here; the DB has the paths.
+- A 2009 town trip on an old compact camera (51 photos, low resolution): the floor per camera and era, landmarks.
+- A 2015 wedding (87 photos, phone): faces close up, group shots, blinks, low light.
+- A 2021 mountain trip shot with two cameras (136 photos, a phone and a compact): clock offset between devices, long-gap landmark bursts. Two of its photos are also stored in `Pictures/People` and `Pictures/Places`, which tests copies across folders.
+- A 2022 family Easter (121 photos, phone): people indoors, food.
+
+The first OneDrive sync was still running at the time, so the albums were picked from those already in the mirror.
+
+**Results** (467 photos; there are no labels yet for the four new albums, so these are only the proposals):
+
+| Album | Photos | In bursts | Keep / archive | Below the floor | Faces |
+|---|---|---|---|---|---|
+| 2009 town trip (HTC phone, 2 MP) | 51 | 26 | 38 / 13 | 5 | 35 |
+| 2015 wedding (no camera EXIF) | 87 | 75 | 34 / 53 | 16 | 175 |
+| 2021 mountains (phone + compact) | 135 | 101 | 78 / 57 | 3 | 50 |
+| 2022 ski touring (s1's album) | 71 | 60 | 48 / 23 | 1 | 3 |
+| 2022 family Easter (newer phone) | 121 | 111 | 66 / 55 | 3 | 181 |
+
+- 106 bursts in 23 events. The biggest is 15 photos, which needs a look: party and family scenes are the hardest case for "same scene".
+- The quality floor is calibrated per camera. The five cameras' median sharpness ranges from 7.8 (the wedding's camera without EXIF) to 10.1, so an old phone isn't judged against a new one.
+- The VLM judge: 59 bursts and 84 worth-keeping checks, 249 calls at 1.4 s. Captions: 217 photos at 4.0 s.
+- Speeds at this size, on the B50: DINOv2 34 img/s, SigLIP 2 18 img/s, Q-ReAlign 2.7 img/s, depth 104 ms per image, faces 5.2 img/s on the CPU (537 faces), previews 7.6 photos/s.
+
+**Problems found and fixed:**
+- **Camera-burst frames were called copies.** The wedding camera writes several frames in the same second (`…_180800.jpg`, `…_180759_1.jpg`), and four such pairs passed the near-copy test (same time, near-identical pixels). They were archived as "exact copy" with the `auto` tier, a false-archive risk. Two files in the same folder are now never copies: they're a burst. A copy left over is `review`, never `auto`.
+- A face box reaching past the frame edge crashed the ranker on an empty crop. Boxes are clamped now.
+- `docker compose run` in a script read the rest of the script from stdin, so only the first stage ran. Jobs now use `run -T … < /dev/null`.
+
+**Not handled yet:** an exact copy stored in two folders is one photo with one verdict, so it shows up on both albums' pages with the same proposal. Per-file decisions for exact copies (keep the curated location, archive the other) are S1's job, still to build.
+
+**Review bundle:** written at the library root (`OrderMyPhotos/`, 24 MB for 468 photos), and copied with the photos to `work/sample-library/` on the workstation, the way a drive would be handed over. Tested in a browser:
+- the index lists 7 albums, all ready;
+- the album pages start from the imported labels;
+- the open view shows the original at full resolution through its relative path;
+- trust from a page and from the index works, and "Export all decisions" collects every album.

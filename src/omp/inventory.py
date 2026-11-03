@@ -60,6 +60,8 @@ def walk(cfg: Config):
     media, context, v1 = [], [], []
     for dirpath, dirnames, filenames in os.walk(cfg.root):
         dirnames[:] = sorted(d for d in dirnames if not d.startswith("."))
+        if Path(dirpath) == cfg.root:  # the review bundle is ours, not photos
+            dirnames[:] = [d for d in dirnames if d != cfg.bundle.name]
         for name in sorted(filenames):
             full = Path(dirpath) / name
             rel = full.relative_to(cfg.root).as_posix()

@@ -21,7 +21,8 @@ Phased so that each step is measured on the sample album before it touches the l
 - [x] Mimir: `/srv/mimir/data/photos`, a `/srv/mimir/cache` subvolume (no snapshots) with `photos/`, and `stacks/photos/` (compose + `sample.env`) in the mimir repo
 - [x] S0–S2 on the sample: inventory, QuickXorHash (matches OneDrive), capture times and their sources, v1 traces, previews and the full-resolution sharpness grid. 5.9 photos/s on 20 cores, too slow for the library (~8 h): to tune
 - [x] A minimal review page to **label the sample**: a static `index.html` per run with thumbnails and previews (`omp report`). It fixes bursts, verdicts (keep / archive / bad on its own) and reference categories, with keyboard shortcuts. Labels are exported as JSON and imported with `omp labels`
-- [ ] **You:** label the sample on that page and export the labels
+- [x] **You:** label the sample on that page and export the labels (70/71 on 2026-11-03; `omp evaluate` measures a run against them)
+- [ ] **You:** label the four more albums of run s2 (2009 compact, 2015 wedding, 2021 two-camera trip, 2022 family), so the rules are fitted on more than one album
 
 ## Phase 2 — Grouping and picking (sample)
 
@@ -60,6 +61,16 @@ Run s1 (2026-11-03) did a first pass of every stage below on the B50 and the res
 - [ ] What shows up where: embedded title, description and keywords in OneDrive web/mobile search, Windows Explorer and Immich; the Graph item `description`
 - [ ] **Two-way sync test** (P8): move and delete a throwaway photo in the cloud copy of the Samsung Gallery folder, and watch the phone
 - [ ] The archive layout, plus restore as one move back
+
+## Phase 5b — Review bundle and other libraries (design.md S6, decisions.md P21)
+
+- [x] `omp report` writes the bundle at the library root: `OrderMyPhotos/index.html` with every album ready or still processing, one page per ready album, 512 px thumbnails, originals shown through relative paths, "Trust automatic picks" per album, decisions exported per album or all at once (`omp labels` imports both)
+- [ ] Apply in the page (File System Access API, Chrome/Edge): pick the storage root, check `library.json`, hash-check each file, move it to `Archive/OrderMyPhotos/<path>`, log it in `decisions/<album>.json`, restore from the log. Tested on a scratch copy first
+- [ ] Delete in the page: after apply, delete the reviewed archived photos once the reviewer confirms, seeing the count, size and list; hash-checked again; logged
+- [ ] The page saves decisions straight into `decisions/` (File System Access API) instead of a download; `omp` reads that folder back as labels on the next run
+- [ ] Libraries: a `library.json` ID, a DB and cache per library on Mimir, external drives and shares mounted read-only (mimir side), album-by-album processing order, per-album readiness
+- [ ] OneDrive: `mimir-onedrive` uploads the bundle album by album as albums are ready; the pull brings decisions back; `mimir-onedrive apply` executes moves and confirmed deletes
+- [ ] Unsorted folders in the bundle (S11): one review unit per proposed album, not one page per folder. Editable name and date, merge / split / add to an existing album / leave in place; apply creates the album folder and moves the kept photos. First on a slice of `Obrazy/Samsung Gallery` (a few weeks, a few hundred photos), measured against the existing albums of the same weeks
 
 ## Phase 6 — Videos (sample)
 

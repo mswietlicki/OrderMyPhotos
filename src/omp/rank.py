@@ -20,8 +20,12 @@ VERSION = "rank@1"
 W_SHARP, W_QUALITY, W_AESTH, W_FACE = 0.35, 0.30, 0.25, 0.10
 HARD_SHARP = -1.0        # log Tenengrad vs the group's best: 37 % of its gradient energy, ~60 % of the edge strength
 CLOSE = 0.08             # contenders within this score of the best go to the VLM judge
-KEEP_MARGIN = 0.12       # extra frames are kept only within this of the best ...
-KEEP_DIVERSE = 0.90      # ... and only if they look different (DINOv2 cosine to every kept frame below this)
+# An extra frame is kept when it looks different from every kept frame and isn't clearly worse: on the
+# sample (run s1 labels) every frame the user archived was either near-identical (DINOv2 >= 0.94) or
+# clearly softer, while the extra frames they kept (another moment, a vista) were 0.71-0.93 and as sharp.
+KEEP_DIVERSE = 0.95      # DINOv2 cosine to every kept frame must be below this
+KEEP_SOFT = -0.25        # ... and its sharpness within this of the best (log Tenengrad) ...
+KEEP_CLOSE = 0.08        # ... or its score within this of the best
 FLOOR_SHARP = 2.5        # log Tenengrad below the camera's median p90 (≈ e^-2.5 = 8 % of its energy)
 FLOOR_QUALITY = 0.60
 FLOOR_AESTH = 0.40
@@ -67,9 +71,10 @@ def photo_features(cfg, con):
             vals = []
             gh, gw = ten.shape
             for f in fs:
-                x0, y0, x1, y1 = json.loads(f["box"])
-                sub = ten[int(y0 * gh):max(int(y0 * gh) + 1, math.ceil(y1 * gh)),
-                          int(x0 * gw):max(int(x0 * gw) + 1, math.ceil(x1 * gw))]
+                # Detector boxes can reach past the frame: clamp, and take at least one tile.
+                x0, y0, x1, y1 = (min(max(v, 0.0), 1.0) for v in json.loads(f["box"]))
+                r0, c0 = min(int(y0 * gh), gh - 1), min(int(x0 * gw), gw - 1)
+                sub = ten[r0:max(r0 + 1, math.ceil(y1 * gh)), c0:max(c0 + 1, math.ceil(x1 * gw))]
                 vals.append(float(sub.max()))
             face_sharp = float(np.mean(vals))
         sd = json.loads(r["data"])
@@ -129,9 +134,13 @@ def floor_check(x, camera_median):
         why.append("nearly white")
     if x["quality"] is not None and x["quality"] < FLOOR_QUALITY and x["aesthetics"] < FLOOR_AESTH:
         why.append(f"low technical and aesthetic quality ({x['quality']:.2f} / {x['aesthetics']:.2f})")
-    if x["purpose"] == "junk":
-        why.append("looks accidental")
     return why
+
+
+def suspect(x) -> str | None:
+    """A hint that isn't reliable enough to archive on (zero-shot SigLIP called 3 kept photos in 5
+    "accidental" on the sample): it only sends the photo to the VLM's worth-keeping check."""
+    return "zero-shot: looks accidental" if x["purpose"] == "junk" else None
 
 
 def run(cfg: Config, con, run_id: str):
@@ -175,9 +184,11 @@ def run(cfg: Config, con, run_id: str):
         best = order[0]
         kept = [best]
         for i in order[1:]:
-            if sc[i]["hard"] or sc[i]["score"] < sc[best]["score"] - KEEP_MARGIN:
+            if sc[i]["hard"]:
                 continue
-            if all(float(dino[i] @ dino[k]) < KEEP_DIVERSE for k in kept) and len(kept) < max(1, math.ceil(len(members) / 3)):
+            similar = any(float(dino[i] @ dino[k]) >= KEEP_DIVERSE for k in kept)
+            worse = sc[i]["rel_sharp"] < KEEP_SOFT and sc[i]["score"] < sc[best]["score"] - KEEP_CLOSE
+            if not similar and not worse:
                 kept.append(i)
         close = [i for i in order[1:] if sc[best]["score"] - sc[i]["score"] <= CLOSE and not sc[i]["hard"]]
         best_floor = floor_check(feats[best], cam_median[feats[best]["camera"]])
@@ -190,7 +201,7 @@ def run(cfg: Config, con, run_id: str):
             if i == best:
                 reasons.insert(0, "best of burst" if not close else f"best of burst, close call with {len(close)} other(s)")
             elif i in kept:
-                reasons.insert(0, "also kept: close in quality and visibly different")
+                reasons.insert(0, "also kept: visibly different and not clearly worse")
             elif not reasons:
                 reasons.append(f"weaker than the best frame (score {sc[i]['score'] - sc[best]['score']:+.2f})")
             if whole_bad:
@@ -198,21 +209,24 @@ def run(cfg: Config, con, run_id: str):
             tier = "auto" if (not close and cohesion is not None and cohesion > 0.1 and not floor) else "review"
             decide(i, gid, "keep" if keep else "archive", rank, sc[i]["score"], reasons, tier, floor,
                    protection(x) if not keep else None,
-                   {"judge": i in close or (i == best and bool(close)), "rel_sharp": round(sc[i]["rel_sharp"], 3)})
+                   {"judge": i in close or (i == best and bool(close)), "rel_sharp": round(sc[i]["rel_sharp"], 3),
+                    "suspect": suspect(x)})
 
     for id_, x in feats.items():
         if id_ in in_burst:
             continue
         if id_ in copies:
-            decide(id_, None, "archive", 0, 0.0, ["exact copy of another file"], "auto")
+            decide(id_, None, "archive", 0, 0.0, ["a copy of the same photo in another folder"], "review")
             continue
         floor = floor_check(x, cam_median[x["camera"]])
         prot = protection(x)
+        hint = suspect(x)
         if floor and not prot:
-            decide(id_, None, "archive", 0, 0.0, ["bad on its own"] + floor, "review", floor, None, {"floor_vlm": True})
+            decide(id_, None, "archive", 0, 0.0, ["bad on its own"] + floor, "review", floor, None,
+                   {"floor_vlm": True, "suspect": hint})
         else:
-            decide(id_, None, "keep", 0, 0.0, ["single"] + (floor or []), "auto" if not floor else "review",
-                   floor or None, prot, {"floor_vlm": bool(floor)})
+            decide(id_, None, "keep", 0, 0.0, ["single"] + (floor or []), "auto" if not (floor or hint) else "review",
+                   floor or None, prot, {"floor_vlm": bool(floor), "suspect": hint})
     con.commit()
     dt = time.perf_counter() - t0
     log_timing(con, "rank", run_id, len(feats), dt, "cpu")

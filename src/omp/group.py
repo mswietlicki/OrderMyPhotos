@@ -131,6 +131,8 @@ def run(cfg: Config, con, run_id: str):
         for b in photos[i + 1:]:
             if b["taken_ts"] - a["taken_ts"] > 0.01:  # a copy keeps the capture time exactly
                 break
+            if a["album"] == b["album"]:
+                continue  # two files of one folder with the same second are a camera burst, not a copy
             ph = bin(int(phash[a["id"]]["phash"], 16) ^ int(phash[b["id"]]["phash"], 16)).count("1")
             if float(dino[a["id"]] @ dino[b["id"]]) >= COPY_SIM and ph <= COPY_PHASH:
                 add_group("copy", [a["id"], b["id"]], None, {"phash": ph})

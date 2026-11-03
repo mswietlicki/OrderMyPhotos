@@ -252,12 +252,45 @@ For each burst:
 
 - *v1:* single-elimination tournament at 512 px, one order only, "A wins" on error, keep count fixed by group size, and never fewer than one frame per burst. Singles were never judged.
 
-### S6 Review (web UI)
+### S6 Review: a bundle at the root of the storage
 
-- A small FastAPI + HTMX app on Mimir (`127.0.0.1`, published on the tailnet with Tailscale Serve).
+The pipeline doesn't only run on OneDrive. It also runs on **external drives** plugged into Mimir and on **network shares**. Whoever reviews may be someone else, on their own computer. So the review tool isn't a server. It's a **review bundle**, a folder written at the root of each library that travels with the photos (user requirement, 2026-11-03; decisions.md P21).
+
+**Libraries.** A library is a storage root (the OneDrive mirror, a drive mounted under `/mnt`, an SMB/NFS share), always mounted **read-only** for processing. Each has its own DB and cache on Mimir (`/srv/mimir/data/photos/<library>/`, `/srv/mimir/cache/photos/<library>/`) and an ID in `OrderMyPhotos/library.json`, so the drive is recognized when it comes back. Curated folders are processed **album by album**, so albums finish one after another instead of all at the end.
+
+**Bundle layout** (inventory never treats it as photos):
+
+```
+<root>/OrderMyPhotos/
+  index.html               every album: ready / processing (n of m) / reviewed / trusted / applied
+  albums/<album>.html      one review page per album that's ready
+  t/<id>.jpg               512 px thumbnails: the only copies of the photos (~45 KB each, ~8 GB for 175k)
+  p/<id>.jpg               1536 px previews, only for formats a browser can't show (HEIC, RAW, MPO)
+  decisions/<album>.json   what the reviewer decided and what was applied
+  library.json, README.txt
+```
+
+The open view loads the **original file through its relative path** (`../../<album>/<file>`), so the bundle stays small and the reviewer sees full resolution. Browsers apply the EXIF orientation themselves. Nothing is loaded from the internet. The bundle holds thumbnails, captions and names derived from the photos, and it sits on the same storage as the photos, so it reaches nobody new. Sensitive numbers are never in it.
+
+**Reviewing.** Per album, the reviewer either labels it (keep / archive / bad, fix bursts, categories) or **trusts the automatic picks**, which accepts every proposal of that album as it stands. Trusting works from the index too, album by album. Whatever is decided is saved in `decisions/<album>.json`. The next run on Mimir reads those files back as labels, which train the thresholds and the ranker.
+
+**Applying on an external drive or share** happens on the reviewer's computer, in the page. Chrome and Edge allow it through the File System Access API; in Firefox and Safari the page can review and export but not apply.
+1. The reviewer picks the storage root, and the page checks `library.json`.
+2. Before each photo is archived, the page checks it is still the file that was reviewed (size + QuickXorHash, computed in the browser).
+3. The page moves it to `<root>/Archive/OrderMyPhotos/<original path>` and logs the op in the album's decisions file.
+
+**Deleting** is the last step, also in the page (user requirement, 2026-11-03). Once an album is applied, the page offers to delete its reviewed archived photos, and does it only after the reviewer confirms. The confirmation shows the number of files, their total size and the list, with thumbnails. Only photos that went through review or an explicit trust are eligible, and each is hash-checked again before it's deleted. Until then they sit in `Archive/OrderMyPhotos/`, where a restore is one move back from the log. The decisions file records what was deleted and when.
+
+**Applying on OneDrive** stays on Mimir (S9). The mirror is read-only, so Mimir **uploads the bundle into OneDrive** (`OrderMyPhotos/` at the drive root, through `mimir-onedrive`), album by album **as each album is ready**, while the rest is still processing. The reviewer opens it from their synced OneDrive folder; Files On-Demand downloads an original when it's viewed. The page writes the decisions into `OrderMyPhotos/decisions/`, OneDrive syncs them up, and Mimir picks them up on the next pull. It applies them with `mimir-onedrive apply`: server-side moves, hash-checked and logged. The reviewer's PC doesn't move the files itself; that would also work through the sync client, but it would bypass the hash checks and the op log. Deleting works the same way: the reviewer confirms in the page, the page writes a delete request into the decisions file, and Mimir deletes those files from the archive, after which OneDrive's recycle bin keeps them another 30 days.
+
+**An album is ready** when all its files are in the library (for OneDrive: synced, with nothing pending for it), and every stage up to captions is done for its photos. Then its page and thumbnails are written, and uploaded for OneDrive. The index shows the other albums as processing.
+
+**Later, a server view:** the FastAPI + HTMX app on Mimir (`127.0.0.1`, Tailscale Serve) for what doesn't fit in a static page: the Tags and Albums views, and the daily digest of live mode (S10). It reads and writes the same decisions files.
+
+The page itself:
 - The album view shows each burst as a filmstrip with the picks highlighted and badges: blur, eyes closed, below the floor, v1 pick, confidence. Below the bursts comes a **"bad on their own"** strip: floor rejects with their reasons, and a warning on value-protected ones ("only photo of this event").
-- Keyboard-driven: ←/→, `k` keep, `a` archive, `Enter` accept the group. Zoom shows full-resolution face and focus crops.
-- Approving an album marks its decisions ready for the plan.
+- Keyboard-driven: ←/→, `k` keep, `a` archive, `b` bad on its own, `Enter` accept the group. The open view shows the photo at full resolution beside the thumbnails of its burst (or a single's neighbours), its reasons and its caption.
+- Approving an album, by labelling or trusting it, marks its decisions ready for the plan.
 - Every override is stored as a label, and the labels train the S5 ranker.
 - The same app has a **Tags** view (vocabulary candidates), an **Albums** view (event album proposals, plus reference photos routed to category albums, with the probe's and the VLM's verdicts) and the **daily digest** for live mode (S10).
 - **Immich** ([decisions.md](decisions.md) P6) is the browsing, search and **people** UI. It runs as a read-only external library on the *final* layout, after the culling moves. Immich treats a moved file as a new asset, so pointing it at the library before then would waste work. Our own UI is only for what Immich has no workflow for: culling, album proposals and the digest.
@@ -366,7 +399,15 @@ There are two kinds: **event albums** for memories, described here, and **catego
   - A text-only LLM call writes the name in Polish from the places, named people, holidays and the event's captions. A few dozen of the user's 632 album names serve as style examples.
   - Events below a minimum size (e.g. 10 kept photos) don't get an album. They stay in place, tagged with their event (P10).
 - **Ground truth for free:** the 632 existing albums. Running the segmenter over their photos, mixed into one stream, shows how well it reproduces the user's album boundaries (boundary F1, adjusted Rand index) before it proposes anything new.
-- **Review and apply:** the Albums view lets the user rename, merge, split and approve each proposal. Approved albums become `move` ops into `Pictures/Albums/<year>/<name>/`, or `copy` ops for photos from two-way sync folders (P8). Immich albums can follow later, through its API.
+- **Review and apply, in the bundle (S6):** a folder of thousands of unsorted photos is never one review page. Each **proposed album** is its own unit in the bundle's index, next to the existing albums, marked as a proposal: "proposed: `<YYYY-MM-DD> <name>` · 86 photos · from `Obrazy/Samsung Gallery`". Its page is the same review page (bursts, keep / archive / bad, trust), plus:
+  - the proposed name and date, editable;
+  - "merge with the previous / next proposal" and "split here" at a photo;
+  - "add to the existing album …" when it overlaps one;
+  - "leave these photos where they are".
+
+  Small events that don't get an album, and the photos the reviewer leaves out, stay in the folder.
+- **Apply:** an approved proposal creates the album folder and moves its kept photos into `Pictures/Albums/<year>/<name>/`, while its culled photos go to the archive like any other. Reference photos go to their category albums the same way. On an external drive or share the page does this itself, like the other moves. On OneDrive `mimir-onedrive apply` does it, with `copy` instead of `move` for photos from two-way sync folders (P8). Immich albums can follow later, through its API.
+- **Progressive:** a proposal is ready when its event is closed (no photos for a while, or the next event has started) and its photos are processed. The folder is processed from the oldest photo onwards, so review can start long before a folder of 43k photos is done.
 
 ### S12 Videos
 

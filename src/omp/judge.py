@@ -15,6 +15,7 @@ from .vlm import VLM, image_part
 
 TIE = 0.15           # |P(a better) - 0.5| below this is a tie: the feature ranking stands
 FLOOR_KEEP = 0.5     # P("yes, keep") needed to overrule the quality floor
+SUSPECT_KEEP = 0.2   # a photo only suspected (zero-shot "accidental") is archived only below this
 MAX_CONTENDERS = 4
 
 SYSTEM = ("You help cull a private photo library. You look at photos critically, like an experienced "
@@ -74,7 +75,7 @@ def run(cfg: Config, con, run_id: str):
         d["reasons"] = json.loads(d["reasons"])
 
     # 1. Floor candidates: ask whether each is worth keeping.
-    floor_ids = [i for i, d in dec.items() if d["floor"]]
+    floor_ids = [i for i, d in dec.items() if d["floor"] or d["features"].get("suspect")]
     p_keep = {}
     for i in floor_ids:
         reference = dec[i]["features"].get("purpose") in ("reference", "media")
@@ -147,7 +148,14 @@ def run(cfg: Config, con, run_id: str):
         if i not in p_keep:
             continue
         d["features"]["p_keep"] = round(p_keep[i], 3)
-        if d["gid"] is None:
+        if d["gid"] is None and not d["floor"]:  # only suspected: archive on a clear "no" only
+            if p_keep[i] < SUSPECT_KEEP and not d["protected"]:
+                d["verdict"] = "archive"
+                d["reasons"] = ["bad on its own"] + d["reasons"][1:] + [f"VLM: not worth keeping ({1 - p_keep[i]:.0%})"]
+            else:
+                d["reasons"].append(f"VLM: worth keeping ({p_keep[i]:.0%})")
+            d["tier"] = "review"
+        elif d["gid"] is None:
             if p_keep[i] >= FLOOR_KEEP:
                 d["verdict"] = "keep"
                 d["reasons"].append(f"VLM: worth keeping ({p_keep[i]:.0%})")

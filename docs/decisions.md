@@ -105,6 +105,26 @@ The VLM's free tags are matched to `vocab.yaml` by Qwen3-Embedding cosine agains
 
 For labelling samples, `omp report` writes a self-contained folder: `index.html`, thumbnails and previews, and nothing loaded from the internet. It's copied to the workstation and opened there, which needs no server, no Serve port and no login while the pipeline is still changing every day. Labels live in the browser's localStorage and are exported as JSON, then imported with `omp labels`. The FastAPI + HTMX app with Tailscale Serve (S6) is still the plan for library-wide review and the daily digest.
 
+The pages are per album, with an index of the albums in a run, so the same report covers any number of albums: the user wants a review page for every processed album (2026-11-03).
+
+## P20 — Keep the frames that differ; zero-shot "accidental" is only a hint (2026-11-03, from the s1 labels)
+
+The user keeps more than one frame of a burst when the frames differ: another moment, the subject facing the camera, a wider vista. In s1 every frame they archived was near-identical to a kept frame (DINOv2 ≥ 0.94) or clearly softer. So an extra frame is kept when it's below 0.95 similarity to every kept frame and not clearly worse, with no cap on the count. That took the false-archive rate on s1's album from 26 % to 7 % and cost 7 more false keeps. That trade is intended: a false keep costs some space, while a false archive loses a photo the user wanted.
+
+SigLIP zero-shot "accidental" was wrong on 3 of 5 frames, so it no longer counts as a quality-floor reason. It only sends the photo to the VLM's worth-keeping check, and a photo flagged only by it is archived on a clear "no" (P(keep) < 0.2), never otherwise.
+
+These rules were fitted to one album. They get re-checked on the next labelled albums before anything is tuned further.
+
+## P21 — The review tool is a bundle at the root of each library (2026-11-03, user)
+
+The pipeline will also run on external drives plugged into Mimir and on network shares, and the reviewer may be someone else on their own computer. So the review tool is a static bundle, `OrderMyPhotos/` at the root of the storage: an index, one page per album, 512 px thumbnails, and decision files. The open view shows the originals through relative paths. It needs no server, no install and no network. Per album the reviewer labels or trusts the automatic picks.
+
+On external drives and shares, the page applies the result itself: File System Access API in Chrome/Edge, a hash check per file, then a move into `Archive/OrderMyPhotos/<path>`, logged. Deleting is the last step, in the page too: after review and apply, the reviewed archived photos are deleted only once the reviewer confirms, seeing their count, total size and list (user, 2026-11-03). On OneDrive, Mimir uploads the bundle album by album as albums finish, so review starts while the rest is still processing. The decisions come back through OneDrive's sync and are applied by `mimir-onedrive apply` (server-side, hash-checked), not by the reviewer's PC.
+
+Folders of thousands of unsorted photos are reviewed as proposed albums: one unit in the index per event, with an editable name, merge, split and "leave in place". Applying a proposal creates the album folder (user, 2026-11-03).
+
+This supersedes P19's static page for the sample, and the FastAPI app (S6) as the main review UI. The app is kept for the Tags and Albums views and the daily digest.
+
 ## Open — for the user
 
 1. **Language** of titles, descriptions and tags: English, Polish, or both. Tags could carry both; descriptions need one.
