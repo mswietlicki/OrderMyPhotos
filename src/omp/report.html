@@ -172,8 +172,8 @@ function card(x) {
     <div class="m"><div class="t"><span>${x.time}</span><span>${esc(x.name.replace(/\.[^.]+$/, "").slice(-6))}${x.v1_archived ? " ·_arch" : ""}</span></div>
     ${x.cap ? `<div class="cap" title="${esc(x.cap.title_pl)}">${esc(x.cap.title_pl)}</div>` : ""}
     <div class="badges">${badges(x)}</div>
-    <div class="act"><button class="k ${v === "keep" ? "on" : ""}" data-v="keep" title="k">Keep</button><button class="a ${v === "archive" ? "on" : ""}" data-v="archive" title="a">Arch</button><button class="x ${v === "bad" ? "on" : ""}" data-v="bad" title="b: bad on its own">Bad</button>
-    <input value="${esc(groupOf(x))}" title="burst label; g = same as previous photo, n = none" placeholder="—"></div>
+    <div class="act"><button class="k ${v === "keep" ? "on" : ""}" data-v="keep" title="s (or k)">Keep</button><button class="a ${v === "archive" ? "on" : ""}" data-v="archive" title="a">Arch</button><button class="x ${v === "bad" ? "on" : ""}" data-v="bad" title="d (or b): bad on its own">Bad</button>
+    <input value="${esc(groupOf(x))}" title="burst label; g = same as previous photo, x (or n) = none" placeholder="—"></div>
     <div class="why">${esc((x.reasons || [])[0] || "")}</div></div></div>`;
 }
 function visible(x) {
@@ -251,7 +251,7 @@ function showLb(x = lbItem && lbOpen ? lbItem : order[cur]) {
   const curCat = L(x).category || (c && c.category) || "none";
   document.getElementById("lbside").innerHTML = `
     <h3>${esc(x.name)}</h3><div class="k">${x.date} ${x.time} · ${x.group ? "burst " + x.group + ", rank " + (x.rank + 1) : "single"} · ${x.tier}</div>
-    <p><button data-v="keep">Keep (k)</button> <button data-v="archive">Archive (a)</button> <button data-v="bad">Bad (b)</button> — now <b>${v}</b>${L(x).confirmed ? " ✓" : " (proposed)"}${L(x).confirmed && L(x).verdict !== x.verdict ? ` · pipeline: ${x.verdict}` : ""}</p>
+    <p><button data-v="archive">Archive (a)</button> <button data-v="keep">Keep (s)</button> <button data-v="bad">Bad (d)</button> — now <b>${v}</b>${L(x).confirmed ? " ✓" : " (proposed)"}${L(x).confirmed && L(x).verdict !== x.verdict ? ` · pipeline: ${x.verdict}` : ""}</p>
     ${strip(x)}
     <div class="k">Why</div><ul>${(x.reasons || []).map(r => "<li>" + esc(r) + "</li>").join("")}</ul>
     ${x.floor ? `<div class="k">Quality floor</div><ul>${x.floor.map(r => "<li>" + esc(r) + "</li>").join("")}</ul>` : ""}
@@ -264,7 +264,7 @@ function showLb(x = lbItem && lbOpen ? lbItem : order[cur]) {
     <select id="cat">${cats.map(k => `<option ${k === curCat ? "selected" : ""}>${k}</option>`).join("")}</select>
     <div class="k" style="margin-top:8px">Note</div><input id="note" style="width:100%" value="${esc(L(x).note || "")}">
     <p class="k">v1: ${x.v1 || "not in a v1 burst"}${x.v1_archived ? " (in _archived/)" : ""}</p>
-    <p class="k">← → move · k a b set · Enter accept burst · Esc close</p>`;
+    <p class="k">← → move · a archive · s keep · d bad · g / x join or leave the burst · Enter accept burst · Esc close</p>`;
   document.querySelectorAll("#lbside button[data-v]").forEach(b => b.onclick = () => setLabel(x, {verdict: b.dataset.v}));
   document.querySelectorAll("#lbside .mini").forEach(m => m.onclick = () => {
     const y = byName[m.dataset.n];
@@ -291,9 +291,12 @@ document.getElementById("list").addEventListener("change", e => {
   setLabel(x, {group: e.target.value.trim()});
 });
 document.addEventListener("keydown", e => {
+  if (e.ctrlKey || e.metaKey || e.altKey) return;  // leave Ctrl+S, Ctrl+A etc. to the browser
   if (["INPUT", "SELECT", "TEXTAREA"].includes(document.activeElement.tagName)) { if (e.key === "Escape") document.activeElement.blur(); return; }
   const x = lbOpen && lbItem ? lbItem : order[cur]; if (!x) return;
-  const k = e.key;
+  // Verdicts sit on the left hand's home row (a s d), next to g and x, while the right hand stays on the
+  // arrows, Enter and Space. k and b still work.
+  const k = e.key.length === 1 ? e.key.toLowerCase() : e.key;
   const step = d => {
     const i = order.indexOf(x);
     cur = Math.min(Math.max((i < 0 ? cur : i) + d, 0), order.length - 1);
@@ -301,11 +304,11 @@ document.addEventListener("keydown", e => {
   };
   if (k === "ArrowRight") step(1);
   else if (k === "ArrowLeft") step(-1);
-  else if (k === "k") setLabel(x, {verdict: "keep"});
+  else if (k === "s" || k === "k") setLabel(x, {verdict: "keep"});
   else if (k === "a") setLabel(x, {verdict: "archive"});
-  else if (k === "b") setLabel(x, {verdict: "bad"});
+  else if (k === "d" || k === "b") setLabel(x, {verdict: "bad"});
   else if (k === "g" && cur > 0) { const prev = order[cur - 1]; setLabel(x, {group: groupOf(prev) || ("U" + prev.name.slice(9, 15))}); if (!groupOf(prev)) setLabel(prev, {group: "U" + prev.name.slice(9, 15)}); }
-  else if (k === "n") setLabel(x, {group: ""});
+  else if (k === "x" || k === "n") setLabel(x, {group: ""});
   else if (k === "Enter") acceptGroup(x);
   else if (k === " " || k === "z") { e.preventDefault(); lbOpen ? closeLb() : showLb(); }
   else if (k === "Escape") closeLb();
@@ -339,7 +342,7 @@ document.getElementById("title").textContent = DATA.album.split("/").pop();
 document.getElementById("intro").innerHTML = `
   ${DATA.summary ? `<p><b>${esc(DATA.summary.pl)}</b></p><p style="color:var(--muted)">${esc(DATA.summary.en)}</p>` : ""}
   <p>Each box is a burst the pipeline found. Green is keep, grey archive, red bad on its own. A dashed border means it's only a proposal; a solid one means you labelled it.
-  To label: fix the verdicts (<kbd>k</kbd> keep, <kbd>a</kbd> archive, <kbd>b</kbd> bad even if it's the only shot), fix the bursts (type a label into the box under a photo; <kbd>g</kbd> puts the photo in the same burst as the previous one, <kbd>n</kbd> takes it out), then <kbd>Enter</kbd> or "Accept burst" to confirm a whole burst as it is.
+  To label, keep your left hand on <kbd>a</kbd> <kbd>s</kbd> <kbd>d</kbd> and your right on the arrows: fix the verdicts (<kbd>a</kbd> archive, <kbd>s</kbd> keep, <kbd>d</kbd> bad even if it's the only shot), fix the bursts (<kbd>g</kbd> puts the photo in the same burst as the previous one, <kbd>x</kbd> takes it out, or type a label into the box under a photo), then <kbd>Enter</kbd> or "Accept burst" to confirm a whole burst as it is.
   <kbd>←</kbd> <kbd>→</kbd> move, <kbd>Space</kbd> opens the photo with captions and reasons. Labels stay in this browser until you click <b>Export labels</b>.</p>
   <details class="tim"><summary>Run ${esc(DATA.run)} · generated ${esc(DATA.generated)} · timings</summary>${DATA.timings.map(t => `${esc(t.stage)}: ${t.items} in ${t.s} s (${esc(t.device || "")})`).join("<br>")}</details>`;
 render();

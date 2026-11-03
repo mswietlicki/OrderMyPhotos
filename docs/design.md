@@ -289,7 +289,7 @@ The open view loads the **original file through its relative path** (`../../<alb
 
 The page itself:
 - The album view shows each burst as a filmstrip with the picks highlighted and badges: blur, eyes closed, below the floor, v1 pick, confidence. Below the bursts comes a **"bad on their own"** strip: floor rejects with their reasons, and a warning on value-protected ones ("only photo of this event").
-- Keyboard-driven: ←/→, `k` keep, `a` archive, `b` bad on its own, `Enter` accept the group. The open view shows the photo at full resolution beside the thumbnails of its burst (or a single's neighbours), its reasons and its caption.
+- Keyboard-driven, with the left hand on the home row and the right on the arrows: `a` archive, `s` keep, `d` bad on its own, `g` / `x` join or leave the previous photo's burst; ←/→ move, `Enter` accepts the group, `Space` opens the photo. The open view shows the photo at full resolution beside the thumbnails of its burst (or a single's neighbours), its reasons and its caption.
 - Approving an album, by labelling or trusting it, marks its decisions ready for the plan.
 - Every override is stored as a label, and the labels train the S5 ranker.
 - The same app has a **Tags** view (vocabulary candidates), an **Albums** view (event album proposals, plus reference photos routed to category albums, with the probe's and the VLM's verdicts) and the **daily digest** for live mode (S10).
