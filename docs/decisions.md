@@ -91,6 +91,20 @@ These kinds change other stages:
 - **Sensitive documents** (IDs, cards, medical) are never moved automatically, and their numbers never go into file metadata.
 - **Ties:** `memory` wins, because moving a memory out of its trip album is the costly mistake.
 
+## P17 — The sample runs in the live-mode setup, with one runner image (2026-11-03)
+
+The first sample run used the B50 for every vision model, one model at a time, next to the RAG models, plus the resident Qwen3.8 for the judge and captions. Nothing was evicted, so chat kept working, and live mode will run exactly this way (S10). It's also enough for small samples: 71 photos took about 6 minutes end to end. Bulk runs on the 4090 come later, through a llama-swap entry with declared VRAM.
+
+There is one image, `mimir/omp:0.1`, for both the CPU stages and PyTorch XPU, built on the same base as mimir's depth image. It replaces the three images planned (CPU, CUDA, XPU) until the CUDA one is needed. The sample runs from a **copy** of the album under `/srv/mimir/cache/photos/sample/` with its own DB, so tests can't touch the mirror and the DB can be thrown away.
+
+## P18 — Tags map phrase to phrase, one vector per synonym (2026-11-03, measured)
+
+The VLM's free tags are matched to `vocab.yaml` by Qwen3-Embedding cosine against each label and synonym separately, with no instruction prefix, and need a cosine of at least 0.80. On the sample, one vector per vocabulary entry with an instruction-style query separated right from wrong mappings badly: "forest" → Forest scored 0.62, while "Poland" → Old town scored 0.38. Per-synonym matching gives right mappings ≥ 0.80 and wrong ones mostly below. Proper nouns go to a separate `names` list (places, venues) instead of being forced onto a concept, and generic tags ("outdoors", "nature") are dropped.
+
+## P19 — The first review UI is a static page with exported labels (2026-11-03)
+
+For labelling samples, `omp report` writes a self-contained folder: `index.html`, thumbnails and previews, and nothing loaded from the internet. It's copied to the workstation and opened there, which needs no server, no Serve port and no login while the pipeline is still changing every day. Labels live in the browser's localStorage and are exported as JSON, then imported with `omp labels`. The FastAPI + HTMX app with Tailscale Serve (S6) is still the plan for library-wide review and the daily digest.
+
 ## Open — for the user
 
 1. **Language** of titles, descriptions and tags: English, Polish, or both. Tags could carry both; descriptions need one.

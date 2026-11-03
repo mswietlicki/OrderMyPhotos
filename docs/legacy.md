@@ -43,7 +43,9 @@ Three scripts in [`archive/powershell/`](../archive/powershell/). They ran on th
 6. **Rolling album context:** after each photo, a second model (`qwen2.5:3b`) rewrites a 1–2 sentence album summary from the new caption. The summary goes into the next photo's system prompt and is saved to `<album>/_trip-context.txt`. An optional hand-written `<album>/context.txt` is added too.
 7. On error it writes `error_log_<name>.json` with the whole conversation, including the base64 image.
 
-**Footprint today:** `_trip-context.txt` exists in **5 albums** (from 1994, 2003, 2004, 2024 and 2025), so captions were written only there. There is one `context.txt`.
+**Footprint today:** `_trip-context.txt` exists in **5 albums** (from 1994, 2003, 2004, 2024 and 2025), and there is one `context.txt`.
+
+**A later caption run went much further.** **592 albums** (most from 2015–2022) have a machine-written `DESCRIPTION.md`, dated 2026-05 (477) and 2026-06 (115): a title plus a few paragraphs about the album in the same style ("serene", "tranquil", "encapsulates the essence of…"). The script that wrote them isn't in this repo. On the sample album (2026-11-03), all 50 photos left in the album carry `XMP-dc:Title`, `Description` and `Subject` in v1's style, while the 21 photos in `_archived/` carry none, so the run captioned what was left after culling. v2 treats these fields as machine-written (provenance `v1`), so it may overwrite them.
 
 ### `exif-fill.ps1`: first prototype
 
@@ -84,5 +86,5 @@ v2 redoes all of it: grouping, culling, captions and tags, over every album. v1'
 
 - **The `_archived/` folders** (17,251 photos) are put back into the candidate pool as if v1 never ran. Each photo is grouped and scored at its original album position.
 - **The 11,868 `burst_*.json` records** show up as a "v1 kept this" hint in the review UI. They also serve as a baseline for measuring how far v2 differs. They never decide anything on their own.
-- **The `_trip-context.txt` and `context.txt` files** are album context. `context.txt` is user-written, so it's trusted. `_trip-context.txt` is machine-written, so it's only a hint.
-- **XMP title, description and subject written by v1** in those 5 albums count as "machine-written, may overwrite", unlike user-written metadata.
+- **The `_trip-context.txt`, `DESCRIPTION.md` and `context.txt` files** are album context. `context.txt` is user-written, so it's trusted. The other two are machine-written, so they're only hints, and v2's captions don't use them.
+- **XMP title, description and subject written by v1** in albums with a `_trip-context.txt` or `DESCRIPTION.md` (about 590 albums; the five `_trip-context.txt` albums seem to have one too) count as "machine-written, may overwrite", unlike user-written metadata.

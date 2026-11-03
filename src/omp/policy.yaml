@@ -1,0 +1,41 @@
+# Folder policy (design.md S0). Paths are relative to the OneDrive root; the first matching glob wins.
+#   cull      curated folders: grouped, ranked, described
+#   unsorted  camera streams: also culled, then sorted into event or category albums (S11)
+#   describe  screenshots and scans: captions only
+#   ignore    not personal photos; still counted as copies (S1) and as S3b examples
+# Open question 6 in decisions.md: confirm the top-level folders.
+rules:
+  - {glob: "**/_archived/**", policy: cull}        # v1's archive folders: candidates again, at their album
+  - {glob: "Pictures/Albums/**", policy: cull}
+  - {glob: "Pictures/Info/**", policy: cull}
+  - {glob: "Pictures/Other/**", policy: cull}
+  - {glob: "Pictures/People/**", policy: cull}
+  - {glob: "Pictures/Places/**", policy: cull}
+  - {glob: "Pictures/Photos/**", policy: unsorted}
+  - {glob: "Obrazy/Samsung Gallery/**", policy: unsorted}
+  - {glob: "Obrazy/Camera Roll/**", policy: unsorted}
+  - {glob: "Obrazy/Other/**", policy: unsorted}
+  - {glob: "**/WhatsApp*/**", policy: unsorted}
+  - {glob: "**/Screenshots/**", policy: describe}
+  - {glob: "Obrazy/Scan/**", policy: describe}
+  - {glob: "**/Wallpapers/**", policy: ignore}
+  - {glob: "Obrazy/Druk/**", policy: ignore}
+  - {glob: "**/Faktury/**", policy: ignore}
+  - {glob: "Backup/**", policy: ignore}
+  - {glob: "Hosting/**", policy: ignore}
+default: unsorted
+
+# Which exact copy is kept (S1): the first matching glob wins, unmatched paths come last.
+precedence:
+  - "Pictures/Albums/**"
+  - "Pictures/People/**"
+  - "Pictures/Places/**"
+  - "Pictures/Info/**"
+  - "Pictures/Other/**"
+  - "**/Faktury/**"
+  - "Obrazy/Scan/**"
+  - "Pictures/Photos/**"
+  - "Obrazy/Samsung Gallery/**"
+  - "Obrazy/Camera Roll/**"
+  - "Obrazy/Other/**"
+  - "**/WhatsApp*/**"

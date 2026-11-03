@@ -11,7 +11,7 @@ Organizes a private photo library of about 175k photos, 2008–2026, kept in One
 6. **Recognizes faces**: clusters them, you name the people, and the names are used in tags and captions.
 7. **Writes back** to OneDrive: metadata into the files, plus server-side moves.
 
-**Status:** v2 design, 2026-11-02. No code yet. The first test target is a sample album.
+**Status:** first end-to-end run on a sample album, 2026-11-03: inventory, previews, signals, bursts, ranking, the VLM judge, captions and a review page for labelling ([docs/sample-runs.md](docs/sample-runs.md)). Thresholds are hand-set until the sample is labelled. Nothing writes to OneDrive yet.
 
 ## Rules
 
@@ -27,7 +27,10 @@ Organizes a private photo library of about 175k photos, 2008–2026, kept in One
 | [docs/design.md](docs/design.md) | Architecture and every pipeline stage, with what improves on v1 |
 | [docs/models.md](docs/models.md) | Model shortlist per stage: sizes, licenses, which GPU |
 | [docs/plan.md](docs/plan.md) | Phased plan with checkboxes |
+| [docs/sample-runs.md](docs/sample-runs.md) | Each run on a sample: speeds, results, problems found |
 | [docs/decisions.md](docs/decisions.md) | Decision log |
 | [docs/legacy.md](docs/legacy.md) | What v0 (C#, 2013) and v1 (PowerShell + Ollama, 2026) did and left behind |
+
+Code: [`src/omp/`](src/omp/) (Python 3.13, one package with a stage CLI), image [`docker/Dockerfile`](docker/Dockerfile). On Mimir it runs as one-shot jobs from the mimir repo's `stacks/photos` (`docker compose --env-file sample.env run --rm omp <stage>`).
 
 Old code lives in [`archive/`](archive/) and under the tag `legacy-final`.

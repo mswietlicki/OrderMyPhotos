@@ -1,0 +1,197 @@
+"""S4 grouping: events, copies, and bursts in the user's sense (same scene, same place, maybe minutes apart).
+
+Pairs inside one event and a long window are scored by the margin between their scene similarity and
+a threshold that rises with the time gap. Long gaps also need GPS proximity and a geometric
+same-viewpoint check. Clusters grow by average margin with a diameter guard, so a chain A≈B≈C with
+A≉C doesn't merge.
+"""
+
+import json
+import math
+import time
+
+import cv2
+import numpy as np
+
+from .config import Config
+from .db import get_data, get_vecs, log_timing
+
+VERSION = "group@1"
+EVENT_GAP = 2 * 3600          # a gap this long starts a new event
+WINDOW = 3600                 # burst candidates are at most this far apart
+THR_MIN, THR_MAX = 0.70, 0.90 # DINOv2 cosine needed at 0 s and at the window's end
+DIAMETER = 0.08               # no pair inside a burst may fall this far below its threshold
+GPS_MAX_M = 100               # same place, checked when the gap is over GPS_AFTER_S
+GPS_AFTER_S = 60
+VIEW_AFTER_S = 120            # longer gaps need a same-viewpoint check
+VIEW_MIN_INLIERS = 30
+COPY_SIM, COPY_PHASH = 0.97, 8
+
+
+def threshold(gap: float) -> float:
+    x = math.log10(1 + gap / 10) / math.log10(1 + WINDOW / 10)
+    return THR_MIN + (THR_MAX - THR_MIN) * min(max(x, 0.0), 1.0)
+
+
+def haversine(a, b):
+    if a[0] is None or b[0] is None:
+        return None
+    p1, p2 = math.radians(a[0]), math.radians(b[0])
+    dp, dl = p2 - p1, math.radians(b[1] - a[1])
+    h = math.sin(dp / 2) ** 2 + math.cos(p1) * math.cos(p2) * math.sin(dl / 2) ** 2
+    return 2 * 6371000 * math.asin(math.sqrt(h))
+
+
+class Viewpoint:
+    """SIFT + RANSAC homography between two previews: many inliers means the camera stood in the same
+    place (a homography also covers turning the camera on the spot)."""
+
+    def __init__(self, cfg):
+        self.cfg, self.sift, self.cache = cfg, cv2.SIFT_create(nfeatures=3000), {}
+        self.matcher = cv2.BFMatcher(cv2.NORM_L2)
+
+    def features(self, id_):
+        if id_ not in self.cache:
+            img = cv2.imread(str(self.cfg.preview(id_)), cv2.IMREAD_GRAYSCALE)
+            s = 1024 / max(img.shape)
+            img = cv2.resize(img, None, fx=s, fy=s, interpolation=cv2.INTER_AREA)
+            self.cache[id_] = self.sift.detectAndCompute(img, None)
+        return self.cache[id_]
+
+    def inliers(self, a, b) -> int:
+        ka, da = self.features(a)
+        kb, db = self.features(b)
+        if da is None or db is None or len(ka) < 8 or len(kb) < 8:
+            return 0
+        good = [m for m, n in (p for p in self.matcher.knnMatch(da, db, k=2) if len(p) == 2)
+                if m.distance < 0.75 * n.distance]
+        if len(good) < 8:
+            return len(good)
+        src = np.float32([ka[m.queryIdx].pt for m in good])
+        dst = np.float32([kb[m.trainIdx].pt for m in good])
+        _, mask = cv2.findHomography(src, dst, cv2.RANSAC, 8.0)
+        return int(mask.sum()) if mask is not None else 0
+
+
+def segment_events(photos):
+    events, current = [], []
+    for p in photos:
+        if current and p["taken_ts"] - current[-1]["taken_ts"] > EVENT_GAP:
+            events.append(current)
+            current = []
+        current.append(p)
+    if current:
+        events.append(current)
+    return events
+
+
+def cluster(n, margin):
+    """Average-margin agglomeration with a diameter guard. margin[i, j] is -inf where not allowed."""
+    clusters = [[i] for i in range(n)]
+    while True:
+        best, pair = 0.0, None
+        for x in range(len(clusters)):
+            for y in range(x + 1, len(clusters)):
+                m = margin[np.ix_(clusters[x], clusters[y])]
+                if m.min() < -DIAMETER:
+                    continue
+                score = float(m.mean())
+                if score > best:
+                    best, pair = score, (x, y)
+        if pair is None:
+            return clusters
+        x, y = pair
+        clusters[x] = sorted(clusters[x] + clusters[y])
+        del clusters[y]
+
+
+def run(cfg: Config, con, run_id: str):
+    t0 = time.perf_counter()
+    photos = [dict(r) for r in con.execute(
+        "SELECT p.id, p.taken_ts, p.lat, p.lon, MIN(f.path) AS path, MIN(f.album) AS album"
+        " FROM photo p JOIN file f ON f.id = p.id WHERE f.policy != 'ignore' GROUP BY p.id ORDER BY p.taken_ts")]
+    dino = get_vecs(con, "dino")
+    phash = get_data(con, "phash")
+    photos = [p for p in photos if p["id"] in dino]
+    con.execute("DELETE FROM grp_member WHERE gid IN (SELECT gid FROM grp WHERE run=?)", (run_id,))
+    con.execute("DELETE FROM grp WHERE run=?", (run_id,))
+    view = Viewpoint(cfg)
+    stats = {"pairs": 0, "view_checks": 0, "view_rejects": 0, "gps_rejects": 0}
+
+    def add_group(kind, ids, cohesion, data):
+        cur = con.execute("INSERT INTO grp(run, kind, cohesion, data) VALUES (?,?,?,?)",
+                          (run_id, kind, cohesion, json.dumps(data)))
+        for k, id_ in enumerate(ids):
+            con.execute("INSERT INTO grp_member(gid, id, ord) VALUES (?,?,?)", (cur.lastrowid, id_, k))
+
+    # Copies: the same frame saved twice (same capture second or no usable time, near-identical pixels).
+    by_id = {p["id"]: p for p in photos}
+    seen = set()
+    for i, a in enumerate(photos):
+        for b in photos[i + 1:]:
+            if b["taken_ts"] - a["taken_ts"] > 0.01:  # a copy keeps the capture time exactly
+                break
+            ph = bin(int(phash[a["id"]]["phash"], 16) ^ int(phash[b["id"]]["phash"], 16)).count("1")
+            if float(dino[a["id"]] @ dino[b["id"]]) >= COPY_SIM and ph <= COPY_PHASH:
+                add_group("copy", [a["id"], b["id"]], None, {"phash": ph})
+                seen.add(b["id"])
+    photos = [p for p in photos if p["id"] not in seen]
+
+    events = segment_events(photos)
+    n_bursts = 0
+    for e_idx, ev in enumerate(events):
+        ids = [p["id"] for p in ev]
+        add_group("event", ids, None, {"start": ev[0]["taken_ts"], "end": ev[-1]["taken_ts"], "index": e_idx})
+        n = len(ev)
+        if n < 2:
+            continue
+        emb = np.stack([dino[i] for i in ids])
+        sim = emb @ emb.T
+        margin = np.full((n, n), -np.inf)
+        detail = {}
+        for i in range(n):
+            for j in range(i + 1, n):
+                gap = ev[j]["taken_ts"] - ev[i]["taken_ts"]
+                if gap > WINDOW:
+                    break
+                m = sim[i, j] - threshold(gap)
+                if m < -DIAMETER:
+                    continue
+                stats["pairs"] += 1
+                d = haversine((ev[i]["lat"], ev[i]["lon"]), (ev[j]["lat"], ev[j]["lon"]))
+                if gap > GPS_AFTER_S and d is not None and d > GPS_MAX_M:
+                    stats["gps_rejects"] += 1
+                    continue
+                inl = None
+                if gap > VIEW_AFTER_S:
+                    stats["view_checks"] += 1
+                    inl = view.inliers(ids[i], ids[j])
+                    if inl < VIEW_MIN_INLIERS:
+                        stats["view_rejects"] += 1
+                        continue
+                margin[i, j] = margin[j, i] = m
+                detail[(i, j)] = {"sim": round(float(sim[i, j]), 3), "gap": round(gap, 1),
+                                  "thr": round(threshold(gap), 3), "dist_m": None if d is None else round(d),
+                                  "inliers": inl}
+        for c in cluster(n, margin):
+            if len(c) < 2:
+                continue
+            pairs = [(i, j) for k, i in enumerate(c) for j in c[k + 1:]]
+            cohesion = float(np.mean([margin[i, j] for i, j in pairs]))
+            span = ev[c[-1]]["taken_ts"] - ev[c[0]]["taken_ts"]
+            add_group("burst", [ids[i] for i in c], cohesion, {
+                "event": e_idx, "span_s": round(span, 1),
+                "min_margin": round(float(min(margin[i, j] for i, j in pairs)), 3),
+                "pairs": {f"{ids[i][:8]}-{ids[j][:8]}": detail.get((i, j)) for i, j in pairs},
+            })
+            n_bursts += 1
+    con.commit()
+    dt = time.perf_counter() - t0
+    log_timing(con, "group", run_id, len(photos), dt, "cpu")
+    con.commit()
+    sizes = [r[0] for r in con.execute(
+        "SELECT COUNT(*) FROM grp g JOIN grp_member m ON m.gid=g.gid WHERE g.run=? AND g.kind='burst' GROUP BY g.gid",
+        (run_id,))]
+    print(f"group: {len(events)} events, {len(seen)} copies, {n_bursts} bursts (sizes {sorted(sizes, reverse=True)}),"
+          f" {sum(sizes)} of {len(photos)} photos in bursts; {stats}; {dt:.1f} s")
+    del by_id

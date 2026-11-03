@@ -14,14 +14,18 @@ Phased so that each step is measured on the sample album before it touches the l
 
 ## Phase 1 — Groundwork on the sample album
 
-- [ ] **You:** pick the sample album. Ideally it has bursts, people and group shots, is one v1 already culled (for the baseline), and comes with the unsorted phone photos and a few videos from the same days
-- [ ] `omp` package skeleton: uv, ruff, pytest, `policy.yaml`, SQLite schema + migrations, the stage runner (idempotent, keyed by hash + model version)
-- [ ] Images: `omp` (CPU runner: exiftool, ffmpeg, OpenCV, pillow-heif, rawpy, PyTurboJPEG), `omp-vision-cuda` (PyTorch CUDA 13 + onnxruntime-gpu), `omp-vision-xpu` (PyTorch XPU + OpenVINO; based on `stacks/depth`)
-- [ ] Mimir: `/srv/mimir/data/photos` (in the `data` subvolume), a `/srv/mimir/cache/photos` subvolume (no snapshots), and `stacks/photos/` in the mimir repo
-- [ ] S0–S2 on the sample: inventory, hashes, capture times and their sources, v1 traces, previews. Measure files/s
-- [ ] A minimal review UI, enough to **label the sample**: correct the bursts (including ones spanning minutes), mark the best shots, mark the photos that are bad on their own, and mark reference photos with their category. These labels are the ground truth for everything after
+- [x] **You:** pick the sample album: a 2022 ski-touring album, 71 photos (50 + 21 v1-archived), v1-culled and v1-captioned, no videos and no people close up. Results: [sample-runs.md](sample-runs.md) run s1
+- [x] `omp` package skeleton: `pyproject.toml`, `policy.yaml`, `vocab.yaml`, SQLite schema (WAL), a stage CLI where each stage skips what's done for the same model, a pytest for the hash. Still to do: schema migrations, a uv lock, ruff in CI
+- [x] Image `mimir/omp:0.1`: one image for the CPU stages and PyTorch XPU (B50), built from `docker/Dockerfile`, dependencies pinned in `docker/requirements.txt`
+- [ ] Image for the 4090 (PyTorch CUDA 13 + onnxruntime-gpu), served through llama-swap for bulk runs. Video tools (ffmpeg, Chromaprint) and rawpy come with the video and RAW stages
+- [x] Mimir: `/srv/mimir/data/photos`, a `/srv/mimir/cache` subvolume (no snapshots) with `photos/`, and `stacks/photos/` (compose + `sample.env`) in the mimir repo
+- [x] S0–S2 on the sample: inventory, QuickXorHash (matches OneDrive), capture times and their sources, v1 traces, previews and the full-resolution sharpness grid. 5.9 photos/s on 20 cores, too slow for the library (~8 h): to tune
+- [x] A minimal review page to **label the sample**: a static `index.html` per run with thumbnails and previews (`omp report`). It fixes bursts, verdicts (keep / archive / bad on its own) and reference categories, with keyboard shortcuts. Labels are exported as JSON and imported with `omp labels`
+- [ ] **You:** label the sample on that page and export the labels
 
 ## Phase 2 — Grouping and picking (sample)
+
+Run s1 (2026-11-03) did a first pass of every stage below on the B50 and the resident Qwen3.8, with hand-set thresholds. The boxes are ticked once a stage is calibrated against the labels.
 
 - [ ] Cheap signals: DINOv2-B vs DINOv3-L, SigLIP 2, pHash, Q-ReAlign Mini, `buffalo_l` faces, sharpness/exposure/noise. Measure img/s on the 4090 and the B50
 - [ ] S3b kinds: `categories.yaml`; a SigLIP 2 linear probe trained on `Pictures/Info/*`, `Pictures/Other/*`, the invoice/scan folders, `Screenshots` and album photos (these are already on Mimir once the sync finishes, no sample needed); planarity and text-density features; measure accuracy and the memory→reference error

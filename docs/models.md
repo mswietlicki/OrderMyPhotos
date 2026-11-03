@@ -1,6 +1,21 @@
 # Models per stage
 
-Shortlist from research done on **2026-11-02**. The licence and date of the key repos were checked against the Hugging Face API. Speeds are from papers and model cards unless marked **measured**. Nothing here has been measured on Mimir yet: the sample-album bake-offs in [plan.md](plan.md) decide, and their results go here.
+Shortlist from research done on **2026-11-02**. The licence and date of the key repos were checked against the Hugging Face API. Speeds are from papers and model cards unless marked **measured**. The sample-album bake-offs in [plan.md](plan.md) decide, and their results go here.
+
+## Measured on Mimir (run s1, 2026-11-03, live-mode setup)
+
+The vision models ran on the B50 next to the always-on RAG models, one at a time, and the VLM was the resident Qwen3.8 on the 4090. Details are in [sample-runs.md](sample-runs.md).
+
+| Model | Runtime | Speed (measured) | Notes |
+|---|---|---|---|
+| DINOv2-B, 448 px long side | B50, PyTorch 2.15 XPU, fp16 | **21 img/s** | Same shot 0.87–0.99 cosine, different scenes 0.0–0.55 |
+| SigLIP 2 So400m NaFlex, ≤ 576 patches | B50, fp16 | **13 img/s** | Zero-shot kinds: 31/33 agree with the VLM; both errors call a memory non-memory |
+| Q-ReAlign Mini 0.8B, 1024 px, quality + aesthetics | B50, bf16 | **2.4 img/s** (two passes) | Reference kernels (no `flash-linear-attention`). Drop the attention mask on XPU, see sample-runs.md |
+| InsightFace `buffalo_l`, det 1024 | CPU, onnxruntime 1.31 | **8.6 img/s** | insightface 2.1 |
+| Depth-Anything-V2-Small via llama-swap | B50 | **82 ms** per image (4.5 img/s end to end) | 768 px input |
+| Qwen3.8-27B judge: 2 images at ~1 MP, 1 output token | 4090 | **1.6 s** per call | ~2,000 prompt tokens. Logprobs work through llama-swap with MTP on |
+| Qwen3.8-27B caption: 1 image, JSON schema, PL + EN | 4090 | **4.1 s** per photo | ~1,370 prompt + ~300 output tokens |
+| Qwen3-Embedding-4B, tag → vocabulary | B50 | (cheap) | Phrase-to-phrase per synonym, cosine ≥ 0.80 |
 
 The library is private and non-commercial, so non-commercial licences (InsightFace weights, pyiqa, Depth-Anything-V2 Base/Large) are acceptable. They are marked anyway in case anything is ever shared.
 
