@@ -40,7 +40,7 @@ from .config import Config
 from .db import log_timing
 from .db import get_vecs
 from .library import library_for
-from .profiles import DEFAULT_FOLDERS, album_summary, folder_profiles
+from .profiles import DEFAULT_FOLDERS, OTHER_YEAR, album_summary, folder_profiles
 from .vlm import VLM
 
 VERSION = "albums@1"
@@ -60,7 +60,7 @@ STAY_WITH_TRIP = {"food", "maps_topos", "shopping"}
 # Thematic folders (P29): the user's own, plus three fallbacks, so that no photo stays unsorted.
 THEME_ROOT = re.compile(r"^Pictures/(?:Info|Other|Places|People)/[^/]+|^Pictures/Albums/[^/0-9][^/]*")
 NOT_THEMES = {"Pictures/Albums/Facebook", "Pictures/Albums/Screeshots"}  # where photos came from, not what they show
-VIEWS, RANDOM = "Pictures/Other/Widoki", "Pictures/Other/Random"
+VIEWS, RANDOM = "Pictures/Other/Views", "Pictures/Other/Random"
 PERSON_FACE = 0.12        # a named person's face this big (share of the frame height) makes them the main subject
 THEME_MIN = 0.55          # the most similar thematic folder must be at least this similar (SigLIP 2 cosine) ...
 THEME_MARGIN = 0.02       # ... and beat the second by this much
@@ -130,15 +130,21 @@ together, and decide where the whole group belongs. Choose one kind:
 - "new_album": the group is an event of its own, something that happened: an outing, a trip, a party, a
   meeting or a work event, a game night, a visit, a celebration, or a shopping trip with a series of photos
   (for example glasses being tried on). Photos taken together at work (a presentation, a meeting, an office
-  party, a game evening with colleagues) are an event of their own, never a folder. Even one or two photos are an event when they show people the owner
+  party, a game evening with colleagues) are an event of their own, never a folder. So is an occasion, an
+  activity or a visit to a place, even in two or three photos without people: a dinner out, a walk to a bridge,
+  a bike ride, an injury at training. Even one or two photos are an event when they show people the owner
   doesn't photograph every day, or a place that isn't everyday. "name": the album name in the owner's style
   (their names are below; the date is added in front). Album names name the place or the activity and the
   people: add "z <name>" in the right Polish form for the people recognized in many of the photos, and no
   one else. In Polish, 2-6 words, no date, no quotes. Up to 3 "alternatives".
-- "album": the group is part of one of the existing albums listed with the group (its path in "target").
+- "album": the group is part of one of the albums listed with the group (its path in "target"): the same day,
+  place, people or activity. Prefer joining such an album over a new one; albums proposed for other photos
+  are listed too.
 - "folder": the group isn't an event and belongs in one of the owner's thematic folders (its path in
   "target"): things kept for information (receipts, documents, hardware, screens), a pet, views, everyday
-  photos. A folder for a person or a pet is offered with the group only when they're in the photos.
+  photos. A folder is for photos kept for their subject, not for an occasion. A folder for a person or a pet
+  is offered with the group only when they're in the photos. Pictures/Other/Random is only for photos that
+  make no sense; a fine photo that belongs nowhere goes to Pictures/Other/<year>.
 - "new_folder": it isn't an event, no folder fits, and more photos like these could follow: "name" is a
   short folder name in the style of the folders below, naming a subject (cars, plants, receipts), never an
   occasion (a dinner, a trip: those are events) and never "random" or "other" (there's Random for that).
@@ -150,6 +156,21 @@ The owner's album names: {examples}
 
 Answer in JSON. "why" is one short sentence. "target" is "" for new_album and new_folder.
 """
+SUMMARY_SCHEMA = {"type": "object", "additionalProperties": False, "required": ["description", "name"],
+                  "properties": {"description": {"type": "string"}, "name": {"type": "string"}}}
+# A new folder named like a starter folder in Polish is that folder (s5: "Koty" next to Cats).
+SAME_FOLDER = {"koty": "Pictures/Other/Cats", "kot": "Pictures/Other/Cats", "widoki": "Pictures/Other/Views",
+               "jedzenie": "Pictures/Other/Food", "zwierzęta": "Pictures/Other/Animals", "miasto": "Pictures/Other/City",
+               "natura": "Pictures/Other/Nature", "przyroda": "Pictures/Other/Nature", "rośliny": "Pictures/Other/Nature",
+               "dom": "Pictures/Other/Home", "samochody": "Pictures/Other/Vehicles", "pojazdy": "Pictures/Other/Vehicles",
+               "zakupy": "Pictures/Other/Shopping", "ubrania": "Pictures/Other/Clothes", "dokumenty": "Pictures/Info/Documents",
+               "rachunki": "Pictures/Info/Paragony", "paragony": "Pictures/Info/Paragony", "notatki": "Pictures/Info/Notes",
+               "mapy": "Pictures/Info/Maps", "ogłoszenia": "Pictures/Info/Notices", "ekrany": "Pictures/Info/Screens",
+               "sprzęt": "Pictures/Info/Hardware", "elektronika": "Pictures/Info/Hardware", "sztuka": "Pictures/Other/Art",
+               "grafika": "Pictures/Other/Art", "memy": "Pictures/Other/Meme", "zrzuty ekranu": "Pictures/Albums/Screeshots"}
+MSG_ALIKE = 0.75           # messenger photos of one day that look this alike were sent together: one group
+SAME_LOOK = 0.85           # new folders whose photos look this alike (mean SigLIP 2) are one folder
+LOOKALIKE = 0.8            # groups within a day whose photos look this alike (mean SigLIP 2) belong together
 DECIDE_GROUP = """
 The group:
 {group}
@@ -177,7 +198,9 @@ RARE_DAYS = 6              # a person seen on at most this many days within +-60
 PET_ALBUM_ANIMALS = 0.4    # an undated album whose photos are mostly animals is a pet's album ...
 PET_LIKE = 0.55            # ... and takes only photos this close to one of its own (DINOv2; own p10 0.61, others <= 0.42)
 NEARBY_DAYS = 3            # albums this close in time are offered to an event
-NOT_A_THEME = re.compile(r"losow|random|\binne\b|r[óo]żne|\bmisc|\bother\b|pozosta", re.I)  # Random's other names
+RANDOM_NAME = re.compile(r"losow|random", re.I)  # "Zdjęcia losowe" is Random by another name ...
+OTHER_NAME = re.compile(r"\binne\b|r[óo]żne|\bmisc|\bother\b|pozosta", re.I)  # ... and "Inne" is Other/<year>
+FIT_MIN = 0.4             # a photo in a folder that fits its refined description less surely than this is decided again
 PET_DAYS = 3               # the same animal on this many other days is probably the owner's own pet
 NO_GPS_GAP = 3600          # sessions without a position join only this close in time
 MIN_NEW_FOLDER = 3         # a new thematic folder needs this many photos (one-photo folders were noise in s4d)
@@ -207,6 +230,22 @@ class Base:
         if hi - lo < 3:
             return None
         return tuple(np.median(self.ll[lo:hi], axis=0))
+
+
+def near_word(a: str, b: str) -> bool:
+    """One letter apart (a typo: "Coty" for "Koty")."""
+    if abs(len(a) - len(b)) > 1:
+        return False
+    if len(a) == len(b):
+        return sum(x != y for x, y in zip(a, b)) <= 1
+    s, l_ = (a, b) if len(a) < len(b) else (b, a)
+    return any(l_[:k] + l_[k + 1:] == s for k in range(len(l_)))
+
+
+def other_of(ts: float) -> str:
+    """The folder for a fine photo of that year that belongs nowhere else (user: "create an Other in {Year}
+    and put them there; leave Random for truly random photos")."""
+    return OTHER_YEAR.replace("<year>", str(datetime.fromtimestamp(ts).year))
 
 
 def page_target(key: str) -> str:
@@ -691,7 +730,7 @@ def run(cfg: Config, con, run_id: str, place_only: bool = False):
         top = [k["key"] for k in kinds.get(r["id"], {}).get("top", [])][:1]
         if top and top[0] in ("landscape", "city"):
             return VIEWS, "a view"
-        return RANDOM, "nothing more specific"
+        return other_of(r["taken_ts"]), "nothing more specific"
 
     # 5. Each event is decided as a whole by the local LLM, from what it shows, when and where it was taken
     # and who is in it, against profiles of the albums near in time and of the thematic folders (P35).
@@ -718,6 +757,7 @@ def run(cfg: Config, con, run_id: str, place_only: bool = False):
 
     def describe(rs, away, messenger=False):
         d0, d1 = (datetime.fromtimestamp(rs[i]["taken_ts"], tz) for i in (0, -1))
+        messenger = messenger or all(r["id"] not in camera and MESSENGER.search("/" + r["path"]) for r in rs)
         if messenger:
             when = f"received by a messenger on {d0:%A %d %B %Y} (no time of day)"
         else:
@@ -781,10 +821,14 @@ def run(cfg: Config, con, run_id: str, place_only: bool = False):
                 best = max(best, len(set(close.tolist()) - own))
         return best
 
-    def decide(rs, away, banned, messenger=False, more=(), no_album=False):
-        """(d0, kind, target, name, why, alternatives) for a group of photos. `more`: new folders other groups
-        filled, offered in a second pass to groups whose own new folder stayed too small; then no new one."""
+    def decide(rs, away, banned, messenger=False, more=(), no_album=False, proposed=None, refined=None, hint=""):
+        """(d0, kind, target, name, why, alternatives) for a group of photos; a new album's target is its
+        path. `more`: new folders other groups filled, offered in a second pass to groups whose own new folder
+        stayed too small; then no new one. Later passes (P38) add `proposed` (new albums for other photos,
+        with what they hold), `refined` (what the folders hold so far) and a `hint` (where this group is now
+        and where the photos that look like it went)."""
         d0, group = describe(rs, away, messenger)
+        other = other_of(rs[0]["taken_ts"])
         extra = list(more)
         ids = {r["id"] for r in rs}
         for f in persons.values():  # a person's folder, when that person is in the photos
@@ -798,7 +842,12 @@ def run(cfg: Config, con, run_id: str, place_only: bool = False):
         near = sorted(near, key=lambda a: abs(lib.albums[a]["start"] - rs[0]["taken_ts"]))[:8]
         albums_txt = "\n".join(f"  {a}: {datetime.fromtimestamp(lib.albums[a]['start'], tz):%d %b}–"
                                f"{datetime.fromtimestamp(lib.albums[a]['end'], tz):%d %b %Y}"
-                               f"{' — ' + summaries[a][:200] if summaries.get(a) else ''}" for a in near) or "  (none)"
+                               f"{' — ' + summaries[a][:200] if summaries.get(a) else ''}" for a in near)
+        new_near = {a: desc for a, desc in (proposed or {}).items()
+                    if a not in banned and abs(album_day(a) - rs[0]["taken_ts"]) <= NEARBY_DAYS * 86400}
+        if new_near:
+            albums_txt += ("\n" if albums_txt else "") + "\n".join(f"  {a} (proposed): {desc[:220]}" for a, desc in new_near.items())
+        albums_txt = albums_txt or "  (none)"
         tail = DECIDE_GROUP.format(
             group=group, albums=albums_txt if not messenger else "  (none: a messenger photo joins an album only by its look)",
             extra="\n".join(f"  {f}: photos of the owner themselves (never name the owner in an album name)"
@@ -809,36 +858,220 @@ def run(cfg: Config, con, run_id: str, place_only: bool = False):
         if no_album:
             tail += ("\nThis group is too small for an album of its own (one or two photos without new people):"
                      " choose an existing album or a folder.\n")
-        allowed_albums = set(near) if not messenger else set()
-        allowed_folders = (set(open_folders) | set(extra)) - banned
+        if refined:
+            tail += "\nWhat the folders hold so far (from the photos sorted into them):\n" + \
+                "\n".join(f"  {f}: {desc[:200]}" for f, desc in refined.items()) + "\n"
+        if hint:
+            tail += "\n" + hint + "\n"
+        allowed_albums = (set(near) | set(new_near)) if not messenger else set()
+        allowed_folders = (set(open_folders) | set(extra) | {other}) - banned
         try:
             out = vlm.json([{"type": "text", "text": head + tail}], DECIDE_SCHEMA, max_tokens=400, temperature=0)  # repeatable
         except (ValueError, KeyError) as exc:
-            return d0, "folder", RANDOM, None, f"no answer ({exc})", []
+            return d0, "folder", other, None, f"no answer ({exc})", []
         kind, target, name = out["kind"], out["target"].strip().rstrip("/"), out["name"].strip().strip('"')
+        if re.match(r"^Pictures/Other/(<year>|\d{4})$", target):
+            target = other
         name = re.sub(r"^\d{4}-\d{2}(-\d{2})?\s*", "", name)  # the date goes in front by itself
         if messenger and kind == "new_album":
             kind = "new_folder" if name else "folder"
+        if kind == "album" and target in new_near:  # joins an album proposed for other photos
+            return d0, "new_album", target, target.split("/")[-1][11:], out.get("why", ""), []
         if kind == "album" and target not in allowed_albums:  # not offered (or taken out of): no guessing
-            kind, target = "folder", RANDOM
+            kind, target = "folder", other
         elif kind == "folder" and target not in allowed_folders:  # a folder named slightly differently
             byname = {f.split("/")[-1].lower(): f for f in allowed_folders}
-            target = byname.get(target.split("/")[-1].lower(), RANDOM)
+            target = byname.get(target.split("/")[-1].lower(), other)
         if kind == "new_album" and no_album:
-            kind, target = "folder", RANDOM
+            kind, target = "folder", other
         if kind == "new_folder" and more:
-            kind, target = "folder", RANDOM
+            kind, target = "folder", other
         if kind == "new_folder":
             name = re.sub(r"[\\/:*?\"<>|]+", " ", name).strip()[:40] or "Random"
             existing = {f.split("/")[-1].lower(): f for f in allowed_folders}
-            target = existing.get(name.lower(), f"Pictures/Other/{name}")
-            if NOT_A_THEME.search(name):  # "Zdjęcia losowe", "Inne": that's Random by another name
+            target = existing.get(name.lower()) or SAME_FOLDER.get(name.lower()) or next(
+                (f for k, f in SAME_FOLDER.items() if len(k) >= 4 and near_word(k, name.lower())), None) or f"Pictures/Other/{name}"
+            if RANDOM_NAME.search(name):
                 target = RANDOM
+            elif OTHER_NAME.search(name):
+                target = other
             if target in banned:
-                kind, target = "folder", RANDOM
+                kind, target = "folder", other
         if kind == "new_album" and not name:
-            kind, target = "folder", RANDOM
+            kind, target = "folder", other
+        if kind == "new_album":
+            target = f"Pictures/Albums/{d0:%Y}/{d0:%Y-%m-%d} {name}"
         return d0, kind, target, name, out.get("why", ""), out.get("alternatives", [])
+
+    def album_day(path):
+        m = re.search(r"/(\d{4}-\d{2}-\d{2})[^/]*$", path)
+        return datetime.strptime(m[1], "%Y-%m-%d").replace(tzinfo=tz).timestamp() + 43200 if m else 0
+
+    def summary_of(target, rs):
+        """What a destination holds, from its photos' captions, and for a new album a better name (P38)."""
+        caps_ = [caps[r["id"]] for r in rs if r["id"] in caps]
+        step = max(1, len(caps_) // 20)
+        lines = "\n".join(f"- {c.get('title_en')}: {c.get('description_en', '')[:140]}" for c in caps_[::step][:20])
+        if not lines:
+            return "", ""
+        new = target.startswith("Pictures/Albums/") and re.search(r"/\d{4}-\d{2}-\d{2} ", target)
+        prompt = (f"Photos the owner's library would put in \"{target}\":\n{lines}\n\nIn one sentence, say what "
+                  "these photos are (the event, or what the folder collects), concretely." +
+                  (" Also give a better album name in the owner's style, in Polish, 2-6 words, naming the place or"
+                   " the activity and the people (examples: " + "; ".join(examples[:30]) + "), or the same name if"
+                   " it fits." if new else ' Set "name" to "".'))
+        try:
+            out = vlm.json([{"type": "text", "text": prompt}], SUMMARY_SCHEMA, max_tokens=200, temperature=0)
+        except (ValueError, KeyError):
+            return "", ""
+        return out["description"].strip(), re.sub(r"^\d{4}-\d{2}(-\d{2})?\s*", "", out["name"].strip().strip('"'))
+
+    def mean_vec(rs):
+        vs = [sig[r["id"]] for r in rs if r["id"] in sig]
+        if not vs:
+            return None
+        v = np.mean(vs, axis=0)
+        return v / np.linalg.norm(v)
+
+    def one_day_events(decisions):
+        """A folder is for a subject that comes back; a new folder whose photos all come from one day is an
+        event (s5: "Obiad na zewnątrz", "Most kolejowy" should have been albums). Messenger photos stay."""
+        days = defaultdict(set)
+        for d in decisions:
+            if d[5] == "new_folder" and not d[3]:
+                days[d[6]] |= {datetime.fromtimestamp(r["taken_ts"], tz).date() for r in d[0]}
+        for d in decisions:
+            if d[5] == "new_folder" and not d[3] and len(days[d[6]]) == 1:
+                d0 = datetime.fromtimestamp(d[0][0]["taken_ts"], tz)
+                name = d[6].split("/")[-1]
+                d[4:] = [d0, "new_album", f"Pictures/Albums/{d0:%Y}/{d0:%Y-%m-%d} {name}", name,
+                         d[8] + " (one day: an event)", []]
+
+    def merge_alike_folders(decisions):
+        """New folders whose photos look the same are one folder, under the name of the bigger (s5: the owner's
+        cat as "Czarny kot" and as "Coty")."""
+        held = defaultdict(list)
+        for d in decisions:
+            if d[5] == "new_folder":
+                held[d[6]] += d[0]
+        names = sorted(held, key=lambda f: -len(held[f]))
+        vec = {f: mean_vec(held[f]) for f in names}
+        into = {}
+        for k, f in enumerate(names):
+            for g in names[:k]:
+                if vec[f] is not None and vec[g] is not None and into.get(g, g) == g and float(vec[f] @ vec[g]) >= SAME_LOOK:
+                    into[f] = g
+                    break
+        for d in decisions:
+            if d[6] in into:
+                d[6] = into[d[6]]
+                if d[5] == "new_folder":
+                    d[7] = d[6].split("/")[-1]
+
+    def part_of(rs, album):
+        """Is this group part of that album (asked when a new album would start on the album's day)?"""
+        _, group = describe(rs, False)
+        desc = summaries.get(album) or ""
+        q = (f"An album of the owner's: {album}" + (f" — {desc[:300]}" if desc else "") + f"\n\nA group of photos taken"
+             f" the same day:\n{group}\n\nIs this group part of that album's event (before, during or after it,"
+             " e.g. getting ready for it)? Answer with one word: yes or no.")
+        ans = vlm.choice([{"type": "text", "text": q}], ["yes", "no"])
+        return (ans.get("yes", 0.5) if ans else 0.5) >= 0.5
+
+    def refine(decisions, grown):
+        """Passes 2 and 3 (P38). Pass 2: every destination is described from what it got (and a new album
+        renamed), then every group is decided again with those descriptions, the new albums proposed for
+        other photos, and where the photos taken within a day that look like it went. Pass 3: each photo
+        in a folder is checked against what the folder holds; the ones that don't fit are decided again."""
+        held = defaultdict(list)
+        for d in decisions:
+            held[d[6]] += d[0]
+        described = {t_: summary_of(t_, rs) for t_, rs in held.items() if t_ != RANDOM}
+        proposed = {t_: s[0] for t_, s in described.items() if re.search(r"^Pictures/Albums/\d{4}/\d{4}-\d{2}-\d{2} ", t_)
+                    and t_ not in (lib.albums if lib else {})}
+        refined = {t_: s[0] for t_, s in described.items() if t_ not in proposed and not t_.startswith("Pictures/Albums/2")}
+        vecs = [mean_vec(d[0]) for d in decisions]
+        for k, d in enumerate(decisions):
+            alike = []
+            for j, e in enumerate(decisions):
+                if j != k and vecs[k] is not None and vecs[j] is not None and e[6] != d[6] \
+                        and abs(e[0][0]["taken_ts"] - d[0][0]["taken_ts"]) <= 86400:
+                    s = float(vecs[k] @ vecs[j])
+                    if s >= LOOKALIKE:
+                        alike.append(f"{e[6]} ({s:.2f})")
+            own = {t_: v for t_, v in proposed.items() if t_ != d[6]}
+            same_day = [t_ for t_ in own if abs(album_day(t_) - d[0][0]["taken_ts"]) <= 86400]
+            # Pass 1 stands unless there's a reason to look again: photos that look alike went elsewhere within
+            # a day, or a folder's group has a new album of its day to join. (Deciding everything again flipped
+            # good answers in s5: a bike ride the user liked as an album went to Sport.)
+            if not alike and not (d[5] in ("folder", "new_folder") and same_day):
+                continue
+            hint = (f"Now this group is in {d[6]}; keep it there unless the albums or folders below fit better."
+                    + (" Photos taken within a day that look like it went to: " + ", ".join(sorted(set(alike))[:4]) + "."
+                       if alike else ""))
+            d[4:] = decide(d[0], d[1], d[2], d[3], more=grown, no_album=len(d[0]) <= SMALL_EVENT and not novel(d[0]),
+                           proposed=own, refined=refined, hint=hint)
+        # The new albums' names, from what they hold now.
+        held = defaultdict(list)
+        for d in decisions:
+            held[d[6]] += d[0]
+        for t_, rs in held.items():
+            if t_ in described and t_ in proposed and len(rs) == len(held[t_]):
+                name = described[t_][1]
+            else:
+                name = summary_of(t_, rs)[1] if re.search(r"^Pictures/Albums/\d{4}/\d{4}-\d{2}-\d{2} ", t_) \
+                    and t_ not in (lib.albums if lib else {}) else ""
+            if name and name != t_.split("/")[-1][11:]:
+                new = t_.rsplit("/", 1)[0] + "/" + t_.split("/")[-1][:11] + name
+                for d in decisions:
+                    if d[6] == t_:
+                        d[6], d[7] = new, name
+        # A new album on a day the library already has an album for: is it part of that one?
+        joined = 0
+        for d in decisions:
+            if d[5] != "new_album" or d[3] or not lib:
+                continue
+            day = datetime.fromtimestamp(d[0][0]["taken_ts"], tz).date()
+            for album, a in lib.albums.items():
+                if album in d[2]:
+                    continue
+                if datetime.fromtimestamp(a["start"], tz).date() <= day <= datetime.fromtimestamp(a["end"], tz).date() \
+                        or abs(album_day(album) - d[0][0]["taken_ts"]) <= 86400:
+                    if part_of(d[0], album):
+                        d[5:8] = ["album", album, None]
+                        d[8] += f" (part of {album.split('/')[-1]})"
+                        joined += 1
+                        break
+        # Pass 3: each photo in a folder against what the folder now holds.
+        held = defaultdict(list)
+        for d in decisions:
+            if d[5] in ("folder", "new_folder"):
+                held[d[6]] += d[0]
+        now = {t_: profile.get(t_) or (profile.get(OTHER_YEAR) if re.match(r"^Pictures/Other/\d{4}$", t_) else None)
+                   or summary_of(t_, rs)[0] for t_, rs in held.items()}
+        moved = 0
+        for d in list(decisions):
+            if d[5] not in ("folder", "new_folder") or not now.get(d[6]):
+                continue
+            keep, out_ = [], []
+            for r in d[0]:
+                c = caps.get(r["id"])
+                if not c:
+                    keep.append(r)
+                    continue
+                q = (f"The owner's folder \"{d[6]}\" holds: {now[d[6]]}\nA photo: {c.get('title_en')}: "
+                     f"{c.get('description_en', '')[:200]}\nDoes this photo belong in this folder? Answer with one word: yes or no.")
+                ans = vlm.choice([{"type": "text", "text": q}], ["yes", "no"])
+                (keep if (ans.get("yes", 0.5) if ans else 0.5) >= FIT_MIN else out_).append(r)
+            if not out_ or not keep:
+                continue
+            d[0] = keep
+            for r in out_:
+                moved += 1
+                decisions.append([[r], d[1], d[2] | {d[6]}, d[3],
+                                  *decide([r], d[1], d[2] | {d[6]}, d[3], more=grown, no_album=not novel([r]))])
+        print(f"  refine: {len(described)} destinations described, {len(proposed)} new albums offered to the rest,"
+              f" {joined} joined an album of their day, {moved} photos moved out of folders they didn't fit")
 
     folder_moves = defaultdict(list)  # thematic folder -> [(photo, why)]: one proposal per folder
     counts = Counter()
@@ -848,15 +1081,29 @@ def run(cfg: Config, con, run_id: str, place_only: bool = False):
     for e in events:
         away, banned = is_away(e, base), banned_of(e)
         decisions.append([e, away, banned, False, *decide(e, away, banned)])
+    # Messenger photos that arrived the same day and look alike are one group, decided like an event (user,
+    # s5: the railway-bridge photos someone sent are an event); a single one is decided on its own, to a folder.
+    by_day = defaultdict(list)
     for r in unplaced:
-        banned = banned_of([r])
         if caps.get(r["id"]):
-            decisions.append([[r], False, banned, True, *decide([r], False, banned, messenger=True)])
-        else:
-            target, why = route(r)
-            if target in banned:
-                target, why = RANDOM, "nothing more specific"
-            folder_moves[target].append((r, f"sent, {why}"))
+            by_day[datetime.fromtimestamp(r["taken_ts"], tz).date()].append(r)
+            continue
+        target, why = route(r)
+        if target in banned_of([r]):
+            target, why = other_of(r["taken_ts"]), "nothing more specific"
+        folder_moves[target].append((r, f"sent, {why}"))
+    for day_rs in by_day.values():
+        groups = []
+        for r in day_rs:
+            v = sig.get(r["id"])
+            g = next((g for g in groups if v is not None and (m := mean_vec(g)) is not None and float(m @ v) >= MSG_ALIKE), None)
+            (g.append(r) if g is not None else groups.append([r]))
+        for g in groups:
+            banned = banned_of(g)
+            if len(g) >= 2:
+                decisions.append([g, False, banned, False, *decide(g, False, banned)])
+            else:
+                decisions.append([g, False, banned, True, *decide(g, False, banned, messenger=True)])
     # A new folder needs MIN_NEW_FOLDER photos. The groups of smaller ones are decided again, among the
     # existing folders and the new ones that did fill up.
     size = Counter()
@@ -866,19 +1113,22 @@ def run(cfg: Config, con, run_id: str, place_only: bool = False):
     grown = sorted(f for f, n in size.items() if n >= MIN_NEW_FOLDER)
     for d in decisions:
         if d[5] == "new_folder" and d[6] not in grown:
-            d[4:] = decide(d[0], d[1], d[2], d[3], more=grown or [RANDOM])
+            d[4:] = decide(d[0], d[1], d[2], d[3], more=grown or [OTHER_YEAR])
         # One or two photos make an album only with new people (user: "even 1 photo could create
         # an event if it's in a new place with new people and not surrounded by photos with the same people").
         if d[5] == "new_album" and len(d[0]) <= SMALL_EVENT and not novel(d[0]):
             d[4:] = decide(d[0], d[1], d[2], d[3], more=grown, no_album=True)
+    merge_alike_folders(decisions)
+    one_day_events(decisions)
+    refine(decisions, grown)
+    merge_alike_folders(decisions)
+    one_day_events(decisions)
     for rs, away, banned, messenger, d0, kind, target, name, why, alts in decisions:
         counts[kind] += 1
         if messenger or kind in ("folder", "new_folder"):
-            target = RANDOM if messenger and kind in ("album", "new_album") else target
+            target = other_of(rs[0]["taken_ts"]) if messenger and kind in ("album", "new_album") else target
             folder_moves[target] += [(r, f"sent: {why}" if messenger else why) for r in rs]
             continue
-        if kind == "new_album":
-            target = f"Pictures/Albums/{d0:%Y}/{d0:%Y-%m-%d} {name}"
         # In an album, text pages go to its Dokumenty/, and a receipt or document among other photos to its folder.
         inner, docs = [], defaultdict(list)
         for r in rs:
@@ -901,7 +1151,7 @@ def run(cfg: Config, con, run_id: str, place_only: bool = False):
     media_mat = np.stack([centroids[n] for n in media_names]) if media_names else None
     for mk, members in media.items():
         for r in members:
-            target = MEDIA_FOLDERS.get(mk, RANDOM)
+            target = MEDIA_FOLDERS.get(mk) or other_of(r["taken_ts"])
             if media_mat is not None and r["id"] in sig:
                 sims = media_mat @ sig[r["id"]]
                 j = int(np.argmax(sims))

@@ -10,6 +10,9 @@ a few of its photos. Folder profiles are cached in `album_context` (source "prof
 import json
 import random
 
+import yaml
+
+from .config import PACKAGE_DIR
 from .vlm import VLM, image_part
 
 VERSION = "profile@1"
@@ -25,11 +28,9 @@ In one sentence, say what this folder collects, specific enough to tell whether 
 (for example "Photos of one particular black cat, the owner's pet", "Receipts and invoices", "Climbing and
 bouldering, indoors and on rock"). Give it in English (en) and Polish (pl)."""
 # Folders the sorting may use although the library doesn't have them yet, with their profile.
-DEFAULT_FOLDERS = {
-    "Pictures/Other/Cats": "Cats (koty) that aren't the owner's own pet: any other cat, met outside, friends' cats,"
-                           " cats for adoption, cat pictures. Use this for cats; no other cat folders.",
-    "Pictures/Other/Random": "Photos that fit nowhere else.",
-}
+# The thematic folders S11 starts from, with what each is for (themes.yaml, P38); <year> is the photo's year.
+DEFAULT_FOLDERS = yaml.safe_load((PACKAGE_DIR / "themes.yaml").read_text(encoding="utf-8"))
+OTHER_YEAR = "Pictures/Other/<year>"
 
 
 def folder_profiles(cfg, con, vlm: VLM, folders: dict[str, list[str]], sample: int = 8) -> dict[str, str]:

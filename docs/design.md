@@ -439,6 +439,13 @@ There are two kinds: **event albums** for memories, described here, and **catego
   5. **Sessions:** photos taken together (≤ 15 min apart, no jump over 1 km) move as one, and a burst is never split. A session inside an album's time span, at its place, joins that album. Just before or after the span, it joins only with shared people or a matching look (P35).
   6. **Events:** sessions ≤ 3 h apart at one place, or ≤ 36 h apart sharing a person the owner doesn't photograph every day, or days away from the rolling base (a trip, unless the people and the subject both change completely, P37). The local LLM decides each event as a whole: a new album (and its name), an album close in time, a thematic folder, or a new thematic folder. It sees what the photos show, when, where and with whom, the reviewer's notes, and the **profiles** of the albums and folders. A person's folder or a pet's album is offered only when that person, or that very animal, is in the photos. Inside an album, text pages go to `Dokumenty/` and a receipt or document to its folder. Full nudity goes to the ` PRIV` sibling (P26).
 
+  7. **Three passes** (P38):
+     - pass 1 decides every group against the starter folders of `themes.yaml` (or the library's own) and the albums close in time;
+     - pass 2 describes every destination from what it got, renames new albums, and looks again only at groups with a reason: look-alikes elsewhere, a new album of the day, or an album of the library on that day ("is this part of it?");
+     - pass 3 checks each photo in a folder against the folder's description.
+
+     A new folder needs photos from more than one day. New folders that look the same merge. Fine leftovers go to `Other/<year>`, and `Random` is only for photos that make no sense.
+
   Steps 1–5 (without the LLM) run as their own stage, `place`, before grouping (S4). A photo that joins an album is grouped, ranked, captioned and reviewed with that album: it can form a new burst with the album's photos, and it shows on the album's page (P33).
 
   Album folders outside `Pictures/Albums/<year>/` are proposed to move there (P30). The library's albums come from the OneDrive manifest, so the rules see the whole library.

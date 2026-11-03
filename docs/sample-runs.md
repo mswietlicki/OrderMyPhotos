@@ -296,3 +296,23 @@ Only photo files were copied, as btrfs reflinks of the mirror (0 bytes exclusive
 - the folders on `\\mimir\photo-test`: `before/` (the test set, with its bundle) and `after/`, the plan (`plan.json`: 356 moves, 3 turns) applied as hardlinks.
 
 The whole test takes 352 MiB of its own (DB, previews, bundle); the photos and `after/` take none.
+
+### s5, sorted again with the starter folders and three passes (P38)
+
+After the user's review of s5, the sort was redone from the beginning four times.
+
+**Final run:** 339 LLM calls, 5 min.
+- **New albums:** 7, among them the dinner outside (WhatsApp photos sent together), the bike ride and the injury at training.
+- **Joins:** 5 groups join a test album, among them the camping supplies and the railway-bridge photos sent the evening before.
+- **Folders:** from the starter set. The owner's cat is in one folder (51), `Other/2022` holds 28 leftovers, and `Random` 2.
+- **Pass 2** described 26 destinations and offered 8 new albums to the other groups; **pass 3** moved 9 photos out of folders they didn't fit.
+
+**What each try taught:**
+- Deciding every group again in pass 2 overturned good answers: the bike-ride album went to Sport, so pass 2 now only corrects.
+- The LLM invented a cat's name ("Coty") as a second pet folder, so new folders that look the same now merge.
+- Folders of one day were events in disguise ("Obiad na zewnątrz", "Most kolejowy"). Those two were WhatsApp photos, which until then could never make an album.
+
+**Still weak:**
+- an album "Kable na schodach" (cables and a ladybug);
+- the balcony group is an album, not the folder of views the user liked the idea of;
+- the railway-bridge photos joined the camping album rather than an album of their own.

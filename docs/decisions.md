@@ -307,6 +307,35 @@ Text pages keep the text stage's answer (P24). In the review, a proposed turn sh
 - **The library index from the library itself.** `OMP_LIBRARY_INDEX=self` builds it from the library's own DB instead of OneDrive's manifest. That's for a drive, a share or a clean-slate test ("do not match to any album that is not in the test photos"). Thematic folders then start empty and are proposed new ("all the theme directories created anew"). The default folders are only `Other/Cats` and `Other/Random`, not this code's category names.
 - **The plan.** `omp plan` writes `OrderMyPhotos/plan.json`: every photo's move once the review is applied (kept → its album or folder; archived, bad or a copy → `Archive/OrderMyPhotos/`), plus the proposed turns. Applying it is a move per photo, in place ("do the moving in place as not to extend disk space"). For a test, `python3 -m omp.plan --links` builds the resulting folders as hardlinks next to the library: the same files, so no extra space, and the review page still finds the photos where they were.
 
+## P38 — Starter folders with descriptions, three passes, Other/<year> (2026-11-03, user)
+
+The user reviewed s5:
+- "Obiad na zewnątrz" and "Most kolejowy" were folders but are events;
+- "Sala gimnastyczna" should rather be "Skaleczenie na Akrobatyce";
+- "Autumn Views" is a good folder but held people and a glass cup;
+- `Random` duplicated photos of other groups;
+- a new album of supplies was a bad album (it's part of the camping album);
+- the bike-ride album was nice.
+
+Their rules: "Random is random as in not making sense. To put some single photos that do not belong anywhere else, better create an Other in {Year}". And: precreate about 20 themed directories with descriptions to sort by, then sort in 2 or 3 passes, "better and better based on more and more refined albums and directories descriptions".
+
+- **Starter folders** (`themes.yaml`, editable): 23 folders, each with what belongs and what doesn't. They're the defaults in a library that has none yet, and a library's own folders come on top. Examples: Documents, Paragony, Hardware, Screens, Notes, Maps, Notices, Food, Cats, Animals, Views, City, Nature, Sport, Vehicles, Home, Shopping, Clothes, Meme, Art, Screenshots.
+  - `Pictures/Other/<year>` is for fine photos that belong nowhere else.
+  - `Random` is only for photos that make no sense.
+  - A new folder named like a starter folder in Polish (or a letter off: "Coty") is that folder.
+  - "Inne" and its like mean `Other/<year>`, and "losowe" means `Random`.
+- **Pass 1** decides every group as before.
+  - A new folder needs photos from more than one day: a folder is for a subject that comes back, so a one-day "folder" is an event and becomes an album.
+  - New folders whose photos look the same (mean SigLIP 2 ≥ 0.85) are one folder: the owner's cat came out as "Czarny kot" and as an invented "Coty".
+- **Pass 2** corrects; it doesn't decide again. Deciding every group again flipped good answers: the bike ride the user liked went to Sport. So:
+  - every destination is described from what it got, and a new album is renamed from that description;
+  - a group is looked at again only when photos taken within a day that look like it (≥ 0.8) went elsewhere, or when a folder's group has a new album of its day to join;
+  - a new album on a day the library already has an album for is asked about directly ("is this part of <album>?"). That's how the camping supplies joined their album.
+- **Pass 3:** each photo in a folder is checked against the folder's own description, so no people in Views. Photos that don't fit (< 0.4) are decided again on their own.
+- **Messenger photos** (revises P32): photos that arrived the same day and look alike (≥ 0.75) were sent together, so they're one group, decided like an event: the dinner outside, the railway bridge. A single one is still decided on its own, to a folder.
+- **Events, said more clearly:** an occasion, an activity or a visit to a place is an event even in 2–3 photos without people (a dinner out, a walk to a bridge, a bike ride, an injury at training). A folder is for photos kept for their subject.
+- **Cost on s5:** about 340–500 LLM calls at 0.9 s, 5–8 min for 437 photos.
+
 ## Open — for the user
 
 1. **Language** of titles, descriptions and tags: English, Polish, or both. Tags could carry both; descriptions need one.
