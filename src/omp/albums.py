@@ -171,6 +171,17 @@ def run(cfg: Config, con, run_id: str, place_only: bool = False):
     rows = [dict(r) for r in con.execute(
         "SELECT p.id, p.taken_ts, p.taken_local, p.lat, p.lon, MIN(f.path) AS path FROM photo p JOIN file f ON f.id=p.id"
         " WHERE f.policy='unsorted' GROUP BY p.id ORDER BY p.taken_ts")]
+    # Photos the reviewer took out of an album or a proposal (`o` in the bundle): they skip every rule that
+    # would put them in an album and go to a thematic folder, never back where they came from.
+    taken_out = {}
+    for r in con.execute("SELECT id, value FROM label WHERE kind='out' ORDER BY lid"):
+        taken_out[r[0]] = r[1]  # the latest label wins; "" means undone
+    taken_out = {i: v.split(":", 2)[2] if v.startswith("proposal:") else v for i, v in taken_out.items() if v}
+    out_rows = [r for r in rows if r["id"] in taken_out]
+    rows = [r for r in rows if r["id"] not in taken_out]
+    out_rows += [dict(r) for r in con.execute(  # an album's own photos taken out of it
+        "SELECT p.id, p.taken_ts, p.taken_local, p.lat, p.lon, MIN(f.path) AS path FROM photo p JOIN file f ON f.id=p.id"
+        " WHERE f.policy='cull' GROUP BY p.id ORDER BY p.taken_ts") if r["id"] in taken_out]
     dec = {r["id"]: dict(r) for r in con.execute("SELECT id, verdict, features FROM decision WHERE run=?", (run_id,))}
     caps = {r["id"]: json.loads(r["data"]) for r in con.execute("SELECT id, data FROM caption")}
     sample_albums = {r[0] for r in con.execute("SELECT DISTINCT album FROM file WHERE policy='cull'")}
@@ -481,6 +492,18 @@ def run(cfg: Config, con, run_id: str, place_only: bool = False):
         add(action, target, None, [r for r, _ in items],
             {"n": len(items), "received": True, "why": Counter(w for _, w in items).most_common(1)[0][0]})
 
+    # The photos the reviewer took out: the thematic folder they fit, unless that's where they came from.
+    routed = defaultdict(list)
+    for r in out_rows:
+        left = taken_out[r["id"]]
+        target, why = route(r)
+        if target in (left, left.removesuffix(" PRIV").removesuffix("/Dokumenty")):
+            target, why = RANDOM, "nothing more specific"
+        routed[target].append((r, f"taken out of {PurePosixPath(left).name} in review; {why}"))
+    for target, items in routed.items():
+        add("theme", target, None, [r for r, _ in items],
+            {"n": len(items), "taken_out": True, "why": Counter(w for _, w in items).most_common(1)[0][0]})
+
     # Album folders in the wrong place (the phone gallery's, a wrong year): moved where they belong (P30).
     relocated = []
     if lib:
@@ -547,7 +570,7 @@ def run(cfg: Config, con, run_id: str, place_only: bool = False):
     log_timing(con, "albums", run_id, len(rows), dt, "cpu + 4090 qwen3.8-27b")
     con.commit()
     print(f"albums: {len(rows)} unsorted photos; {sum(len(v) for v in copies.values())} already in {len(copies)} albums,"
-          f" {sum(len(v) for v in media.values())} downloaded, {len(received)} from messengers"
+          f" {len(out_rows)} taken out in review, {sum(len(v) for v in media.values())} downloaded, {len(received)} from messengers"
           f" ({sum(len(v) for v in received_joins.values())} join an album they look like),"
           f" {sum(len(v) for v in joins.values())} taken during {len(joins)} albums' events,"
           f" {sum(len(v) for v in cats.values())} to {len(cats)} category albums, {len(events)} events"

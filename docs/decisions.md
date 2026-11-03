@@ -254,7 +254,7 @@ The user: "unsorted photos should also be added to already existing processed al
 - **Reviewed on the album's page:**
   - The photo shows next to the album's own photos, with a "+ <folder>" badge, and the index counts it as "joining".
   - A burst with joining photos is marked, because a reviewed album needs that burst reviewed again: a joining photo may now be the best frame.
-  - `o` keeps a joining photo out of the album, and it then goes to its thematic folder.
+  - `o` keeps a joining photo out of the album, and it then goes to its thematic folder. `o` works the same on an album's own photos (user, 2026-11-03: "how do I remove photos from the album?"). The label names the album it was taken out of, and S11 routes the photo to the thematic folder it fits. If that's the album it left, it goes to `Other/Random`. To get rid of a photo altogether, archive it (`a`).
   - Labels name a joining photo by its path, since it lives in another folder.
 - A photo that joins an album without a page in this library (only in the OneDrive manifest, not processed yet) keeps its own "Add to …" proposal until that album is processed.
 

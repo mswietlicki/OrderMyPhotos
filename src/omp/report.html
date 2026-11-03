@@ -7,20 +7,26 @@
 <style>
 :root {
   --bg: #f6f6f4; --panel: #ffffff; --ink: #1d1d1b; --muted: #6b6b66; --line: #deded8;
-  --keep: #1f8a4c; --archive: #8a8a84; --bad: #c2412d; --accent: #2f5fd0; --warn: #b7791f;
+  --keep: #1a7a42; --archive: #6e6e68; --bad: #c2412d; --accent: #2f5fd0; --warn: #94600f;
   --focus: #2f5fd0; --chip: #efefea;
+  --on-fill: #ffffff;  /* text on keep/bad/accent/warn fills: 5:1 or more against each */
+  color-scheme: light;
 }
 @media (prefers-color-scheme: dark) {
   :root:not([data-theme="light"]) {
     --bg: #141413; --panel: #1e1e1c; --ink: #ecece8; --muted: #a3a39c; --line: #34342f;
-    --keep: #3fbf74; --archive: #77776f; --bad: #ef6a52; --accent: #7aa2ff; --warn: #e0a84a;
+    --keep: #3fbf74; --archive: #8c8c84; --bad: #ef6a52; --accent: #7aa2ff; --warn: #e0a84a;
     --focus: #7aa2ff; --chip: #2a2a27;
+    --on-fill: #121211;  /* the fills are light in the dark theme: dark text on them (5.5-8.8:1) */
+    color-scheme: dark;
   }
 }
 :root[data-theme="dark"] {
   --bg: #141413; --panel: #1e1e1c; --ink: #ecece8; --muted: #a3a39c; --line: #34342f;
-  --keep: #3fbf74; --archive: #77776f; --bad: #ef6a52; --accent: #7aa2ff; --warn: #e0a84a;
+  --keep: #3fbf74; --archive: #8c8c84; --bad: #ef6a52; --accent: #7aa2ff; --warn: #e0a84a;
   --focus: #7aa2ff; --chip: #2a2a27;
+  --on-fill: #121211;
+  color-scheme: dark;
 }
 * { box-sizing: border-box; }
 body { margin: 0; background: var(--bg); color: var(--ink); font: 14px/1.45 system-ui, -apple-system, "Segoe UI", sans-serif; }
@@ -30,9 +36,10 @@ header h1 { font-size: 16px; margin: 0; font-weight: 600; }
 header .stats { color: var(--muted); }
 header .spacer { flex: 1; }
 button, select, input { font: inherit; color: inherit; }
+select, input:not([type=range]):not([type=file]) { background: var(--bg); border: 1px solid var(--line); border-radius: 4px; }
 button { background: var(--chip); border: 1px solid var(--line); border-radius: 6px; padding: 4px 10px; cursor: pointer; }
 button:hover { border-color: var(--muted); }
-button.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
+button.primary { background: var(--accent); border-color: var(--accent); color: var(--on-fill); }
 main { padding: 12px 16px 80px; max-width: 1600px; margin: 0 auto; }
 .intro { background: var(--panel); border: 1px solid var(--line); border-radius: 8px; padding: 12px 14px; margin-bottom: 14px; }
 .intro p { margin: 4px 0; }
@@ -59,15 +66,15 @@ header input[type=range] { width: 120px; vertical-align: middle; }
 .card .cap { margin: 2px 0; font-weight: 500; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .badges { display: flex; flex-wrap: wrap; gap: 3px; margin: 3px 0; min-height: 18px; }
 .b { font-size: 11px; padding: 0 5px; border-radius: 9px; background: var(--chip); color: var(--muted); white-space: nowrap; }
-.b.best { background: var(--keep); color: #fff; }
-.b.floor { background: var(--bad); color: #fff; }
-.b.rev { background: var(--warn); color: #fff; }
-.b.ref { background: var(--accent); color: #fff; }
+.b.best { background: var(--keep); color: var(--on-fill); }
+.b.floor { background: var(--bad); color: var(--on-fill); }
+.b.rev { background: var(--warn); color: var(--on-fill); }
+.b.ref { background: var(--accent); color: var(--on-fill); }
 .act { display: flex; gap: 4px; align-items: center; margin-top: 4px; }
 .act button { padding: 1px 7px; font-size: 12px; }
-.act button.on.k { background: var(--keep); color: #fff; border-color: var(--keep); }
-.act button.on.a { background: var(--archive); color: #fff; border-color: var(--archive); }
-.act button.on.x { background: var(--bad); color: #fff; border-color: var(--bad); }
+.act button.on.k { background: var(--keep); color: var(--on-fill); border-color: var(--keep); }
+.act button.on.a { background: var(--archive); color: var(--on-fill); border-color: var(--archive); }
+.act button.on.x { background: var(--bad); color: var(--on-fill); border-color: var(--bad); }
 .act input { width: 52px; padding: 1px 4px; font-size: 12px; background: var(--bg); border: 1px solid var(--line); border-radius: 4px; }
 .why { font-size: 11px; color: var(--muted); margin-top: 3px; }
 .prop { background: var(--panel); border: 2px solid var(--accent); border-radius: 8px; padding: 10px 14px; margin-bottom: 14px; }
@@ -76,7 +83,7 @@ header input[type=range] { width: 120px; vertical-align: middle; }
 .prop input { font: inherit; width: min(520px, 100%); padding: 3px 6px; border: 1px solid var(--line); border-radius: 4px; background: var(--bg); color: var(--ink); }
 .prop .alt { cursor: pointer; }
 .card.out { opacity: .45; }
-#lb { position: fixed; inset: 0; background: rgba(0,0,0,.92); z-index: 10; display: none; color: #eee; }
+#lb { position: fixed; inset: 0; background: rgba(0,0,0,.92); z-index: 10; display: none; color: #eee; color-scheme: dark; }
 #lb.open { display: flex; }
 #lb .img { flex: 1; display: flex; align-items: center; justify-content: center; min-width: 0; }
 #lb img { max-width: 100%; max-height: 100vh; object-fit: contain; }
@@ -85,7 +92,8 @@ header input[type=range] { width: 120px; vertical-align: middle; }
 #lb aside .k { color: #9d9d96; }
 #lb aside ul { padding-left: 18px; margin: 4px 0; }
 #lb aside pre { white-space: pre-wrap; font-size: 12px; background: #111; padding: 6px; border-radius: 4px; }
-#lb aside button { background: #2c2c2a; border-color: #444; }
+#lb aside button, #lb aside select, #lb aside input { background: #2c2c2a; border: 1px solid #444; color: #eee; }
+#lb aside .warn { color: #e0a84a; }  /* the lightbox is dark in both themes */
 #lb .strip { display: grid; grid-template-columns: repeat(auto-fill, minmax(104px, 1fr)); gap: 6px; margin: 6px 0 10px; }
 #lb .mini { border: 3px solid #555; border-radius: 6px; overflow: hidden; cursor: pointer; background: #000; }
 #lb .mini.keep { border-color: var(--keep); }
@@ -173,7 +181,7 @@ function badges(x) {
   if ((x.cap && x.cap.purpose && x.cap.purpose !== "memory") || (!x.cap && x.f.purpose && x.f.purpose !== "memory"))
     b.push('<span class="b ref">' + esc((x.cap && x.cap.category !== "none" && x.cap.category) || (x.cap && x.cap.purpose) || x.f.purpose) + '</span>');
   if (x.joins) b.push('<span class="b ref" title="joins this album from ' + esc(x.joins.from) + (x.joins.why ? ": " + esc(x.joins.why) : "") + (x.joins.sent ? " (sent " + esc(x.joins.sent) + ", shown next to the album photo it looks most like)" : "") + '. o keeps it out">+ ' + esc(x.joins.from.split("/").pop()) + (x.joins.target !== DATA.album ? " → " + esc(x.joins.target.split("/").pop()) : "") + '</span>');
-  if (L(x).out) b.push('<span class="b rev" title="o: not part of this ' + (x.joins ? "album" : "proposal") + '; it goes to its thematic folder">out</span>');
+  if (L(x).out) b.push('<span class="b rev" title="o: does not belong in this ' + (DATA.proposal ? "proposal" : "album") + '; it goes to the thematic folder it fits">out</span>');
   if (L(x).confirmed && L(x).verdict && L(x).verdict !== x.verdict) b.push('<span class="b rev" title="your label differs from the proposal">pipeline: ' + esc(x.verdict) + '</span>');
   if (x.v1) b.push('<span class="b" title="v1 burst culling">v1 ' + (x.v1 === "kept" ? "kept" : "archived") + '</span>');
   if (x.f.bt != null) b.push('<span class="b" title="VLM Bradley–Terry share">VLM ' + Math.round(x.f.bt * 100) + '%</span>');
@@ -263,7 +271,7 @@ function showLb(x = lbItem && lbOpen ? lbItem : order[cur]) {
     im.onerror = null;
     im.src = B + "t/" + x.id + ".jpg";
     if (lbItem === x) document.getElementById("lbside").insertAdjacentHTML("afterbegin",
-      `<p class="k" style="color:#c60">The original isn't reachable from here (${esc(decodeURIComponent(x.src.replace(/^(\.\.\/)+/, "")))}), so this is the 512 px thumbnail. Open the bundle at the root of the library to see the originals.</p>`);
+      `<p class="warn">The original isn't reachable from here (${esc(decodeURIComponent(x.src.replace(/^(\.\.\/)+/, "")))}), so this is the 512 px thumbnail. Open the bundle at the root of the library to see the originals.</p>`);
   };
   im.src = x.src;
   const c = x.cap, f = x.f, v = verdictOf(x);
@@ -331,7 +339,7 @@ document.addEventListener("keydown", e => {
   else if (k === "d" || k === "b") setLabel(x, {verdict: "bad"});
   else if (k === "g" && cur > 0) { const prev = order[cur - 1]; setLabel(x, {group: groupOf(prev) || ("U" + prev.name.slice(9, 15))}); if (!groupOf(prev)) setLabel(prev, {group: "U" + prev.name.slice(9, 15)}); }
   else if (k === "x" || k === "n") setLabel(x, {group: ""});
-  else if (k === "o" && (DATA.proposal || x.joins)) setLabel(x, {out: !L(x).out});
+  else if (k === "o") setLabel(x, {out: !L(x).out});
   else if (k === "Enter") acceptGroup(x);
   else if (k === " " || k === "z") { e.preventDefault(); lbOpen ? closeLb() : showLb(); }
   else if (k === "Escape") closeLb();
@@ -403,6 +411,7 @@ document.getElementById("intro").innerHTML = (DATA.proposal ? `<div id="pbox">${
   ${DATA.summary ? `<p><b>${esc(DATA.summary.pl)}</b></p><p style="color:var(--muted)">${esc(DATA.summary.en)}</p>` : ""}
   <p>Each box is a burst the pipeline found. Green is keep, grey archive, red bad on its own. A dashed border means it's only a proposal; a solid one means you labelled it.
   To label, keep your left hand on <kbd>a</kbd> <kbd>s</kbd> <kbd>d</kbd> and your right on the arrows: fix the verdicts (<kbd>a</kbd> archive, <kbd>s</kbd> keep, <kbd>d</kbd> bad even if it's the only shot), fix the bursts (<kbd>g</kbd> puts the photo in the same burst as the previous one, <kbd>x</kbd> takes it out, or type a label into the box under a photo), then <kbd>Enter</kbd> or "Accept burst" to confirm a whole burst as it is.
+  <kbd>o</kbd> takes a photo out of this ${DATA.proposal ? "proposal" : "album"} without archiving it: it goes to the thematic folder it fits instead (press it again to undo).
   <kbd>←</kbd> <kbd>→</kbd> move, <kbd>Space</kbd> opens the photo with captions and reasons. Labels stay in this browser until you click <b>Export labels</b>.</p>
   <details class="tim"><summary>Run ${esc(DATA.run)} · generated ${esc(DATA.generated)} · timings</summary>${DATA.timings.map(t => `${esc(t.stage)}: ${t.items} in ${t.s} s (${esc(t.device || "")})`).join("<br>")}</details>`;
 render();

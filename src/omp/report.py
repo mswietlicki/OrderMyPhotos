@@ -288,16 +288,16 @@ def index_page(run_id: str, rows: list[dict], moves: list | None = None) -> str:
 <html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
 <title>OrderMyPhotos albums</title>
 <style>
-:root {{ --bg: #f6f6f4; --panel: #fff; --ink: #1d1d1b; --muted: #6b6b66; --line: #deded8; --keep: #1f8a4c; --accent: #2f5fd0; --chip: #efefea; }}
-@media (prefers-color-scheme: dark) {{ :root:not([data-theme="light"]) {{ --bg: #141413; --panel: #1e1e1c; --ink: #ecece8; --muted: #a3a39c; --line: #34342f; --keep: #3fbf74; --accent: #7aa2ff; --chip: #2a2a27; }} }}
-:root[data-theme="dark"] {{ --bg: #141413; --panel: #1e1e1c; --ink: #ecece8; --muted: #a3a39c; --line: #34342f; --keep: #3fbf74; --accent: #7aa2ff; --chip: #2a2a27; }}
+:root {{ --bg: #f6f6f4; --panel: #fff; --ink: #1d1d1b; --muted: #6b6b66; --line: #deded8; --keep: #1a7a42; --accent: #2f5fd0; --chip: #efefea; --on-fill: #fff; color-scheme: light; }}
+@media (prefers-color-scheme: dark) {{ :root:not([data-theme="light"]) {{ --bg: #141413; --panel: #1e1e1c; --ink: #ecece8; --muted: #a3a39c; --line: #34342f; --keep: #3fbf74; --accent: #7aa2ff; --chip: #2a2a27; --on-fill: #121211; color-scheme: dark; }} }}
+:root[data-theme="dark"] {{ --bg: #141413; --panel: #1e1e1c; --ink: #ecece8; --muted: #a3a39c; --line: #34342f; --keep: #3fbf74; --accent: #7aa2ff; --chip: #2a2a27; --on-fill: #121211; color-scheme: dark; }}
 body {{ margin: 0; background: var(--bg); color: var(--ink); font: 14px/1.45 system-ui, -apple-system, "Segoe UI", sans-serif; }}
 main {{ max-width: 1400px; margin: 0 auto; padding: 16px; }}
 header {{ display: flex; flex-wrap: wrap; gap: 8px 16px; align-items: center; margin: 4px 0 14px; }}
 h1 {{ font-size: 18px; margin: 0; }} h1 small {{ color: var(--muted); font-weight: 400; }}
 .sp {{ flex: 1; }}
 button {{ font: inherit; color: inherit; background: var(--chip); border: 1px solid var(--line); border-radius: 6px; padding: 3px 10px; cursor: pointer; }}
-button.primary {{ background: var(--accent); border-color: var(--accent); color: #fff; }}
+button.primary {{ background: var(--accent); border-color: var(--accent); color: var(--on-fill); }}
 .grid {{ display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); gap: 12px; }}
 .al {{ background: var(--panel); border: 1px solid var(--line); border-radius: 8px; overflow: hidden; }}
 .al a {{ color: inherit; text-decoration: none; }}
@@ -371,15 +371,16 @@ def import_labels(cfg: Config, con, path: str):
             if name == "__proposal__":
                 continue
             id_ = by_name.get((album, name)) or by_name.get((None, name))
-            if lab.get("out") and id_ and "/" in name:  # a joining photo kept out of the album: to its thematic folder
-                con.execute("INSERT INTO label(id, kind, value, source) VALUES (?,?,?,?)", (id_, "out", album, src))
             if not lab.get("confirmed") or not id_:
                 continue
-            kinds = ("group", "verdict", "category", "note", "out")
+            kinds = ("group", "verdict", "category", "note")
             for kind in kinds:
                 if kind in lab and (lab[kind] not in (None, "") or kind == "group"):
                     con.execute("INSERT INTO label(id, kind, value, source) VALUES (?,?,?,?)",
                                 (id_, kind, str(lab[kind]), src + (":trusted" if lab.get("trusted") else "")))
+            if "out" in lab:  # taken out of this album or proposal ("" when undone): S11 routes it elsewhere
+                con.execute("INSERT INTO label(id, kind, value, source) VALUES (?,?,?,?)",
+                            (id_, "out", album if lab["out"] else "", src))
             n += 1
     con.commit()
     print(f"labels: {n} confirmed photos imported from {path}")
