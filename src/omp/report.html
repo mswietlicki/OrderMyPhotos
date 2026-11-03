@@ -259,7 +259,12 @@ function showLb(x = lbItem && lbOpen ? lbItem : order[cur]) {
   lbOpen = true;
   document.getElementById("lb").classList.add("open");
   const im = document.getElementById("lbimg");
-  im.onerror = () => { im.onerror = null; im.src = B + "t/" + x.id + ".jpg"; };  // original not reachable: thumbnail
+  im.onerror = () => {  // original not reachable (a copy of the bundle without the photos): the thumbnail, and say so
+    im.onerror = null;
+    im.src = B + "t/" + x.id + ".jpg";
+    if (lbItem === x) document.getElementById("lbside").insertAdjacentHTML("afterbegin",
+      `<p class="k" style="color:#c60">The original isn't reachable from here (${esc(decodeURIComponent(x.src.replace(/^(\.\.\/)+/, "")))}), so this is the 512 px thumbnail. Open the bundle at the root of the library to see the originals.</p>`);
+  };
   im.src = x.src;
   const c = x.cap, f = x.f, v = verdictOf(x);
   const num = (k, d = 2) => f[k] == null ? "–" : (+f[k]).toFixed(d);
