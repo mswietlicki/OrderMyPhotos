@@ -146,3 +146,70 @@ The bursts are right: the user changed almost none of them. The picks are where 
 - **Text pages:** 27 candidates, 24 mostly text, OCR at ~58 s per page on the 4090 (Unlimited-OCR-2, mimir D23). They include the guidebook: 6 phone shots and 4 camera shots of different pages, now **one document set of 10 pages, all kept**, proposed into `Dokumenty/`, with 2 pages flagged as turned. The VLM was first asked which way they were turned and said 90° clockwise. The OCR of that came out as Polish-looking nonsense ("nadzwyczel", "Puffowego Złobica"), while at 270° it reads correctly ("nadzwyczaj stromej płyty"). Asking "is it upright?" for each rotation picks 270° for both pages. There's one `.txt` per page in the bundle (`OrderMyPhotos/text/…`), to be written next to the photos when applied. Receipts come out of the OCR as HTML tables, which are turned into one line per item. Full-text search (FTS5) finds the guidebook pages by a peak's name.
 - **Retakes of the same text:** the first text comparison (a character-level ratio, < 0.6 = different pages) turned 5 retakes of the same board at Easter into a document set. Word overlap against the shorter text separates them cleanly (retakes 0.84–0.99, different pages ≤ 0.48), so pages now need ≥ 0.7 to be one burst. That leaves 3 document sets.
 - **Still open:** a photo stored in an album and in `Pictures/Places` is one photo with one verdict. The user kept the `Places` copy and archived the album copy (it isn't the best of its album burst). Decisions per file, with each curated folder judged on its own, are the next change to the data model.
+
+## Run s4: proposals for unsorted photos (2026-11-03)
+
+**Sample added:**
+- two more 2019 albums;
+- 483 unsorted photos from June–August 2019 (`Pictures/Photos/2019`);
+- the `Pictures/People` folders (806 photos; faces only, P27);
+- up to 40 example photos from each of 18 thematic folders (349; policy `reference` in the sample, so they only teach routing);
+- in s4c, 250 WhatsApp images (all that arrived near a sample album's date or in 2019, plus random others).
+
+The library index (599 dated albums, their content hashes and capture times) comes from the OneDrive manifest.
+
+**Speed:**
+- s4, 666 new photos:
+  - previews 7.0/s;
+  - DINOv2 36/s, SigLIP 2 17/s, Q-ReAlign 2.7/s, subjects 8.4/s, depth 6.4/s;
+  - NudeNet 57/s and InsightFace 5.7/s on the CPU;
+  - the judge: 455 calls at 1.4 s.
+- s4c, 1,402 more photos:
+  - DINOv2 40/s, SigLIP 2 20/s, Q-ReAlign 2.8/s, subjects 9.3/s, depth 4.7/s;
+  - faces again for all 2,535 photos (the embeddings were missing in s4) at 5.7/s, 2,558 faces;
+  - captions for 235 more kept photos at 4.0 s each;
+  - the new kinds (`+zeroshot@2`) recomputed for 1,133 photos from their stored embeddings in seconds.
+- **Text:** s4's first version OCR'd all 64 candidates: 31 min at 28.6 s per page, with Qwen3.8 evicted. With P34 the text stage only checks each candidate (42 in s4c, 1.6 s each) and tags the text pages "OCR needed".
+
+**Picks against the labels** (the 5 labelled albums, 466 photos): unchanged from s3. Bursts < 60 s P/R 0.99/0.97, ≥ 60 s 0.94/0.91, false archives 9 %, false keeps 52 %, top-1 88/104.
+
+**People (S8, P27):**
+- 1,720 faces of usable size went into 108 clusters of 3+. 12 are named from the People folders, and the owner is found from the manifest.
+- The album names (599, read in 10 calls of 18 s) named no further cluster yet. Only 7 albums are processed here, so few clusters recur in two of them.
+
+**Proposals** for 733 unsorted photos (483 + 250 WhatsApp):
+
+| Rule | Photos | Note |
+|---|---|---|
+| Copy of an album photo (hash) | 0 | |
+| Downloaded (P31) | 41 | to `Other/Meme` 17, `Other/Funny` 17, `Albums/Screeshots` 5, `Other/Random` 2 |
+| Messenger photo joins an album it looks like (P32) | 2 | sent the next day, SigLIP 2 cosine 0.90. Placed at its look-alike's moment, it joined that burst and the judge ranked it best |
+| Other messenger photos | 207 | thematic folders, and 35 to category folders (screens 26, documents 5, labels 3, receipts 1) |
+| Taken during an album (P25) | 46 | 42 of them in a shop 45–70 min before a trip album's first photo, 1.3 km away, inside the 2-hour margin |
+| Reference photos to a category folder | 49 | 4 folders |
+| New album (8+ kept photos) | 5 events | |
+| Small events to thematic folders (P29) | 47 events | |
+
+- **The messenger rule, measured on the library:** 63 % of all 3,717 WhatsApp images arrived during some album's days (or up to 3 days after), and the user put 1.9 % of those into that album. The first version let the day alone decide when the album had nothing to compare with, and joined 91 of the 250 to albums. Now only look-alikes join (≥ 0.80 within the days, ≥ 0.88 within 60 days).
+- **Thematic folders** (all photos routed there in s4c): `Other/Random` 111, two undated albums 42 and 35 (their look is animals), `Places/<city>` 36, `Other/Meme` 29, `Other/Funny` 22, `Other/Food` 20, … An undated album named after a person first took 117 photos, because its average look is "a photo of someone". Albums named after a person (a People folder's first name or a name the album names mention) are now filled by faces only.
+- **Album folders in the wrong place (P30):** the first rule found 452 on the manifest, 391 of them camera-upload day folders. With day folders, a device's day folders, sub-albums and curated folders excluded, it finds 36 with 8,238 photos: 18 phone-gallery albums, 14 older named event folders, a few named upload folders and a project folder. 4 of them merge into an album of the same name.
+- **The namer against the user's own album names:** the 42 shop photos joining a trip album would have been named after the shop's district and the shopping. They show what the margin pulls in, but say little about naming. People named in the photos only reach the namer from this run on.
+
+**OCR, three test pages read four ways (s4b):**
+- **Flattening the page** (OpenCV outline and perspective warp) found no page outline in any of the three.
+- **Single view instead of tiles:** no faster (28–81 s per page). Clearly worse on the 5504 px camera photo, mixed on the phone photo, the same on a receipt.
+- **Qwen3.8 reading the photo directly:** 3–5× faster (7–22 s), with better diacritics. But it invents words (a non-word form of the peak's name, three times) and rewrites others ("odgraniczony" → "ograniczony"), so it isn't the OCR.
+- So tiles stay, and the OCR is now a post-process (P34).
+
+**Problems found and fixed:**
+- Captions: a JSON answer cut off at the token limit (retried with 3× the budget, else that photo is skipped), and a caption of a photo now only in a People folder.
+- Album dates: an album named "2018-2019 …" (not a date).
+- Face embeddings weren't stored. `normed_embedding` is a property of InsightFace's face, not a dict key; the model version was bumped to redo them.
+- The OCR candidates included the People folders and the thematic examples.
+- A joining photo in a burst the reviewer labelled in an earlier run showed as a burst of its own. It now takes the reviewer's group.
+
+**Still open:**
+- the 2-hour margin before an album's first photo (the shop photos above);
+- whether the two animal-looking undated albums should take photos by look;
+- the OCR post-process over the kept pages;
+- per-file decisions for copies in two curated folders.

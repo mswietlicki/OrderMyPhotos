@@ -3,13 +3,15 @@
 #   unsorted  camera streams: also culled, then sorted into event or category albums (S11)
 #   describe  screenshots and scans: captions only
 #   ignore    not personal photos; still counted as copies (S1) and as S3b examples
+#   people    a person's folder: the faces in it teach the pipeline who that person is (S8); the photos stay as they are
+#   reference examples only (a sample's copies of thematic folders): they teach S11 routing, nothing else
 # Open question 6 in decisions.md: confirm the top-level folders.
 rules:
   - {glob: "**/_archived/**", policy: cull}        # v1's archive folders: candidates again, at their album
   - {glob: "Pictures/Albums/**", policy: cull}
   - {glob: "Pictures/Info/**", policy: cull}
   - {glob: "Pictures/Other/**", policy: cull}
-  - {glob: "Pictures/People/**", policy: cull}
+  - {glob: "Pictures/People/**", policy: people}
   - {glob: "Pictures/Places/**", policy: cull}
   - {glob: "Pictures/Photos/**", policy: unsorted}
   - {glob: "Obrazy/Samsung Gallery/**", policy: unsorted}

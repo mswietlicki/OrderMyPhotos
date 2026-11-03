@@ -41,6 +41,9 @@ class Policy:
     def __init__(self, path: Path):
         spec = yaml.safe_load(path.read_text(encoding="utf-8"))
         self.rules = [(r["glob"], r["policy"]) for r in spec["rules"]]
+        extra = os.environ.get("OMP_POLICY_EXTRA")  # e.g. a sample's own rules, checked first
+        if extra and Path(extra).exists():
+            self.rules = [(r["glob"], r["policy"]) for r in yaml.safe_load(Path(extra).read_text(encoding="utf-8"))["rules"]] + self.rules
         self.default = spec.get("default", "unsorted")
         self.precedence = spec.get("precedence", [])
 

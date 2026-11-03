@@ -325,11 +325,12 @@ The page itself:
   - `text_in_image` holds a short excerpt. The full transcription comes from the OCR stage below.
 
   Text in **Sensitive** photos (card numbers checked by Luhn, PESEL by its checksum, IBAN, ID numbers) stays in the DB. It is never written into file metadata or captions.
-- **OCR of text pages** (`omp text`, decisions.md P24): for photos that the zero-shot kinds or the captions call text-like (documents, book pages, notes, receipts, labels, screens), before grouping:
-  1. **Orientation.** The resident VLM is asked "is the text upright?", about the photo as it is and, if not, about each rotation, and the best rotation wins. Asked which way a page is turned, it got the direction wrong. A turned page gets a **lossless rotate** proposal (EXIF Orientation, no re-encode), and the OCR reads it upright.
-  2. **OCR.** Unlimited-OCR-2 (mimir `stacks/ocr`, on the 4090 through llama-swap) reads the original at up to 2560 px and returns plain text per page, in reading order. Tables (receipts, price lists) become one line per row with tab-separated cells.
-  3. **Saved with the photo.** The text goes into the DB with an FTS5 index. A photo that is **mostly text** gets a **`.txt` file of the same name next to it** when the plan is applied (the bundle keeps a copy under `OrderMyPhotos/text/`).
-  4. **Its own subfolder.** In an album, the text pages move to the album's **`Dokumenty/`** subfolder (configurable), so the album shows the trip and the pages stay next to it (user, 2026-11-03).
+- **Text pages** (`omp text`, decisions.md P24, P34): for photos that the zero-shot kinds or the captions call text-like (documents, book pages, notes, receipts, labels, screens), before grouping:
+  1. **Is it a page of text?** The resident VLM is asked whether there's text, then whether the photo is mostly a page of text (about 1 s each). A page gets the **"OCR needed"** tag until the OCR has read it.
+  2. **Orientation.** The resident VLM is asked "is the text upright?", about the photo as it is and, if not, about each rotation, and the best rotation wins. Asked which way a page is turned, it got the direction wrong. A turned page gets a **lossless rotate** proposal (EXIF Orientation, no re-encode), and the OCR reads it upright.
+  3. **OCR, a post-process** (`omp ocr`, P34): once the albums are done and the photos sorted, Unlimited-OCR-2 (mimir `stacks/ocr`, on the 4090 through llama-swap, evicting the chat model) reads the kept pages at up to 2560 px. It keeps the layout blocks (P28), then the guarded repair runs. Tables (receipts, price lists) become Markdown tables.
+  4. **Saved with the photo.** The text goes into the DB with an FTS5 index. A photo that is **mostly text** gets a **`.txt` file of the same name next to it** when the plan is applied (the bundle keeps a copy under `OrderMyPhotos/text/`).
+  5. **Its own subfolder.** In an album, the text pages move to the album's **`Dokumenty/`** subfolder (configurable), so the album shows the trip and the pages stay next to it (user, 2026-11-03).
 
   Different pages shot together form a **document set** (S4): they're never culled against each other, the review page shows "page 2/4", and a set can later become one searchable PDF.
 - **Search:**
@@ -406,16 +407,27 @@ There are two kinds: **event albums** for memories, described here, and **catego
 - **New album otherwise:**
   - It's named in the existing style, `YYYY-MM-DD <name>` (trips may use `YYYY-MM <name>`).
   - A text-only LLM call writes the name in Polish from the places, named people, holidays and the event's captions. A few dozen of the user's 632 album names serve as style examples.
-  - Events below a minimum size (e.g. 10 kept photos) don't get an album. They stay in place, tagged with their event (P10).
+  - Events below a minimum size (8 kept photos) don't get an album. Their photos go to a thematic folder (P29): a named person's folder, the user's thematic folder they look most like, `Other/Widoki`, `Other/Dom` or `Other/Random`. No photo stays unsorted.
 - **Ground truth for free:** the 632 existing albums. Running the segmenter over their photos, mixed into one stream, shows how well it reproduces the user's album boundaries (boundary F1, adjusted Rand index) before it proposes anything new.
 - **Review and apply, in the bundle (S6):** a folder of thousands of unsorted photos is never one review page. Each **proposed album** is its own unit in the bundle's index, next to the existing albums, marked as a proposal: "proposed: `<YYYY-MM-DD> <name>` · 86 photos · from `Obrazy/Samsung Gallery`". Its page is the same review page (bursts, keep / archive / bad, trust), plus:
   - the proposed name and date, editable;
   - "merge with the previous / next proposal" and "split here" at a photo;
   - "add to the existing album …" when it overlaps one;
-  - "leave these photos where they are".
+  - "Not an album: thematic folders", which routes its photos like a small event's.
 
-  Small events that don't get an album, and the photos the reviewer leaves out, stay in the folder.
-- **Apply:** an approved proposal creates the album folder and moves its kept photos into `Pictures/Albums/<year>/<name>/`, while its culled photos go to the archive like any other. Reference photos go to their category albums the same way. On an external drive or share the page does this itself, like the other moves. On OneDrive `mimir-onedrive apply` does it, with `copy` instead of `move` for photos from two-way sync folders (P8). Immich albums can follow later, through its API.
+  Every photo ends up in an album or a thematic folder (P29).
+- **Apply:** an approved proposal creates the album folder and moves its kept photos into `Pictures/Albums/<year>/<name>/`, while its culled photos go to the archive like any other. Reference photos go to their category albums the same way. On an external drive or share the page does this itself, like the other moves. On OneDrive `mimir-onedrive apply` does it, and photos from Samsung Gallery's synced folders are moved too, with the phone's copy cleaned (P30). Moves happen only in the production run, after review, never in a sample run. Immich albums can follow later, through its API.
+- **Rules, in order** (decisions.md P25, P29–P32):
+  1. Already in an album → archive the copy.
+  2. Downloaded images (memes, wallpapers, art, infographics, screenshots) → a media folder, never an event album, even when they arrived during the trip (P31).
+  3. Messenger photos (WhatsApp, Messenger, Facebook) carry only the day they arrived, so each is decided on its own. A real photo joins an album it arrived during (or up to 3 days after) if it looks like it, or one within 60 days it looks very much like, never on the day alone. A document goes to its category folder, and the rest to a thematic folder (P32).
+  4. **Taken while an album's event or trip was going on → it joins that album, whatever folder it's in.** Text pages go into its `Dokumenty/`, and full nudity into its ` PRIV` sibling (P26).
+  5. Other reference photos → their category album.
+  6. Other events → a new album, or a thematic folder when too small (P29).
+
+  Steps 1–4 run as their own stage, `place`, before grouping (S4). A photo that joins an album is grouped, ranked, captioned and reviewed with that album: it can form a new burst with the album's photos, and it shows on the album's page (P33).
+
+  Album folders outside `Pictures/Albums/<year>/` are proposed to move there (P30). The library's albums come from the OneDrive manifest, so the rules see the whole library.
 - **Progressive:** a proposal is ready when its event is closed (no photos for a while, or the next event has started) and its photos are processed. The folder is processed from the oldest photo onwards, so review can start long before a folder of 43k photos is done.
 
 ### S12 Videos

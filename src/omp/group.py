@@ -121,10 +121,18 @@ def run(cfg: Config, con, run_id: str):
     t0 = time.perf_counter()
     photos = [dict(r) for r in con.execute(
         "SELECT p.id, p.taken_ts, p.lat, p.lon, MIN(f.path) AS path, MIN(f.album) AS album"
-        " FROM photo p JOIN file f ON f.id = p.id WHERE f.policy != 'ignore' GROUP BY p.id ORDER BY p.taken_ts")]
+        " FROM photo p JOIN file f ON f.id = p.id WHERE f.policy NOT IN ('ignore', 'people', 'reference') GROUP BY p.id ORDER BY p.taken_ts")]
     dino = get_vecs(con, "dino")
     phash = get_data(con, "phash")
     photos = [p for p in photos if p["id"] in dino]
+    # A messenger photo that joins an album has only the day it arrived. It is placed at the moment of the
+    # album photo it looks most like (S11 `place`), so a re-sent copy is found as a copy and a friend's shot
+    # of the same moment can join the album's burst (P33). After the original, if they're at the same moment.
+    placed = {r[0]: r[1] for r in con.execute("SELECT id, value FROM signal WHERE kind='placed_at'")}
+    for p in photos:
+        if p["id"] in placed:
+            p["taken_ts"], p["placed"] = placed[p["id"]], True
+    photos.sort(key=lambda p: (p["taken_ts"], p.get("placed", False)))
     con.execute("DELETE FROM grp_member WHERE gid IN (SELECT gid FROM grp WHERE run=?)", (run_id,))
     con.execute("DELETE FROM grp WHERE run=?", (run_id,))
     view = Viewpoint(cfg)
@@ -176,7 +184,9 @@ def run(cfg: Config, con, run_id: str):
                 if ids[i] in pages and ids[j] in pages:
                     # Pages of one document look alike to an image embedding; only retakes of the same page
                     # (the same text) are a burst. Different pages make a document set instead (P16).
-                    if text_similarity(pages[ids[i]], pages[ids[j]]) < SAME_TEXT:
+                    # Until the OCR has read them, two text pages count as different pages: all kept.
+                    a_text, b_text = pages[ids[i]], pages[ids[j]]
+                    if not a_text or not b_text or text_similarity(a_text, b_text) < SAME_TEXT:
                         if gap <= DOCSET_GAP:
                             doc_links.append((ids[i], ids[j]))
                         continue

@@ -218,7 +218,8 @@ def run(cfg: Config, con, run_id: str):
         st = full.stat()
         k = known.get(rel)
         if k and k[0] == st.st_size and abs(k[1] - st.st_mtime) < 1e-3:
-            con.execute("UPDATE file SET seen_run=? WHERE path=?", (run_id, rel))
+            # Unchanged file; the folder policy may have changed, so it's applied again.
+            con.execute("UPDATE file SET seen_run=?, policy=? WHERE path=?", (run_id, policy(rel), rel))
         else:
             todo.append((full, rel))
     with ProcessPoolExecutor(max_workers=cfg.workers) as pool:

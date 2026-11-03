@@ -9,7 +9,7 @@ import torch
 from PIL import Image
 
 from .config import Config
-from .db import done_ids, log_timing, put_signal
+from .db import done_ids, get_vecs, log_timing, put_signal
 
 DINO = "facebook/dinov2-base"
 SIGLIP = "google/siglip2-so400m-patch16-naflex"
@@ -124,6 +124,9 @@ KINDS = [
                              "zdjęcie rur, kabli lub licznika"]),
     ("screenshot", "media", ["a screenshot of a phone app", "zrzut ekranu telefonu"]),
     ("meme", "media", ["a meme with text", "mem z napisem"]),
+    ("wallpaper", "media", ["a desktop or phone wallpaper image", "tapeta na pulpit lub telefon"]),
+    ("art", "media", ["digital art, an illustration or concept art", "grafika cyfrowa, ilustracja lub concept art"]),
+    ("infographic", "media", ["an infographic or a chart with text", "infografika lub wykres z tekstem"]),
     ("accidental", "junk", ["an accidental photo taken inside a pocket, completely dark or blurry",
                             "przypadkowe zdjęcie, ciemne i rozmazane"]),
     ("floor", "junk", ["an accidental photo of the floor or the ceiling", "przypadkowe zdjęcie podłogi"]),
@@ -138,11 +141,27 @@ def siglip_text(model, processor, texts, dev):
     return torch.nn.functional.normalize(out.float(), dim=-1)
 
 
+KINDS_MODEL = SIGLIP + "+zeroshot@2"  # @2: wallpaper, art and infographic (media) added
+
+
+def kind_row(soft, probs) -> tuple[float, dict]:
+    purposes = {}
+    for (key, purpose, _), p in zip(KINDS, soft):
+        purposes[purpose] = purposes.get(purpose, 0.0) + float(p)
+    top = sorted(zip([k_ for k_, _, _ in KINDS], soft.tolist(), probs.tolist()), key=lambda t: -t[1])[:3]
+    return purposes.get("memory", 0.0), {"purpose": max(purposes, key=purposes.get), "purposes": purposes,
+                                         "top": [{"key": a, "p": round(b, 4), "sigmoid": round(c, 4)} for a, b, c in top]}
+
+
 def run_siglip(cfg: Config, con, run_id: str):
     from transformers import AutoModel, AutoProcessor
 
     ids = todo_ids(con, "siglip", SIGLIP)
-    if not ids:
+    # Kinds from an older label list are recomputed from the stored embeddings: no image pass needed.
+    stale = [r[0] for r in con.execute("SELECT s.id FROM signal s WHERE s.kind='siglip' AND NOT EXISTS"
+                                       " (SELECT 1 FROM signal k WHERE k.id=s.id AND k.kind='kind' AND k.model=?)",
+                                       (KINDS_MODEL,))]
+    if not ids and not stale:
         return
     dev = device()
     dtype = torch.float16 if dev != "cpu" else torch.float32
@@ -163,17 +182,21 @@ def run_siglip(cfg: Config, con, run_id: str):
         out = out if torch.is_tensor(out) else out.pooler_output
         emb = torch.nn.functional.normalize(out.float(), dim=-1)
         logits = (emb @ text.T) * scale + bias
-        probs = torch.sigmoid(logits)[0].cpu().numpy()
-        soft = torch.softmax(logits[0], -1).cpu().numpy()
-        purposes = {}
-        for (key, purpose, _), p in zip(KINDS, soft):
-            purposes[purpose] = purposes.get(purpose, 0.0) + float(p)
-        top = sorted(zip([k_ for k_, _, _ in KINDS], soft.tolist(), probs.tolist()), key=lambda t: -t[1])[:3]
+        value, data = kind_row(torch.softmax(logits[0], -1).cpu().numpy(), torch.sigmoid(logits)[0].cpu().numpy())
         put_signal(con, id_, "siglip", SIGLIP, vec=emb[0].cpu().numpy())
-        put_signal(con, id_, "kind", SIGLIP + "+zeroshot@1", value=purposes.get("memory", 0.0),
-                   data={"purpose": max(purposes, key=purposes.get), "purposes": purposes,
-                         "top": [{"key": a, "p": round(b, 4), "sigmoid": round(c, 4)} for a, b, c in top]})
-    _timed(con, run_id, "signals.siglip", len(ids), t0, dev)
+        put_signal(con, id_, "kind", KINDS_MODEL, value=value, data=data)
+    if ids:
+        _timed(con, run_id, "signals.siglip", len(ids), t0, dev)
+    stored = get_vecs(con, "siglip")
+    for id_ in stale:
+        if id_ in stored:
+            emb = torch.from_numpy(stored[id_]).to(dev).float()[None]
+            logits = (emb @ text.T) * scale + bias
+            value, data = kind_row(torch.softmax(logits[0], -1).cpu().numpy(), torch.sigmoid(logits)[0].cpu().numpy())
+            put_signal(con, id_, "kind", KINDS_MODEL, value=value, data=data)
+    con.commit()
+    if stale:
+        print(f"signals.siglip: kinds recomputed for {len(stale)} photos from their stored embeddings")
     del model
     free()
 
@@ -226,3 +249,39 @@ def run_iqa(cfg: Config, con, run_id: str):
     _timed(con, run_id, "signals.iqa", len(ids), t0, dev)
     del model
     free()
+
+
+# --- Nudity: full nudity goes to the album's " PRIV" sibling; partial nudity is fine anywhere (P26) ---
+
+NUDITY = "nudenet@3.4.2"
+# Full nudity, as the user put it (2026-11-03): exposed genitals or anus, or a bare body (bare buttocks and
+# bare breasts together). Topless, shirtless, swimwear or underwear alone are partial nudity and stay put.
+FULL = {"FEMALE_GENITALIA_EXPOSED", "MALE_GENITALIA_EXPOSED", "ANUS_EXPOSED"}
+BARE = ({"BUTTOCKS_EXPOSED"}, {"FEMALE_BREAST_EXPOSED"})
+NUDITY_SCORE = 0.5     # detector score for a part to count
+
+
+def full_nudity(detections) -> bool:
+    parts = {d["class"] for d in detections if d["score"] >= NUDITY_SCORE}
+    return bool(parts & FULL) or all(parts & group for group in BARE)
+
+
+def run_nudity(cfg: Config, con, run_id: str):
+    from nudenet import NudeDetector
+
+    ids = todo_ids(con, "nudity", NUDITY)
+    if not ids:
+        return
+    detector = NudeDetector()  # the bundled 320n ONNX model, on the CPU
+    t0 = time.perf_counter()
+    flagged = 0
+    for i in ids:
+        dets = detector.detect(str(cfg.preview(i)))
+        full = full_nudity(dets)
+        flagged += full
+        exposed = sorted({d["class"] for d in dets if d["score"] >= NUDITY_SCORE and d["class"].endswith("_EXPOSED")})
+        put_signal(con, i, "nudity", NUDITY, value=float(full), data={"full": full, "exposed": exposed})
+    dt = time.perf_counter() - t0
+    log_timing(con, "signals.nudity", run_id, len(ids), dt, "cpu")
+    con.commit()
+    print(f"signals.nudity: {len(ids)} images, {flagged} with full nudity, {dt:.1f} s ({len(ids) / max(dt, 1e-6):.1f} img/s on cpu)")

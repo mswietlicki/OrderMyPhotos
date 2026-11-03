@@ -61,11 +61,17 @@ class VLM:
 
     def json(self, content: list, schema: dict, system: str | None = None, max_tokens=1024) -> dict:
         messages = ([{"role": "system", "content": system}] if system else []) + [{"role": "user", "content": content}]
-        d = self._post({
-            "messages": messages, "max_tokens": max_tokens, "temperature": 0.2,
-            "response_format": {"type": "json_schema", "json_schema": {"name": "out", "schema": schema, "strict": True}},
-        })
-        return json.loads(d["choices"][0]["message"]["content"])
+        for budget in (max_tokens, max_tokens * 3):  # an answer cut off at the budget is retried once with more
+            d = self._post({
+                "messages": messages, "max_tokens": budget, "temperature": 0.2,
+                "response_format": {"type": "json_schema", "json_schema": {"name": "out", "schema": schema, "strict": True}},
+            })
+            try:
+                return json.loads(d["choices"][0]["message"]["content"])
+            except json.JSONDecodeError:
+                if d["choices"][0].get("finish_reason") != "length":
+                    raise
+        raise ValueError(f"VLM answer still cut off at {max_tokens * 3} tokens")
 
     def stats(self) -> str:
         return (f"{self.calls} calls, {self.seconds:.0f} s ({self.seconds / max(self.calls, 1):.1f} s/call),"

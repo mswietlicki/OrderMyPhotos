@@ -74,7 +74,11 @@ Run s1 (2026-11-03) did a first pass of every stage below on the B50 and the res
 - [x] Text pages (P24): `omp text` (orientation from the VLM, Unlimited-OCR-2 on the 4090), FTS5, `.txt` per text page in the bundle, `Dokumenty/` placement, document sets by word overlap; the page shows the OCR text, "rotate", "page n/m" and "→ Dokumenty/"
 - [ ] Apply for text pages: write the `.txt` next to the photo, set EXIF Orientation for the rotate proposals, move to `Dokumenty/`
 - [ ] Decisions per file for photos stored in more than one curated folder: each folder is judged on its own (s2: the user kept the `Places` copy of an album photo that isn't the best of its burst)
-- [ ] OCR speed: try base mode (one global view) instead of up to 16 tiles; ~58 s per page now
+- [x] OCR speed: base mode (one global view) tried in s4b on 3 pages. It's no faster than tiles (28–81 s per page) and worse on 5504 px camera photos, so tiles stay. Flattening the page (OpenCV outline + warp) found no outline on any of the 3. Qwen3.8 reading the photo directly is 3–5× faster with better diacritics, but it invents words, so it isn't used as the OCR (sample-runs.md s4)
+- [ ] S11 first pass (run s4, P25): 483 unsorted photos from June–August 2019 with 2 more albums; library index from the OneDrive manifest; copy / taken-during / category / new album; LLM album names; proposal review units in the bundle (name, accept, "Not an album: thematic folders", `o` keeps a photo out). Full nudity to ` PRIV` albums (P26)
+- [ ] S11 second pass (run s4c, P29–P32): no photo left unsorted (person, thematic, Widoki / Dom / Random folders); album folders outside `Albums/<year>/` relocated; downloads to media folders; 250 WhatsApp images decided one by one; people named (S8) for album names; the namer measured against the user's names
+- [ ] OCR post-process (P34): `omp ocr` over the kept text pages once the sample's albums are reviewed; then retakes of one page found by their text
+- [ ] Messenger thresholds (P32) checked on the first OneDrive batch, with every album embedded: arrival lag, look-alike 0.80 / 0.88
 - [ ] Unsorted folders in the bundle (S11): one review unit per proposed album, not one page per folder. Editable name and date, merge / split / add to an existing album / leave in place; apply creates the album folder and moves the kept photos. First on a slice of `Obrazy/Samsung Gallery` (a few weeks, a few hundred photos), measured against the existing albums of the same weeks
 
 ## Phase 6 — Videos (sample)
@@ -98,7 +102,7 @@ Each wave is planned, reviewed and applied, then checked after the next pull.
 - [ ] Wave 1: exact copies (10,628 files, 68.8 GiB)
 - [ ] Wave 2: cross-folder copies (resized, WhatsApp, edits per policy)
 - [ ] Wave 3: culling, album by album: burst picks, bad singles below the floor, and v1's `_archived/` folders (restore or re-archive, then remove the folder)
-- [ ] Wave 4: albums for unsorted photos: reference photos to category albums first, then memories to event albums (moves, or copies under P8)
+- [ ] Wave 4: albums for unsorted photos: reference photos to category albums first, then memories to event albums, the rest to thematic folders; misplaced album folders moved; Samsung Gallery moved too and the phone's copy cleaned (P30)
 - [ ] Wave 5: captions, tags and people, with one metadata write and one upload per file
 - [ ] Wave 6: videos (copies, junk clips, opt-in re-encode)
 - [ ] Wave 7: delete from the archive, as an explicit plan after a cooling-off period

@@ -13,3 +13,5 @@ insightface==2.1
 accelerate==1.15.0
 huggingface-hub==2.4.0
 tzdata==2026.1
+zstandard==0.25.0
+nudenet==3.4.2

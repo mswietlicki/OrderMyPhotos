@@ -17,8 +17,9 @@ The vision models ran on the B50 next to the always-on RAG models, one at a time
 | Qwen3.8-27B caption: 1 image, JSON schema, PL + EN | 4090 | **4.1 s** per photo | ~1,370 prompt + ~300 output tokens |
 | Qwen3-Embedding-4B, tag → vocabulary | B50 | (cheap) | Phrase-to-phrase per synonym, cosine ≥ 0.80 |
 | RT-DETR R50 + ViTPose++ base + SigLIP 2 crops (subjects, P22) | B50, PyTorch XPU | **8.1 img/s** (1,030 people and animals in 467 photos) | Post-processing on the CPU (XPU boolean-mask bug). Didn't separate the user's keep/archive (P23) |
-| Unlimited-OCR-2 (text pages, P24) | 4090, transformers 4.52.1 + torch 2.13 CUDA, through llama-swap | **~58 s per page** at ≤ 2560 px, 8.9 GB | Evicts Qwen3.8 while it runs. To try: base mode (one global view) instead of up to 16 tiles, for speed |
+| Unlimited-OCR-2 (text pages, P24) | 4090, transformers 4.52.1 + torch 2.13 CUDA, through llama-swap | **~58 s per page** at ≤ 2560 px in the first test, **28.6 s per page** over 64 photos in s4, 8.9 GB | Evicts Qwen3.8 while it runs. To try: base mode (one global view) instead of up to 16 tiles, for speed |
 | Qwen3.8 "keep this one too?" (an experiment) | 4090 | 1.6 s per pair | AUC 0.61 against the labels: not used |
+| NudeNet 3.4.2 (320n ONNX), full nudity (P26) | CPU, onnxruntime | **57 img/s** on 1,132 photos (s4), 45 img/s on the People folders | Exposed/covered body parts. Licence: MIT on PyPI, AGPL-3.0 on GitHub; private use either way |
 
 The library is private and non-commercial, so non-commercial licences (InsightFace weights, pyiqa, Depth-Anything-V2 Base/Large) are acceptable. They are marked anyway in case anything is ever shared.
 

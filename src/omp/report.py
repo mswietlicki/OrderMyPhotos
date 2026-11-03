@@ -16,7 +16,8 @@ import hashlib
 import html
 import json
 import re
-from collections import defaultdict
+from zoneinfo import ZoneInfo
+from collections import Counter, defaultdict
 from datetime import datetime
 from pathlib import Path, PurePosixPath
 from urllib.parse import quote
@@ -81,13 +82,13 @@ def run(cfg: Config, con, run_id: str, out: str | None):
     for r in con.execute("SELECT id, path, v1_archived, album FROM file WHERE media='photo' ORDER BY path"):
         files.setdefault(r["id"], dict(r))
     album_files = defaultdict(set)
-    for r in con.execute("SELECT id, album FROM file WHERE media='photo' AND policy != 'ignore'"):
-        album_files[r["album"]].add(r["id"])
+    for r in con.execute("SELECT id, album FROM file WHERE media='photo' AND policy IN ('cull', 'describe')"):
+        album_files[r["album"]].add(r["id"])  # unsorted folders are reviewed as proposals (S11), not as one page
     photos = {r["id"]: dict(r) for r in con.execute("SELECT id, taken_local, taken_ts FROM photo")}
     dec = {r["id"]: dict(r) for r in con.execute("SELECT * FROM decision WHERE run=?", (run_id,))}
     caps = {r["id"]: json.loads(r["data"]) for r in con.execute("SELECT id, data FROM caption")}
     try:
-        ocr = {r["id"]: dict(r) for r in con.execute("SELECT id, rotate, mostly_text, text FROM text")}
+        ocr = {r["id"]: dict(r) for r in con.execute("SELECT * FROM text")}
     except Exception:  # noqa: BLE001 - no text stage yet
         ocr = {}
     groups = {}
@@ -120,11 +121,13 @@ def run(cfg: Config, con, run_id: str, out: str | None):
         feats = json.loads(d["features"])
         c = caps.get(id_)
         tx = ocr.get(id_)
-        if tx and tx["mostly_text"]:
+        if tx and tx["mostly_text"] and tx["text"]:
             # The text file that goes next to the photo when the plan is applied; the bundle keeps a copy.
             out = bundle / "text" / (f["path"].rsplit(".", 1)[0] + ".txt")
             out.parent.mkdir(parents=True, exist_ok=True)
             out.write_text(tx["text"].rstrip() + "\n", encoding="utf-8")
+            if tx.get("blocks"):  # the layout, with each block's position on the page
+                out.with_suffix(".ocr.json").write_text(tx["blocks"], encoding="utf-8")
         return {
             "id": id_, "name": name, "src": src, "time": p["taken_local"][11:19], "date": p["taken_local"][:10],
             "ts": p["taken_ts"], "event": event_of.get(id_, 0), "group": f"B{d['gid']}" if d["gid"] is not None else "",
@@ -133,8 +136,8 @@ def run(cfg: Config, con, run_id: str, out: str | None):
             "protected": d["protected"],
             "f": {k: feats.get(k) for k in ("sharp", "rel_sharp", "quality", "aesthetics", "motion", "faces", "purpose",
                                            "memory_p", "bt", "p_keep", "clip_hi", "maybe", "p_extra", "rotate", "place",
-                                           "text_page", "docset")},
-            "ocr": tx["text"] if tx and tx["mostly_text"] else None,
+                                           "text_page", "docset", "ocr_needed")},
+            "ocr": tx["text"] if tx and tx["mostly_text"] and tx["text"] else None,
             "v1": v1.get((f["album"], name)), "v1_archived": bool(f["v1_archived"]),
             "cap": None if not c else {k: c.get(k) for k in ("title_pl", "title_en", "description_pl", "description_en",
                                                              "text_in_image", "purpose", "category", "names")}
@@ -142,16 +145,44 @@ def run(cfg: Config, con, run_id: str, out: str | None):
         }
 
     template = (Path(__file__).parent / "report.html").read_text(encoding="utf-8")
+    # S11 proposals for unsorted photos. Those that join an album with a page of its own are reviewed on that
+    # page, with its bursts (P33); the rest get a review unit each, below.
+    try:
+        props = [dict(r) for r in con.execute("SELECT * FROM proposal WHERE run=? ORDER BY start", (run_id,))]
+    except Exception:  # noqa: BLE001 - no albums stage yet
+        props = []
+    tz = ZoneInfo(cfg.tz)
+    placed = {r[0]: r[1] for r in con.execute("SELECT id, value FROM signal WHERE kind='placed_at'")}
+    joining, joined_pids = defaultdict(dict), set()
+    for pr in props:
+        base = (pr["target"] or "").removesuffix(" PRIV").removesuffix("/Dokumenty")
+        if pr["action"] == "add" and base in album_files:
+            why = json.loads(pr["data"] or "{}").get("why")
+            for (i,) in con.execute("SELECT id FROM proposal_member WHERE pid=?", (pr["pid"],)):
+                if i in dec:
+                    joining[base][i] = {"from": str(PurePosixPath(files[i]["path"]).parent), "why": why,
+                                        "target": pr["target"]}
+            joined_pids.add(pr["pid"])
     taken, rows = set(), []
     for album in sorted(album_files):
-        ids = album_files[album]
+        ids = album_files[album] | set(joining[album])
         decided = [i for i in ids if i in dec]
         uncaptioned = [i for i in decided if dec[i]["verdict"] == "keep" and i not in caps]
         ready = len(decided) == len(ids) and not uncaptioned
         slug = album_slug(album, taken)
         row = {"album": album, "slug": slug, "photos": len(ids), "ready": ready, "done": len(decided) - len(uncaptioned)}
         if ready:
-            items = sorted((item(i) for i in ids), key=lambda x: (x["ts"], x["name"]))
+            items = []
+            for i in ids:
+                x = item(i)
+                if i in joining[album]:  # named by its path: it lives in another folder, and names may repeat
+                    x |= {"name": files[i]["path"], "joins": joining[album][i]}
+                    if i in placed:  # sent later: shown at the moment of the album photo it looks most like
+                        at = datetime.fromtimestamp(placed[i], tz)
+                        x["joins"]["sent"] = x["date"]
+                        x |= {"ts": placed[i], "date": at.strftime("%Y-%m-%d"), "time": at.strftime("%H:%M:%S")}
+                items.append(x)
+            items.sort(key=lambda x: (x["ts"], x["name"]))
             gids = {x["group"] for x in items if x["group"]}
             bursts = {f"B{gid}": {"cohesion": g["cohesion"], "span": g.get("span_s"), "min": g.get("min_margin")}
                       for gid, g in groups.items() if g["kind"] == "burst" and f"B{gid}" in gids}
@@ -160,16 +191,63 @@ def run(cfg: Config, con, run_id: str, out: str | None):
             data = {"run": run_id, "album": album, "base": "../", "generated": datetime.now().isoformat(timespec="seconds"),
                     "items": items, "bursts": bursts, "summary": json.loads(summary[0]) if summary else None,
                     "timings": timings,
-                    "user_labels": {x["name"]: seeded[(album, x["name"])] for x in items if (album, x["name"]) in seeded}}
+                    "user_labels": {x["name"]: seeded[(album, x["name"])] for x in items if (album, x["name"]) in seeded}
+                    | {x["name"]: seeded[k] for x in items if x.get("joins")
+                       and (k := (files[x["id"]]["album"], PurePosixPath(x["name"]).name)) in seeded}}
+            ulab = data["user_labels"]
+            for x in items:  # a joining photo shows in the burst the reviewer already labelled, under their name for it
+                if x.get("joins") and x["group"]:
+                    theirs = Counter(ulab[y["name"]]["group"] for y in items if y["group"] == x["group"]
+                                     and ulab.get(y["name"], {}).get("group"))
+                    if theirs:
+                        x["group"] = theirs.most_common(1)[0][0]
             (bundle / "albums" / f"{slug}.html").write_text(
                 template.replace("/*DATA*/null", json.dumps(data, ensure_ascii=False).replace("</", "<\\/")),
                 encoding="utf-8")
             row |= {"bursts": len(bursts), "keep": sum(1 for x in items if x["verdict"] == "keep"),
                     "review": sum(1 for x in items if x["tier"] == "review"), "start": items[0]["date"],
+                    "joining": len(joining[album]),
                     "cover": next((x["id"] for x in items if x["verdict"] == "keep"), items[0]["id"]),
                     "proposals": [[x["name"], x["verdict"], x["group"]] for x in items], "seeded": data["user_labels"]}
         rows.append(row)
-    (bundle / "index.html").write_text(index_page(run_id, rows), encoding="utf-8")
+
+    for pr in props:
+        if pr["pid"] in joined_pids:
+            continue
+        ids = [r[0] for r in con.execute("SELECT id FROM proposal_member WHERE pid=?", (pr["pid"],)) if r[0] in dec]
+        if not ids:
+            continue
+        pdata = json.loads(pr["data"] or "{}")
+        day = datetime.fromtimestamp(pr["start"], tz).strftime("%Y-%m-%d")
+        target = pr["target"] or ""
+        title = {"copy": f"Already in {PurePosixPath(target).name}", "add": f"Add to {target.split('/Albums/')[-1]}",
+                 "create": f"New album: {day} {pr['name']}", "leave": f"Small event {day}: stays where it is",
+                 "category": f"To {target}", "theme": f"To {target}",
+                 "relocate": f"Album folder to {target.split('/Albums/')[-1]}"}.get(pr["action"], pr["action"])
+        key = f"proposal:{pr['action']}:{target or day}"
+        slug = album_slug(f"{pr['action']} {day} {pr['name'] or PurePosixPath(target).name or ''}".strip(), taken)
+        items = sorted((item(i) for i in ids), key=lambda x: (x["ts"], x["name"]))
+        gids = {x["group"] for x in items if x["group"]}
+        bursts = {f"B{gid}": {"cohesion": g["cohesion"], "span": g.get("span_s"), "min": g.get("min_margin")}
+                  for gid, g in groups.items() if g["kind"] == "burst" and f"B{gid}" in gids}
+        user = {x["name"]: seeded[(files[x["id"]]["album"], x["name"])] for x in items
+                if (files[x["id"]]["album"], x["name"]) in seeded}
+        data = {"run": run_id, "album": key, "base": "../", "generated": datetime.now().isoformat(timespec="seconds"),
+                "items": items, "bursts": bursts, "summary": None, "timings": timings, "user_labels": user,
+                "proposal": {"pid": pr["pid"], "action": pr["action"], "target": target, "name": pr["name"], "title": title,
+                             "why": pdata.get("why"), "alternatives": pdata.get("alternatives", []), "days": pdata.get("days", []),
+                             "places": pdata.get("places", []), "away": pdata.get("away"),
+                             "sources": sorted({str(PurePosixPath(files[i]["path"]).parent) for i in ids})}}
+        (bundle / "albums" / f"{slug}.html").write_text(
+            template.replace("/*DATA*/null", json.dumps(data, ensure_ascii=False).replace("</", "<\\/")), encoding="utf-8")
+        rows.append({"album": key, "slug": slug, "photos": len(items), "ready": True, "kind": "proposal",
+                     "action": pr["action"], "title": title, "subtitle": pdata.get("why") or "",
+                     "bursts": len(bursts), "keep": sum(1 for x in items if x["verdict"] == "keep"),
+                     "review": sum(1 for x in items if x["tier"] == "review"), "start": day,
+                     "cover": next((x["id"] for x in items if x["verdict"] == "keep"), items[0]["id"]),
+                     "proposals": [[x["name"], x["verdict"], x["group"]] for x in items], "seeded": user})
+    moves = [(json.loads(pr["data"] or "{}"), pr["target"]) for pr in props if pr["action"] == "relocate"]
+    (bundle / "index.html").write_text(index_page(run_id, rows, moves), encoding="utf-8")
     (bundle / "README.txt").write_text(README, encoding="utf-8")
     lib = bundle / "library.json"
     meta = json.loads(lib.read_text(encoding="utf-8")) if lib.exists() else {
@@ -181,17 +259,26 @@ def run(cfg: Config, con, run_id: str, out: str | None):
     print(f"report: {len(ready)} of {len(rows)} albums ready, {sum(r['photos'] for r in ready)} photos -> {bundle}/index.html")
 
 
-def index_page(run_id: str, rows: list[dict]) -> str:
+def index_page(run_id: str, rows: list[dict], moves: list | None = None) -> str:
+    moves_html = ""
+    if moves:
+        items = "".join(f"<li>{html.escape(d.get('source', ''))} → <b>{html.escape(t)}</b> · {d.get('n', 0)} photos"
+                        f"{' · merges into the existing album' if d.get('merge') else ''}</li>" for d, t in moves)
+        moves_html = (f"<h2>Album folders outside Pictures/Albums/&lt;year&gt;/ ({len(moves)})</h2>"
+                      f"<p class='k'>They move where they belong in the production run (after review).</p><ul>{items}</ul>")
     def card(r):
         name, parent = html.escape(PurePosixPath(r["album"]).name), html.escape(str(PurePosixPath(r["album"]).parent))
         if not r["ready"]:
             return (f'<div class="al wait"><div class="ph">processing</div><div><b>{name}</b><span>{parent}</span>'
                     f'<span>{r["done"]} of {r["photos"]} photos done</span></div></div>')
         key = html.escape("omp-labels-" + run_id + "::" + r["album"])
+        if r.get("kind") == "proposal":
+            name, parent = html.escape(r["title"]), html.escape(r["subtitle"])
         return (f'<div class="al" data-key="{key}" data-n="{r["photos"]}" data-album="{html.escape(r["album"])}">'
                 f'<a href="albums/{quote(r["slug"])}.html"><img src="t/{r["cover"]}.jpg" alt="" loading="lazy"></a>'
                 f'<div><a href="albums/{quote(r["slug"])}.html"><b>{name}</b></a><span>{parent}</span>'
-                f'<span>{r["photos"]} photos · {r["bursts"]} bursts · keep {r["keep"]} · {r["review"]} to review</span>'
+                f'<span>{r["photos"]} photos · {r["bursts"]} bursts · keep {r["keep"]} · {r["review"]} to review'
+                f'{" · " + str(r["joining"]) + " joining from unsorted folders" if r.get("joining") else ""}</span>'
                 f'<span class="lab"></span><button class="trust" title="accept every proposal of this album as it is">'
                 f'Trust automatic picks</button></div></div>')
     proposals = {r["album"]: r["proposals"] for r in rows if r["ready"]}
@@ -220,10 +307,13 @@ button.primary {{ background: var(--accent); border-color: var(--accent); color:
 .al span {{ color: var(--muted); font-size: 12px; }}
 .al .lab.done {{ color: var(--keep); }}
 .al.wait {{ opacity: .7; }}
+h2 {{ font-size: 15px; margin: 24px 0 10px; }}
 </style></head><body><main>
 <header><h1>Review · run {html.escape(run_id)} <small>{ready} of {len(rows)} albums ready</small></h1><span class="sp"></span>
 <button class="primary" id="exp">Export all decisions</button></header>
-<div class="grid">{"".join(card(r) for r in rows)}</div></main>
+<div class="grid">{"".join(card(r) for r in rows if r.get("kind") != "proposal")}</div>
+{'<h2>Proposals for unsorted photos</h2><div class="grid">' + "".join(card(r) for r in rows if r.get("kind") == "proposal") + "</div>" if any(r.get("kind") == "proposal" for r in rows) else ""}
+{moves_html}</main>
 <script>
 const RUN = {json.dumps(run_id)};
 const PROPOSALS = {json.dumps(proposals, ensure_ascii=False).replace("</", "<\\/")};
@@ -232,7 +322,7 @@ const load = k => {{ try {{ return JSON.parse(localStorage.getItem(k) || "null")
 const labelsOf = a => load(a.dataset.key) || SEEDED[a.dataset.album] || {{}};
 function refresh() {{
   document.querySelectorAll(".al[data-key]").forEach(a => {{
-    const n = Object.values(labelsOf(a)).filter(l => l.confirmed).length;
+    const n = Object.entries(labelsOf(a)).filter(([k, l]) => k !== "__proposal__" && l.confirmed).length;
     const trusted = load(a.dataset.key + "::trusted");
     const el = a.querySelector(".lab");
     el.textContent = trusted ? "trusted: automatic picks accepted" : n ? `labelled ${{n}} / ${{a.dataset.n}}` : "not labelled yet";
@@ -267,15 +357,25 @@ def import_labels(cfg: Config, con, path: str):
     by_name = {}
     for r in con.execute("SELECT id, path, album FROM file"):
         by_name[(r["album"], PurePosixPath(r["path"]).name)] = r["id"]
+        by_name[(None, r["path"])] = r["id"]  # a joining photo is named by its path (P33)
         by_name.setdefault((None, PurePosixPath(r["path"]).name), r["id"])
     src = f"user:{spec.get('run')}:{spec.get('exported')}"
     n = 0
+    con.execute("CREATE TABLE IF NOT EXISTS proposal_label (run TEXT, key TEXT, value TEXT, source TEXT,"
+                " created TEXT NOT NULL DEFAULT (datetime('now')))")
     for album, entry in albums.items():
+        if "__proposal__" in entry["labels"]:
+            con.execute("INSERT INTO proposal_label(run, key, value, source) VALUES (?,?,?,?)",
+                        (spec.get("run"), album, json.dumps(entry["labels"]["__proposal__"], ensure_ascii=False), src))
         for name, lab in entry["labels"].items():
+            if name == "__proposal__":
+                continue
             id_ = by_name.get((album, name)) or by_name.get((None, name))
+            if lab.get("out") and id_ and "/" in name:  # a joining photo kept out of the album: to its thematic folder
+                con.execute("INSERT INTO label(id, kind, value, source) VALUES (?,?,?,?)", (id_, "out", album, src))
             if not lab.get("confirmed") or not id_:
                 continue
-            kinds = ("group", "verdict", "category", "note")
+            kinds = ("group", "verdict", "category", "note", "out")
             for kind in kinds:
                 if kind in lab and (lab[kind] not in (None, "") or kind == "group"):
                     con.execute("INSERT INTO label(id, kind, value, source) VALUES (?,?,?,?)",

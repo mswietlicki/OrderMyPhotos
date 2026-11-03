@@ -13,7 +13,7 @@ from PIL import Image
 from .config import Config
 from .db import log_timing
 
-MODEL = "insightface/buffalo_l@2.1"
+MODEL = "insightface/buffalo_l@2.1+emb"  # +emb: run 1 stored no embeddings
 
 
 def eye_openness(lm106: np.ndarray, center: np.ndarray, iod: float) -> float | None:
@@ -43,7 +43,7 @@ def run(cfg: Config, con, run_id: str, det_size=1024):
         bgr = np.asarray(img)[:, :, ::-1].copy()
         h, w = bgr.shape[:2]
         faces = app.get(bgr)
-        con.execute("DELETE FROM face WHERE id=? AND model=?", (id_, MODEL))
+        con.execute("DELETE FROM face WHERE id=?", (id_,))  # older models' rows too
         for f in faces:
             x0, y0, x1, y1 = [float(v) for v in f.bbox]
             kps = np.asarray(f.kps, dtype=np.float32)
@@ -53,7 +53,8 @@ def run(cfg: Config, con, run_id: str, det_size=1024):
             eye_r = eye_openness(np.asarray(lm), kps[1], iod) if lm is not None else None
             pose = f.get("pose")
             pitch, yaw, roll = (float(v) for v in pose) if pose is not None else (None, None, None)
-            emb = f.get("normed_embedding")
+            # `normed_embedding` is a property of insightface's Face, not one of its dict keys.
+            emb = f.normed_embedding if f.get("embedding") is not None else None
             con.execute(
                 "INSERT INTO face(id, model, box, score, size, yaw, pitch, roll, eye_l, eye_r, emb)"
                 " VALUES (?,?,?,?,?,?,?,?,?,?,?)",

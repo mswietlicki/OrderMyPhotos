@@ -14,6 +14,7 @@ import yaml
 
 from .config import PACKAGE_DIR, Config
 from .db import get_vecs, log_timing
+from .text import OCR_TAG, ocr_needed
 from .vlm import VLM, image_part
 
 VERSION = "caption@1"
@@ -148,8 +149,18 @@ def run(cfg: Config, con, run_id: str):
     done = {r[0] for r in con.execute("SELECT id FROM caption WHERE model=?", (model,))}
     rows = [dict(r) for r in con.execute(
         "SELECT p.id, p.taken_local, p.lat, p.lon, MIN(f.album) AS album FROM photo p JOIN file f ON f.id = p.id"
-        " GROUP BY p.id ORDER BY p.taken_ts")]
-    todo = [r for r in rows if (not keep or r["id"] in keep) and r["id"] not in done]
+        " WHERE f.policy NOT IN ('ignore', 'people', 'reference') GROUP BY p.id ORDER BY p.taken_ts")]
+    nude = {r[0] for r in con.execute("SELECT id FROM signal WHERE kind='nudity' AND value >= 1")}
+    todo = [r for r in rows if (not keep or r["id"] in keep) and r["id"] not in done and r["id"] not in nude]
+    try:  # an unsorted photo that joins an album (the `place` stage) is described with that album's context (P33)
+        for r in con.execute("SELECT m.id, p.target FROM proposal p JOIN proposal_member m ON m.pid=p.pid"
+                             " WHERE p.run=? AND p.action='add'", (run_id,)):
+            joins = r["target"].removesuffix(" PRIV").removesuffix("/Dokumenty")
+            for row in todo:
+                if row["id"] == r["id"]:
+                    row["album"] = joins
+    except Exception:  # noqa: BLE001 - no place stage yet
+        pass
     geo = Geocoder(cfg.models)
     trusted = {r["album"]: r["text"] for r in con.execute("SELECT album, text FROM album_context WHERE trusted=1")}
     mapper = TagMapper(cfg)
@@ -167,8 +178,12 @@ def run(cfg: Config, con, run_id: str):
         if r["album"] in trusted:
             ctx.append(f"- The owner's notes for this album: {trusted[r['album']][:500]}")
         t1 = time.perf_counter()
-        out = vlm.json([image_part(cfg.preview(r["id"])), {"type": "text", "text": INSTRUCTIONS.format(context="\n".join(ctx))}],
-                       SCHEMA, SYSTEM)
+        try:
+            out = vlm.json([image_part(cfg.preview(r["id"])), {"type": "text", "text": INSTRUCTIONS.format(context="\n".join(ctx))}],
+                           SCHEMA, SYSTEM)
+        except (ValueError, KeyError) as exc:  # one bad answer skips that photo, not the stage
+            print(f"captions: skipped {r['id'][:10]}: {exc}")
+            continue
         out["context"], out["geo"], out["month"] = ctx, g, dt.month
         con.execute("INSERT OR REPLACE INTO caption(id, model, data, seconds) VALUES (?,?,?,?)",
                     (r["id"], model, json.dumps(out, ensure_ascii=False), time.perf_counter() - t1))
@@ -176,7 +191,10 @@ def run(cfg: Config, con, run_id: str):
 
     # Tags: re-mapped for every caption on each run (cheap), so vocabulary edits apply without new VLM calls.
     month = {r["id"]: int(r["taken_local"][5:7]) for r in rows}
+    needs_ocr = ocr_needed(con)
     for r in con.execute("SELECT id, data FROM caption WHERE model=?", (model,)).fetchall():
+        if r["id"] not in month:  # captioned earlier, now only in a folder that isn't captioned (People)
+            continue
         out = json.loads(r["data"])
         out.setdefault("month", month[r["id"]])
         shares = siglip.shares(sig[r["id"]]) if r["id"] in sig else {}
@@ -192,6 +210,8 @@ def run(cfg: Config, con, run_id: str):
             elif path not in [m["path"] for m in mapped]:
                 mapped.append({"path": path, "pl": mapper.pl[path], "from": tag, "cos": round(cos, 3),
                                "siglip_share": round(shares.get(path, -1), 2)})
+        if r["id"] in needs_ocr:  # a page of text the OCR post-process hasn't read yet
+            mapped.append({"path": OCR_TAG[0], "pl": OCR_TAG[1], "from": "text stage"})
         season = f"Seasons/{SEASONS[out['month']].capitalize()}"
         if season not in [m["path"] for m in mapped]:
             mapped.append({"path": season, "pl": mapper.pl[season], "from": "capture date"})

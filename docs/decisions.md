@@ -42,7 +42,7 @@ The vision models are served by our own containers, which llama-swap starts on d
 
 State is one SQLite file (WAL). At ~200k photos, a few hundred thousand faces and a few embeddings each, it's 1–2 GB. Vector search is a brute-force matmul. Postgres or a vector database would add a service for no gain at this scale.
 
-## P8 — Photos from two-way sync folders are copied, not moved, until tested (2026-11-02)
+## P8 — Photos from two-way sync folders are copied, not moved, until tested (2026-11-02; superseded by P30)
 
 OneDrive camera upload only uploads, but Samsung Gallery's OneDrive sync may mirror cloud moves and deletes back to the phone. Until a throwaway photo has shown what happens, photos from such folders go into albums as copies, and nothing in them is archived. The test is in [plan.md](plan.md), Phase 5.
 
@@ -160,6 +160,110 @@ Unlimited-OCR-2 does run: through Baidu's transformers code on the 4090 (mimir D
 - text pages of an album proposed into its `Dokumenty/` subfolder.
 
 Two photos of text are one burst only if their texts match (retakes of the same page). Otherwise they form a document set, whose pages are all kept. The subfolder name is configurable.
+
+## P25 — Unsorted photos: the album whose event was going on wins (2026-11-03, user)
+
+The user's rule: "it's very rare that a photo taken during the time of an event or trip does not belong to that event/trip, no matter the directory it's in, so it should be moved to join the album." So S11 decides per photo, in this order:
+1. **Copy:** the same bytes are already in an album anywhere in the library, so this copy is archived.
+2. **Taken during an album:** the photo's time falls within an album's photo span, with a 2-hour margin. It joins that album, and its text pages go to the album's `Dokumenty/`. If two albums overlap, the one with a photo closest in time wins.
+3. **Reference photos** outside any album go to their category album.
+4. **Everything else** is split into events: a gap of 3 h or more starts a new one, and days away from home merge into a trip. An event with ≥ 8 kept photos becomes a new album named by the local LLM, with 60 of the user's own album names as style examples. Smaller events stay where they are.
+
+The albums come from the **OneDrive manifest** (names, content hashes, capture times from file names), so step 1 and step 2 work against the whole library, also for albums the sample doesn't contain. The rule covers every unsorted folder (camera folders, `Pictures/Photos`, WhatsApp, downloads), but not the curated thematic folders (`Pictures/People`, `Places`, `Info`, `Other`), whose placements are deliberate.
+
+## P26 — Full nudity goes to the album's " PRIV" sibling (2026-11-03, user)
+
+The user wants photos with nudity marked as "Nudity" and placed in a separate, attached private album: "I care only about full nudity, partial nudity is fine for all albums", "do not add any blur, just move to the PRIV album". The library already has the convention, sibling albums like `<date> <name>` and `<date> <name> PRIV`. So:
+- A local **NudeNet** detector (v3.4.2, 320n ONNX, CPU) finds body parts as exposed or covered. **Full nudity** means exposed genitals or anus, or bare buttocks and bare breasts together. Topless, shirtless, swimwear or underwear alone count as partial and are left alone. A general NSFW classifier was considered and dropped, because it can't tell full from partial nudity.
+- A flagged photo in an album is proposed into `<album> PRIV`; one that's already in a PRIV album isn't. A flagged unsorted photo goes to the PRIV sibling of the album it joins, or of the new album.
+- Flagged photos get the "Nudity" keyword but no VLM caption, so no description of them ends up in file metadata. They aren't blurred in the review.
+- NudeNet's licence is listed as MIT on PyPI and AGPL-3.0 on GitHub. Either is fine for private use on Mimir, where nothing is distributed.
+
+## P27 — People are named from the user's People folders and album names (2026-11-03, user)
+
+The user: "I often name albums by a place and the people that were there. For this to work you will need to have face identification working and trained." So S8 comes before album naming, and it trains on what the user already did by hand:
+- **`Pictures/People/<Name>` folders** (16, ~830 photos) get a new folder policy, `people`. Their faces are learned, and the photos are left as they are: no culling, no proposals, no review page each. A face cluster that's the dominant face in a person's folder (in ≥ 30 % of its photos with faces, at least 3) is that person.
+- **Album names:** the local LLM reads every album name once (60 per call) for the people it mentions, in their base form ("z Zosią" → Zosia, "Urodziny Jacka" → Jacek). It matches them to the People folders, diminutives included. A still-unnamed cluster that recurs in at least two albums naming one person gets that name.
+- **The owner** is the OneDrive account's display name, from the manifest's metadata. Their cluster is marked, so album names don't say "z <owner>", and the name isn't kept in the repo.
+
+Clusters come from average-linkage agglomeration of the InsightFace `buffalo_l` embeddings at cosine distance 0.55. Only faces ≥ 4 % of the frame height with detector score ≥ 0.65 are clustered, and a cluster needs 3 faces. The names are proposals for the People view and, later, Immich. The album namer gets "People recognized: Zosia (12 photos), …" and is told the owner's style: a place or activity plus "z <name>".
+
+The namer is measured on the user's own albums: for unsorted photos that join an existing album, it proposes a name as if the album were new, and that's printed next to the user's.
+
+## P28 — OCR keeps its structure; an LLM repairs artifacts behind a guard (2026-11-03, user)
+
+The user found the text files poor: "Unlimited-OCR-2 should be able to generate more structured text with location and descriptions", then "run the text with an LLM for fixing mistakes … normal OCR artifacts. If Qwen3.8 is bad with Polish we should use a different model or even OpenRouter", and asked me to read the OCR and Qwen's output myself.
+- **Structure:** the model returns typed layout blocks with a position on a 0–999 grid (`<BLOCK>type<LEVELn>[x0, y0, x1, y1]<FORK>text`). The first version threw them away. Now each page keeps its blocks, with type, level, box and text, in the DB and in `<name>.ocr.json` in the bundle. The `.txt` is Markdown: headings by level, paragraphs, tables, figures and captions, with the running head and page number on one line at the top.
+- **What I read:** on the guidebook pages most of the text is right. The errors are OCR artifacts: wrong diacritics (ś read as č, ł as t, missing ą/ę), words split at line ends, and a few misread words.
+- **Qwen3.8 as the repairer:** about 70 % of its changes were right. About 25 % were wrong, some changing the meaning: "zlebu" → "zlewu" (żlebu), "Myna" → "Młynem" (Mylną), "Przętecz" → "Przełącz" (Przełęcz), "połoga" → "połażą", a non-word "Kościeliec", and the foreign-language names of the peak turned into Polish forms. A free rewrite isn't safe.
+- **The guard:** a change is kept only if the word keeps its letters and length and differs by diacritics or the OCR's typical confusions (ł/t, ś/č, …), or if it joins a word split at a line end. Everything else keeps the OCR's version, and both the kept and the dropped changes are recorded. On the test sentence it kept every right fix and dropped every wrong one. It also drops a few right fixes that change letters ("praz" → "przez", "Kiemensiewicz" → "Klemensiewicz"): precision first.
+- **Not used yet:** Bielik (a Polish LLM, Apache-2.0), which may fix more within the guard, and OpenRouter. If OpenRouter is ever used, it gets its own decision record and only printed public text (books, guides, signs), never receipts, documents or anything personal.
+- **Text pages only:** a photo is OCR-read only if the VLM first says it shows text worth reading. Without that check, photos without text were "turned", because "is the text upright?" got a no.
+
+## P29 — No photo stays unsorted: what makes no album goes to a thematic folder (2026-11-03, user)
+
+The user: "do not leave photos in the incoming directory, all photos need to be moved somewhere. If there is no place for them in any album then add them to one of the special directories like documents, food, people, home, vistas", and "in the end of the whole OneDrive processing no photo should stay unsorted". So P25's step 4 no longer leaves small events in place. Each of their photos goes, in this order, to:
+1. **A person's folder**, when a named person (P27) is the main subject (their face ≥ 12 % of the frame height). That's their undated album if they have one with ≥ 50 photos, otherwise `Pictures/People/<name>`.
+2. **The thematic folder it looks most like.** Each of the user's own folders (`Info/*`, `Other/*`, `Places/*`, undated `Albums/*`) is the average SigLIP 2 embedding of its photos. The best folder must reach a cosine of 0.55 and beat the second by 0.02. `Albums/Facebook` and `Albums/Screeshots` say where photos came from, not what they show, so they're not themes.
+3. **`Other/Widoki`** for a landscape or city view, **`Other/Dom`** within 2 km of home, else **`Other/Random`**.
+
+In the review a proposed album has a second answer, "Not an album: thematic folders", which routes its photos the same way.
+
+## P30 — Album folders in the wrong place move to `Albums/<year>/`; the phone gallery is moved too (2026-11-03, user)
+
+The user: "if there are albums in different places than the default one, those should be moved", and on Samsung Gallery: "no, move it. Let's clean the phone copy then". So:
+- Every folder named like an album (`YYYY-MM-DD name`, `YYYY-MM name`) outside `Pictures/Albums/<year>/`, or under the wrong year, is proposed to move there. If an album of that name is already there, the two merge. The list is on the bundle's index page.
+- **What isn't an album folder:**
+  - a day folder named by its date alone (`Camera Uploads/2013-10-19`);
+  - a device's day folders, where the same name follows the date in three or more sibling folders;
+  - a dated folder inside an album, or inside `Pictures/Private`, `Other`, `Info`, `Places` or `People`.
+
+  Their photos are sorted photo by photo like any unsorted ones. On the library's manifest the first version found 452 folders, 391 of them camera-upload days; with these exclusions it finds 36: phone-gallery albums, older named event folders and a few named upload folders.
+- Photos from Samsung Gallery's synced folders are moved like any others, and the phone's copy is cleaned. This supersedes P8. The sync test from plan.md still runs first, but it now checks that the clean-up doesn't remove anything else, not whether to copy.
+- Every move, merge and delete happens only in the production run on OneDrive, after review. The sample runs never move anything (user: "of course all of this will be done when we run the production run on OneDrive, not during testing").
+
+## P31 — Downloaded images go to media folders, never to an event album (2026-11-03, user)
+
+The user: "internet download images and photos like memes, wallpapers, concepts etc. … should also be moved to thematic albums but not to Event/Trip albums, even if added during the trip". So, before P25's "taken during an album" step:
+- **What counts as downloaded:** the VLM caption says `media`. Or, for a photo without camera EXIF, SigLIP 2's zero-shot kind says media. The kinds now include wallpaper, digital art/illustration/concept art and infographic, next to meme and screenshot. Without a caption, a download-style name also counts (`Screenshot…`, `wallhaven-…`, `unnamed…`, `download…`). A camera photo is media only when both the caption and the kind say so.
+- **Where it goes:** the user's media folder it looks most like (`Other/Meme`, `Funny`, `Art`, `Ideas`, `Wallpapers`, `Info/Infographic`). Otherwise the folder for its kind: `Other/Meme`, `Other/Wallpapers` (new), `Other/Art`, `Other/Infographic`, `Albums/Screeshots`. Otherwise `Other/Random`.
+- The zero-shot kinds are recomputed from the stored SigLIP 2 embeddings when the label list changes (`+zeroshot@2`), with no new image pass.
+
+## P32 — Messenger photos are decided one by one (2026-11-03, user)
+
+The user: "WhatsApp (messenger) photos are harder because those could be event photos, documents, memes or other. You will have to decide." Photos from WhatsApp, Messenger, Facebook, Signal and Telegram have their EXIF stripped and only carry the day they arrived. Here's how they're decided:
+- **What the user did by hand:** of the 53 WhatsApp photos in their dated albums, 43 arrived during the event, 1 three days after, 3 about 40 days after and 6 before.
+- **How similar is a photo to its own album** (SigLIP 2, best cosine to the album's photos taken more than 30 min apart, 7 sample albums): own album median 0.82, 10th percentile 0.70; best other album median 0.72, 95th percentile 0.78.
+- **The rule:**
+  - A media image goes to a media folder (P31).
+  - **The arrival day alone says little.** Across the library, 63 % of the 3,717 WhatsApp images arrived during some album's days (or up to 3 days after), and the user put 1.9 % of those into that album. A first version that let the day decide whenever the album had nothing to compare with joined 91 of the sample's 250 images to albums.
+  - A real photo joins an album if it arrived during the album's days, or up to 3 days after, and looks like the album's photos (best cosine ≥ 0.80, around the own-album median and above the other albums' 95th percentile).
+  - Otherwise it joins an album within 60 days that it looks very much like (≥ 0.88), which covers the photos sent weeks later.
+  - An album with no processed photos takes no messenger photos. Albums are processed before the unsorted folders, so in the library run this only matters for the sample.
+  - A document goes to its category folder, not the album: it was sent by someone, and the day alone doesn't tie it to the trip.
+  - Everything else goes to a thematic folder (P29), often a person's folder. Messenger photos never make an album of their own, because without a time of day they can't be placed in an event.
+- The thresholds come from 7 albums. With the whole library there are more albums to look like, so they're checked again on the first OneDrive batch.
+
+## P33 — Photos that join an existing album are processed and reviewed with it (2026-11-03, user)
+
+The user: "unsorted photos should also be added to already existing processed albums", and "it's possible that sorting photos will create new bursts to process". So a photo that joins an album (P25, P32) isn't a side proposal:
+- **Placed before grouping.** A new stage, `place`, runs before S4. It makes the S11 decisions that need no captions or LLM: copies, downloads, messenger photos, and photos taken during an album.
+  - A photo with a real capture time is grouped with the album's photos at that time. A phone shot and a camera shot of one moment become one burst, and the best of them is kept.
+  - A messenger photo only has its arrival day, so it's placed at the moment of the album photo it looks most like. A re-sent copy of an album photo then shows up as a copy, and a friend's shot of the same moment joins that burst.
+- **Captioned with the album's context:** its album name and notes, not its folder's.
+- **Reviewed on the album's page:**
+  - The photo shows next to the album's own photos, with a "+ <folder>" badge, and the index counts it as "joining".
+  - A burst with joining photos is marked, because a reviewed album needs that burst reviewed again: a joining photo may now be the best frame.
+  - `o` keeps a joining photo out of the album, and it then goes to its thematic folder.
+  - Labels name a joining photo by its path, since it lives in another folder.
+- A photo that joins an album without a page in this library (only in the OneDrive manifest, not processed yet) keeps its own "Add to …" proposal until that album is processed.
+
+## P34 — Text pages are only tagged "OCR needed"; the OCR is a post-process (2026-11-03, user)
+
+On the s4 sample, 136 photos were OCR candidates (SigLIP 2's kind is document, label, screen, whiteboard or receipt, or the caption's category is). At 30–90 s per page on the 4090, with Qwen3.8 evicted while it runs, that's 1–2 hours. Of the 78 read before, 56 were pages of text; the rest were labels, boards and screens with a few words. The user: "If it takes so long we may run it as a post-process after all albums are finished and all photos sorted", and "for now just add a tag marker that this is all text and OCR is needed". So:
+- **The `text` stage** asks the resident chat VLM three cheap questions, about 1 s each: is there text, is it mostly a page of text, and which way up is it. A page of text gets the "OCR needed" tag (`Status/OCR needed`, shown on the review page). It also gets everything else that P24 gives a text page: the `Dokumenty/` subfolder, the rotation, and a document set. Measured against the earlier OCR (300+ characters = a page), the check found 46 of 56 pages. Most of the misses are short, at 300–400 characters, and it called 7 other photos pages, 4 of them with 180–290 characters.
+- **Until a page is read,** two text pages that look alike count as different pages, so all of them are kept. Retakes of the same page are found once the OCR has read them.
+- **The OCR, `omp ocr`,** is a post-process and not part of `all`. It reads only the kept pages (the reviewer's verdict wins) with the block layout, then runs the guarded repair (P28). It runs when the 4090 can be lent. Its `.txt` and `.ocr.json` then appear in the bundle with the next `omp report`.
 
 ## Open — for the user
 

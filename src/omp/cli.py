@@ -11,8 +11,8 @@ from .db import connect
 def main(argv=None):
     ap = argparse.ArgumentParser(prog="omp")
     ap.add_argument("stage", choices=["inventory", "previews", "signals", "faces", "subjects", "depth", "text", "group", "rank",
-                                      "judge", "captions", "report", "labels", "evaluate", "stats", "all"])
-    ap.add_argument("--only", help="signals: comma list of dino,siglip,iqa")
+                                      "judge", "captions", "people", "place", "albums", "report", "ocr", "labels", "evaluate", "stats", "all"])
+    ap.add_argument("--only", help="signals: comma list of dino,siglip,iqa,nudity")
     ap.add_argument("--force", action="store_true")
     ap.add_argument("--run", default=datetime.now().strftime("%Y%m%d-%H%M%S"))
     ap.add_argument("--out", help="report: output directory")
@@ -22,8 +22,8 @@ def main(argv=None):
     cfg = Config()
     con = connect(cfg.db)
     started = time.perf_counter()
-    stages = ["inventory", "previews", "signals", "faces", "subjects", "depth", "text", "group", "rank", "judge", "captions",
-              "report"] if args.stage == "all" else [args.stage]
+    stages = ["inventory", "previews", "signals", "faces", "subjects", "depth", "text", "place", "group", "rank", "judge",
+              "people", "captions", "albums", "report"] if args.stage == "all" else [args.stage]
     for stage in stages:
         if stage == "inventory":
             from . import inventory
@@ -33,7 +33,7 @@ def main(argv=None):
             previews.run(cfg, con, args.run, force=args.force)
         elif stage == "signals":
             from . import vision
-            only = (args.only or "dino,siglip,iqa").split(",")
+            only = (args.only or "dino,siglip,iqa,nudity").split(",")
             for name in only:
                 getattr(vision, f"run_{name}")(cfg, con, args.run)
         elif stage == "faces":
@@ -60,6 +60,15 @@ def main(argv=None):
         elif stage == "captions":
             from . import captions
             captions.run(cfg, con, args.run)
+        elif stage == "people":
+            from . import people
+            people.run(cfg, con, args.run)
+        elif stage == "ocr":  # a post-process, not part of `all`: once the albums are done and photos sorted
+            from . import text
+            text.run_ocr(cfg, con, args.run)
+        elif stage in ("place", "albums"):
+            from . import albums
+            albums.run(cfg, con, args.run, place_only=stage == "place")
         elif stage == "report":
             from . import report
             report.run(cfg, con, args.run, args.out)

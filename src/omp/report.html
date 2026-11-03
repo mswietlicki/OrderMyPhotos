@@ -70,6 +70,12 @@ header input[type=range] { width: 120px; vertical-align: middle; }
 .act button.on.x { background: var(--bad); color: #fff; border-color: var(--bad); }
 .act input { width: 52px; padding: 1px 4px; font-size: 12px; background: var(--bg); border: 1px solid var(--line); border-radius: 4px; }
 .why { font-size: 11px; color: var(--muted); margin-top: 3px; }
+.prop { background: var(--panel); border: 2px solid var(--accent); border-radius: 8px; padding: 10px 14px; margin-bottom: 14px; }
+.prop h2 { margin: 0 0 4px; }
+.prop .k { color: var(--muted); }
+.prop input { font: inherit; width: min(520px, 100%); padding: 3px 6px; border: 1px solid var(--line); border-radius: 4px; background: var(--bg); color: var(--ink); }
+.prop .alt { cursor: pointer; }
+.card.out { opacity: .45; }
 #lb { position: fixed; inset: 0; background: rgba(0,0,0,.92); z-index: 10; display: none; color: #eee; }
 #lb.open { display: flex; }
 #lb .img { flex: 1; display: flex; align-items: center; justify-content: center; min-width: 0; }
@@ -156,7 +162,8 @@ function badges(x) {
   const b = [];
   if (x.group && x.rank === 0) b.push('<span class="b best">best</span>');
   if (x.tier === "review") b.push('<span class="b rev">review</span>');
-  if (x.f.text_page) b.push('<span class="b ref" title="mostly text: OCR saved as a .txt next to it">text</span>');
+  if (x.f.text_page) b.push(x.f.ocr_needed ? '<span class="b ref" title="a page of text, tagged: the OCR reads it after sorting">text · OCR needed</span>'
+                                            : '<span class="b ref" title="mostly text: OCR saved as a .txt next to it">text</span>');
   if (x.f.docset) b.push('<span class="b ref" title="a document set: different pages, all kept">page ' + x.f.docset[0] + '/' + x.f.docset[1] + '</span>');
   if (x.f.place) b.push('<span class="b ref" title="moves to ' + esc(x.f.place) + '">→ ' + esc(x.f.place.split("/").pop()) + '/</span>');
   if (x.f.rotate) b.push('<span class="b rev" title="turned: a lossless rotation (EXIF) is proposed">rotate ' + x.f.rotate + '°</span>');
@@ -165,6 +172,8 @@ function badges(x) {
   if (x.protected) b.push('<span class="b floor" title="' + esc(x.protected) + '">protected</span>');
   if ((x.cap && x.cap.purpose && x.cap.purpose !== "memory") || (!x.cap && x.f.purpose && x.f.purpose !== "memory"))
     b.push('<span class="b ref">' + esc((x.cap && x.cap.category !== "none" && x.cap.category) || (x.cap && x.cap.purpose) || x.f.purpose) + '</span>');
+  if (x.joins) b.push('<span class="b ref" title="joins this album from ' + esc(x.joins.from) + (x.joins.why ? ": " + esc(x.joins.why) : "") + (x.joins.sent ? " (sent " + esc(x.joins.sent) + ", shown next to the album photo it looks most like)" : "") + '. o keeps it out">+ ' + esc(x.joins.from.split("/").pop()) + (x.joins.target !== DATA.album ? " → " + esc(x.joins.target.split("/").pop()) : "") + '</span>');
+  if (L(x).out) b.push('<span class="b rev" title="o: not part of this ' + (x.joins ? "album" : "proposal") + '; it goes to its thematic folder">out</span>');
   if (L(x).confirmed && L(x).verdict && L(x).verdict !== x.verdict) b.push('<span class="b rev" title="your label differs from the proposal">pipeline: ' + esc(x.verdict) + '</span>');
   if (x.v1) b.push('<span class="b" title="v1 burst culling">v1 ' + (x.v1 === "kept" ? "kept" : "archived") + '</span>');
   if (x.f.bt != null) b.push('<span class="b" title="VLM Bradley–Terry share">VLM ' + Math.round(x.f.bt * 100) + '%</span>');
@@ -173,7 +182,7 @@ function badges(x) {
 }
 function card(x) {
   const v = verdictOf(x), l = L(x);
-  return `<div class="card ${v === "bad" ? "bad" : v} ${l.confirmed ? "confirmed" : ""}" data-n="${esc(x.name)}" tabindex="-1">
+  return `<div class="card ${v === "bad" ? "bad" : v} ${l.confirmed ? "confirmed" : ""} ${l.out ? "out" : ""}" data-n="${esc(x.name)}" tabindex="-1">
     <img loading="lazy" src="${B}t/${x.id}.jpg" alt="${esc(x.name)}">
     <div class="m"><div class="t"><span>${x.time}</span><span>${esc(x.name.replace(/\.[^.]+$/, "").slice(-6))}${x.v1_archived ? " ·_arch" : ""}</span></div>
     ${x.cap ? `<div class="cap" title="${esc(x.cap.title_pl)}">${esc(x.cap.title_pl)}</div>` : ""}
@@ -190,7 +199,7 @@ function visible(x) {
   return true;
 }
 function render() {
-  const done = items.filter(x => L(x).confirmed).length;
+  const done = items.filter(x => L(x).confirmed).length;  // __proposal__ isn't an item, so it isn't counted
   const keep = items.filter(x => verdictOf(x) === "keep").length;
   document.getElementById("stats").textContent = `${items.length} photos · keep ${keep} · archive ${items.length - keep} · labelled ${done}/${items.length}`;
   const events = {};
@@ -211,7 +220,8 @@ function render() {
         const vis = members.filter(visible);
         if (!vis.length) continue;
         const info = DATA.bursts[g];
-        const head = info ? `<b>${g}</b><span>${members.length} photos</span><span>${info.span} s</span><span title="mean margin over the similarity threshold">cohesion ${info.cohesion.toFixed(3)}</span>${info.min < 0.02 ? '<span class="b rev">loose</span>' : ""}` : `<b>${esc(g)}</b><span>${members.length} photos (your group)</span>`;
+        const joining = members.filter(y => y.joins).length;
+        const head = (joining ? `<span class="b ref" title="photos from unsorted folders joined this burst: review it again">${joining} joining</span>` : "") + (info ? `<b>${g}</b><span>${members.length} photos</span><span>${info.span} s</span><span title="mean margin over the similarity threshold">cohesion ${info.cohesion.toFixed(3)}</span>${info.min < 0.02 ? '<span class="b rev">loose</span>' : ""}` : `<b>${esc(g)}</b><span>${members.length} photos (your group)</span>`);
         out.push(`<div class="burst"><div class="bh">${head}<button class="acc" data-n="${esc(x.name)}" title="Enter">Accept burst</button></div><div class="strip">${vis.map(y => (order.push(y), card(y))).join("")}</div></div>`);
       } else if (visible(x)) {
         seen.add(x.name); order.push(x); out.push(card(x));
@@ -316,6 +326,7 @@ document.addEventListener("keydown", e => {
   else if (k === "d" || k === "b") setLabel(x, {verdict: "bad"});
   else if (k === "g" && cur > 0) { const prev = order[cur - 1]; setLabel(x, {group: groupOf(prev) || ("U" + prev.name.slice(9, 15))}); if (!groupOf(prev)) setLabel(prev, {group: "U" + prev.name.slice(9, 15)}); }
   else if (k === "x" || k === "n") setLabel(x, {group: ""});
+  else if (k === "o" && (DATA.proposal || x.joins)) setLabel(x, {out: !L(x).out});
   else if (k === "Enter") acceptGroup(x);
   else if (k === " " || k === "z") { e.preventDefault(); lbOpen ? closeLb() : showLb(); }
   else if (k === "Escape") closeLb();
@@ -349,14 +360,48 @@ document.getElementById("impf").onchange = async e => {
   try { const j = JSON.parse(await f.text()); labels = j.labels || {}; save(); } catch (err) { alert("Not a labels file: " + err); }
 };
 
-document.getElementById("title").textContent = DATA.album.split("/").pop();
-document.getElementById("intro").innerHTML = `
+document.getElementById("title").textContent = DATA.proposal ? DATA.proposal.title : DATA.album.split("/").pop();
+function proposalBox() {
+  // S11: what happens to these unsorted photos as a whole. Saved as labels.__proposal__.
+  const P = DATA.proposal, d = labels.__proposal__ || {};
+  const actionText = {copy: "These photos are already in that album: the copies here get archived.",
+    add: "These photos were taken during that album's event: they join it.",
+    create: "These photos make a new album:",
+    category: "Reference photos: they go to their category album.",
+    theme: "Not part of any album: these go to a thematic folder.",
+    relocate: "An album folder outside Pictures/Albums/<year>/: it moves there."}[P.action];
+  const state = d.confirmed ? (d.action === "themes" ? "you chose: no album, each photo to its thematic folder" : "you accepted" + (d.name ? ` as "${esc(d.name)}"` : "")) : "not decided yet";
+  return `<div class="prop"><h2>${esc(P.title)}</h2>
+    <div>${esc(actionText)}${P.why ? ` <span class="k">(${esc(P.why)})</span>` : ""}</div>
+    ${P.action === "create" ? `<p><input id="pname" value="${esc(d.name || P.name || "")}" title="album name; the date is added in front">
+      ${(P.alternatives || []).map(a => `<span class="b alt" title="use this name">${esc(a)}</span>`).join(" ")}</p>
+      <div class="k">→ ${esc(P.target.split("/").slice(0, -1).join("/"))}/${esc(P.target.split("/").pop().slice(0, 11))}<b id="pprev">${esc(d.name || P.name || "")}</b></div>` : P.target ? `<div class="k">→ ${esc(P.target)}</div>` : ""}
+    <div class="k">${esc((P.days || []).join(", "))}${P.places && P.places.length ? " · " + P.places.map(p => esc(p[0]) + " (" + p[1] + ")").join(", ") : ""} · from ${esc((P.sources || []).join(", "))}</div>
+    <p><button class="primary" id="paccept">Accept proposal</button> <button id="pleave" title="nothing stays unsorted: each photo goes to the thematic folder it fits">Not an album: thematic folders</button>
+      <span class="k" id="pstate">${state}</span> · <kbd>o</kbd> takes one photo out: it goes to its thematic folder instead</p></div>`;
+}
+function saveProposal(action) {
+  const nameEl = document.getElementById("pname");
+  labels.__proposal__ = {action, name: nameEl ? nameEl.value.trim() : null, confirmed: true};
+  save();
+  document.getElementById("pbox").innerHTML = proposalBox(); wireProposal();
+}
+function wireProposal() {
+  if (!DATA.proposal) return;
+  document.getElementById("paccept").onclick = () => saveProposal("accept");
+  document.getElementById("pleave").onclick = () => saveProposal("themes");
+  const nameEl = document.getElementById("pname");
+  if (nameEl) nameEl.oninput = () => { document.getElementById("pprev").textContent = nameEl.value; };
+  document.querySelectorAll("#pbox .alt").forEach(a => a.onclick = () => { nameEl.value = a.textContent; nameEl.oninput(); });
+}
+document.getElementById("intro").innerHTML = (DATA.proposal ? `<div id="pbox">${proposalBox()}</div>` : "") + `
   ${DATA.summary ? `<p><b>${esc(DATA.summary.pl)}</b></p><p style="color:var(--muted)">${esc(DATA.summary.en)}</p>` : ""}
   <p>Each box is a burst the pipeline found. Green is keep, grey archive, red bad on its own. A dashed border means it's only a proposal; a solid one means you labelled it.
   To label, keep your left hand on <kbd>a</kbd> <kbd>s</kbd> <kbd>d</kbd> and your right on the arrows: fix the verdicts (<kbd>a</kbd> archive, <kbd>s</kbd> keep, <kbd>d</kbd> bad even if it's the only shot), fix the bursts (<kbd>g</kbd> puts the photo in the same burst as the previous one, <kbd>x</kbd> takes it out, or type a label into the box under a photo), then <kbd>Enter</kbd> or "Accept burst" to confirm a whole burst as it is.
   <kbd>←</kbd> <kbd>→</kbd> move, <kbd>Space</kbd> opens the photo with captions and reasons. Labels stay in this browser until you click <b>Export labels</b>.</p>
   <details class="tim"><summary>Run ${esc(DATA.run)} · generated ${esc(DATA.generated)} · timings</summary>${DATA.timings.map(t => `${esc(t.stage)}: ${t.items} in ${t.s} s (${esc(t.device || "")})`).join("<br>")}</details>`;
 render();
+wireProposal();
 </script>
 </body>
 </html>

@@ -185,6 +185,9 @@ class ExtraModel:
 def run(cfg: Config, con, run_id: str):
     t0 = time.perf_counter()
     feats = photo_features(cfg, con)
+    # People folders only teach faces (P27): they aren't grouped, ranked or reviewed.
+    judged = {r[0] for r in con.execute("SELECT DISTINCT id FROM file WHERE policy NOT IN ('ignore', 'people', 'reference')")}
+    feats = {i: x for i, x in feats.items() if i in judged}
     dino = get_vecs(con, "dino")
     album_of = {}
     for r in con.execute("SELECT id, album FROM file ORDER BY path"):
@@ -192,12 +195,13 @@ def run(cfg: Config, con, run_id: str):
     labels = latest_labels(con)
     from .text import DOCS_FOLDER
     try:
-        texts = {r["id"]: dict(r) for r in con.execute("SELECT id, rotate, mostly_text, chars FROM text")}
+        texts = {r["id"]: dict(r) for r in con.execute("SELECT id, rotate, mostly_text, chars, blocks FROM text")}
     except Exception:  # noqa: BLE001 - no text stage yet
         texts = {}
     policy_of = {}
     for r in con.execute("SELECT id, policy FROM file ORDER BY path"):
         policy_of.setdefault(r["id"], r["policy"])
+    nude = {r[0] for r in con.execute("SELECT id FROM signal WHERE kind='nudity' AND value >= 1")}
     docset_of = {}
     for g in con.execute("SELECT gid FROM grp WHERE run=? AND kind='docset'", (run_id,)):
         members = [r[0] for r in con.execute("SELECT id FROM grp_member WHERE gid=? ORDER BY ord", (g["gid"],))]
@@ -228,8 +232,15 @@ def run(cfg: Config, con, run_id: str):
             f["rotate"] = tx["rotate"] or None
             if tx["mostly_text"]:
                 f["text_page"] = True
+                if tx["blocks"] is None:
+                    f["ocr_needed"] = True  # tagged until the OCR post-process reads it
                 if policy_of.get(id_) == "cull" and verdict == "keep":
                     f["place"] = f"{album_of.get(id_)}/{DOCS_FOLDER}"  # an album's text pages go to its subfolder
+        if id_ in nude:
+            f["nudity"] = True
+            album = album_of.get(id_) or ""
+            if policy_of.get(id_) == "cull" and not album.endswith(" PRIV"):
+                f["place"] = f"{album} PRIV"  # the album's private sibling, the user's own convention (P26)
         if id_ in docset_of:
             f["docset"] = list(docset_of[id_])
             reasons = reasons + [f"page {docset_of[id_][0]} of a document set of {docset_of[id_][1]}"]
