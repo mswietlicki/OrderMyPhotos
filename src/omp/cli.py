@@ -10,7 +10,7 @@ from .db import connect
 
 def main(argv=None):
     ap = argparse.ArgumentParser(prog="omp")
-    ap.add_argument("stage", choices=["inventory", "previews", "signals", "faces", "depth", "group", "rank",
+    ap.add_argument("stage", choices=["inventory", "previews", "signals", "faces", "subjects", "depth", "text", "group", "rank",
                                       "judge", "captions", "report", "labels", "evaluate", "stats", "all"])
     ap.add_argument("--only", help="signals: comma list of dino,siglip,iqa")
     ap.add_argument("--force", action="store_true")
@@ -22,7 +22,7 @@ def main(argv=None):
     cfg = Config()
     con = connect(cfg.db)
     started = time.perf_counter()
-    stages = ["inventory", "previews", "signals", "faces", "depth", "group", "rank", "judge", "captions",
+    stages = ["inventory", "previews", "signals", "faces", "subjects", "depth", "text", "group", "rank", "judge", "captions",
               "report"] if args.stage == "all" else [args.stage]
     for stage in stages:
         if stage == "inventory":
@@ -39,9 +39,15 @@ def main(argv=None):
         elif stage == "faces":
             from . import faces
             faces.run(cfg, con, args.run)
+        elif stage == "subjects":
+            from . import subjects
+            subjects.run(cfg, con, args.run)
         elif stage == "depth":
             from . import depth
             depth.run(cfg, con, args.run)
+        elif stage == "text":
+            from . import text
+            text.run(cfg, con, args.run)
         elif stage == "group":
             from . import group
             group.run(cfg, con, args.run)
@@ -62,7 +68,7 @@ def main(argv=None):
             report.import_labels(cfg, con, args.file)
         elif stage == "evaluate":
             from . import evaluate
-            evaluate.run(cfg, con, args.run)
+            evaluate.run(cfg, con, args.run, verbose=args.force)
         elif stage == "stats":
             for r in con.execute("SELECT stage, items, round(seconds, 1) s, device FROM timing ORDER BY rowid"):
                 print(dict(r))

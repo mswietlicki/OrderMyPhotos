@@ -116,3 +116,33 @@ The first OneDrive sync was still running at the time, so the albums were picked
 - the album pages start from the imported labels;
 - the open view shows the original at full resolution through its relative path;
 - trust from a page and from the index works, and "Export all decisions" collects every album.
+
+## Labels for s2, and run s3: what to keep, text pages (2026-11-03)
+
+The user labelled all 467 photos of s2. Their notes say which extra frames they keep ("I like the close-up", "subject facing better", "like the motion") and ask for text pages: "all of those are different pages of a book, … this one could be rotated, … OCR … save the result with the photo", "pure text photos from the album should be moved to a subdirectory".
+
+**s2 against the labels:**
+
+| | photos | burst pairs < 60 s P/R | ≥ 60 s P/R | keep user/run | false archives | false keeps | top-1 |
+|---|---|---|---|---|---|---|---|
+| all | 467 | 0.99 / 1.00 | 0.94 / 1.00 | 266 / 265 | **15 %** | 20 % | 88/104 |
+| 2015 wedding | 87 | 1.00 / 1.00 | – | 40 / 34 | **30 %** | 13 % | 15/18 |
+| 2021 mountains | 136 | 1.00 / 1.00 | 1.00 / 1.00 | 89 / 78 | 18 % | 11 % | 27/30 |
+
+The bursts are right: the user changed almost none of them. The picks are where it fails: 40 photos the user keeps were archived, almost all extra frames of bursts.
+
+**What was tried for the extra frames** (272 non-best burst frames, AUC 0.5 = chance; details in decisions.md P23):
+
+| Signal | AUC | Note |
+|---|---|---|
+| DINOv2 similarity to the best frame | 0.64 | the single best signal |
+| People and animals: count, pose change, action, facing (new `subjects` stage, P22) | ~0.50 | flagged 75 % of kept and 76 % of archived frames as "changed" |
+| Qwen3.8 "keep this one too, or redundant?" | 0.61 | says "keep" to almost everything; 272 calls, 7 min |
+| **Logistic regression on the cheap features, each album predicted from the others** | **0.67** | the same without the VLM or subject features: 0.67 |
+
+**Run s3** (subjects, the text stage, the fitted model for extra frames, document sets):
+- **Extra frames:** the fitted model keeps an extra frame at P ≥ 0.30, and marks "maybe redundant" below 0.50 (the page has "Archive the maybes"). False archives **15 % → 9 %**, false keeps 20 % → 51 % (honest, leave-one-album-out), top-1 unchanged. The wedding is still the weakest at 23 %.
+- **Subjects:** RT-DETR + ViTPose++ + SigLIP 2 found 1,030 people and animals at 8.1 img/s on the B50. Most actions make sense (sitting, climbing, posing, holding a child, skiing), with a few wrong animals (3 "bears", 1 "zebra"). They're stored for the judge and captions, not used in the keep decision (P23).
+- **Text pages:** 27 candidates, 24 mostly text, OCR at ~58 s per page on the 4090 (Unlimited-OCR-2, mimir D23). They include the guidebook: 6 phone shots and 4 camera shots of different pages, now **one document set of 10 pages, all kept**, proposed into `Dokumenty/`, with 2 pages flagged as turned. The VLM was first asked which way they were turned and said 90° clockwise. The OCR of that came out as Polish-looking nonsense ("nadzwyczel", "Puffowego Złobica"), while at 270° it reads correctly ("nadzwyczaj stromej płyty"). Asking "is it upright?" for each rotation picks 270° for both pages. There's one `.txt` per page in the bundle (`OrderMyPhotos/text/…`), to be written next to the photos when applied. Receipts come out of the OCR as HTML tables, which are turned into one line per item. Full-text search (FTS5) finds the guidebook pages by a peak's name.
+- **Retakes of the same text:** the first text comparison (a character-level ratio, < 0.6 = different pages) turned 5 retakes of the same board at Easter into a document set. Word overlap against the shorter text separates them cleanly (retakes 0.84–0.99, different pages ≤ 0.48), so pages now need ≥ 0.7 to be one burst. That leaves 3 document sets.
+- **Still open:** a photo stored in an album and in `Pictures/Places` is one photo with one verdict. The user kept the `Places` copy and archived the album copy (it isn't the best of its album burst). Decisions per file, with each curated folder judged on its own, are the next change to the data model.

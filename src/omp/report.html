@@ -106,6 +106,7 @@ header input[type=range] { width: 120px; vertical-align: middle; }
   <span class="spacer"></span>
   <label title="thumbnail size">Size <input type="range" id="size" min="180" max="720" step="20"></label>
   <label>Show <select id="filter"><option value="all">all</option><option value="review">needs review</option><option value="archive">archive proposals</option><option value="open">not labelled yet</option></select></label>
+  <button id="maybes" title="archive every 'maybe redundant' frame you haven't labelled">Archive the maybes</button>
   <button id="trust" title="accept every proposal you haven't labelled">Trust automatic picks</button>
   <button id="imp">Load labels…</button><input type="file" id="impf" accept=".json" hidden>
   <button class="primary" id="exp">Export labels</button>
@@ -155,6 +156,11 @@ function badges(x) {
   const b = [];
   if (x.group && x.rank === 0) b.push('<span class="b best">best</span>');
   if (x.tier === "review") b.push('<span class="b rev">review</span>');
+  if (x.f.text_page) b.push('<span class="b ref" title="mostly text: OCR saved as a .txt next to it">text</span>');
+  if (x.f.docset) b.push('<span class="b ref" title="a document set: different pages, all kept">page ' + x.f.docset[0] + '/' + x.f.docset[1] + '</span>');
+  if (x.f.place) b.push('<span class="b ref" title="moves to ' + esc(x.f.place) + '">→ ' + esc(x.f.place.split("/").pop()) + '/</span>');
+  if (x.f.rotate) b.push('<span class="b rev" title="turned: a lossless rotation (EXIF) is proposed">rotate ' + x.f.rotate + '°</span>');
+  if (x.f.maybe) b.push('<span class="b rev" title="kept, but the model fitted to your labels thinks you may not want it">maybe</span>');
   if (x.floor) b.push('<span class="b floor">floor</span>');
   if (x.protected) b.push('<span class="b floor" title="' + esc(x.protected) + '">protected</span>');
   if ((x.cap && x.cap.purpose && x.cap.purpose !== "memory") || (!x.cap && x.f.purpose && x.f.purpose !== "memory"))
@@ -259,7 +265,8 @@ function showLb(x = lbItem && lbOpen ? lbItem : order[cur]) {
     ${c ? `<div class="k" style="margin-top:8px">Caption</div><div><b>${esc(c.title_pl)}</b> / ${esc(c.title_en)}</div><p>${esc(c.description_pl)}</p><p class="k">${esc(c.description_en)}</p>
       <div class="k">Tags</div><div>${c.tags.map(t => '<span class="b">' + esc(t) + "</span>").join(" ")}</div>
       ${c.names && c.names.length ? `<div class="k">Names</div><div>${c.names.map(esc).join(", ")}</div>` : ""}
-      ${c.text_in_image ? `<div class="k">Text in image</div><pre>${esc(c.text_in_image)}</pre>` : ""}` : `<p class="k">No caption (proposed for the archive).</p>`}
+      ${c.text_in_image && !x.ocr ? `<div class="k">Text in image</div><pre>${esc(c.text_in_image)}</pre>` : ""}` : `<p class="k">No caption (proposed for the archive).</p>`}
+    ${x.ocr ? `<div class="k" style="margin-top:8px">Text (OCR)${x.f.place ? " · moves to " + esc(x.f.place) + "/" : ""} · saved as ${esc(x.name.replace(/\.[^.]+$/, ""))}.txt next to the photo when applied</div><pre>${esc(x.ocr)}</pre>` : ""}
     <div class="k" style="margin-top:8px">Category (reference photos)</div>
     <select id="cat">${cats.map(k => `<option ${k === curCat ? "selected" : ""}>${k}</option>`).join("")}</select>
     <div class="k" style="margin-top:8px">Note</div><input id="note" style="width:100%" value="${esc(L(x).note || "")}">
@@ -323,6 +330,10 @@ let size = 340;
 try { size = +localStorage.getItem("omp-card-size") || 340; } catch (e) {}
 sizeEl.value = size; applySize(size);
 sizeEl.oninput = e => { applySize(e.target.value); try { localStorage.setItem("omp-card-size", e.target.value); } catch (err) {} };
+document.getElementById("maybes").onclick = () => {
+  items.forEach(y => { if (y.f.maybe && !L(y).confirmed) labels[y.name] = {group: y.group, verdict: "archive", confirmed: true}; });
+  save();
+};
 document.getElementById("trust").onclick = () => {
   items.forEach(y => { if (!L(y).confirmed) labels[y.name] = {group: y.group, verdict: y.verdict, confirmed: true, trusted: true}; });
   try { localStorage.setItem(KEY + "::trusted", "true"); } catch (e) {}

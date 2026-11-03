@@ -16,6 +16,9 @@ The vision models ran on the B50 next to the always-on RAG models, one at a time
 | Qwen3.8-27B judge: 2 images at ~1 MP, 1 output token | 4090 | **1.4–1.6 s** per call | ~2,000 prompt tokens. Logprobs work through llama-swap with MTP on |
 | Qwen3.8-27B caption: 1 image, JSON schema, PL + EN | 4090 | **4.1 s** per photo | ~1,370 prompt + ~300 output tokens |
 | Qwen3-Embedding-4B, tag → vocabulary | B50 | (cheap) | Phrase-to-phrase per synonym, cosine ≥ 0.80 |
+| RT-DETR R50 + ViTPose++ base + SigLIP 2 crops (subjects, P22) | B50, PyTorch XPU | **8.1 img/s** (1,030 people and animals in 467 photos) | Post-processing on the CPU (XPU boolean-mask bug). Didn't separate the user's keep/archive (P23) |
+| Unlimited-OCR-2 (text pages, P24) | 4090, transformers 4.52.1 + torch 2.13 CUDA, through llama-swap | **~58 s per page** at ≤ 2560 px, 8.9 GB | Evicts Qwen3.8 while it runs. To try: base mode (one global view) instead of up to 16 tiles, for speed |
+| Qwen3.8 "keep this one too?" (an experiment) | 4090 | 1.6 s per pair | AUC 0.61 against the labels: not used |
 
 The library is private and non-commercial, so non-commercial licences (InsightFace weights, pyiqa, Depth-Anything-V2 Base/Large) are acceptable. They are marked anyway in case anything is ever shared.
 
@@ -38,6 +41,9 @@ The library is private and non-commercial, so non-commercial licences (InsightFa
 | Subject mask: depth | **Depth-Anything-V2-Small** (already running on the B50, ~80 ms **measured**) | **DA3-Small / DA3-Base** `depth-anything/DA3-SMALL` (Apache-2.0, 2025-11) to compare. V2 Base/Large are CC-BY-NC | 25M | PyTorch XPU → B50 |
 | Sharpness, motion vs defocus, exposure, noise | **Classical**: tiled Tenengrad/Laplacian at full resolution inside the subject mask, structure-tensor anisotropy, histogram clipping, MAD noise | No maintained blur-map model exists. DMENet and Son et al. 2018 are TF1, so skip them | — | CPU (numpy/OpenCV) |
 | Face detect + landmarks + identity | **InsightFace `buffalo_l`**: SCRFD-10GF at 1280 input (or tiled for group shots), 2d106 landmarks, pose, ArcFace R50 | `antelopev2` (R100). LVFace (ICCV 2025, non-commercial). Immich uses `buffalo_l` | 326 MB ONNX, non-commercial weights | onnxruntime CUDA → 4090; OpenVINO EP → B50 |
+| People and animals: boxes | **RT-DETR** `PekingU/rtdetr_r50vd_coco_o365` (COCO classes: person, dog, cat, horse, bird, cow, sheep, …) | `PekingU/rtdetr_v2_r50vd`; OWLv2 / Grounding DINO for open-vocabulary animals | ~43M, Apache-2.0 | transformers → B50 / 4090 |
+| Pose (people and animals) | **ViTPose++** `usyd-community/vitpose-plus-base` (MoE, a head per dataset: COCO body; per the paper also AP-10K / APT-36K animals, index to verify) | `vitpose-plus-small` for speed; RTMPose (mmpose) via onnxruntime | 0.1B, Apache-2.0 | transformers → B50 / 4090 |
+| Action of each subject | **SigLIP 2** zero-shot on the subject crop over a verb list (EN + PL), plus the VLM's `subjects[]` in captions and the judge | a pose-sequence classifier only if zero-shot falls short | (already loaded) | B50 |
 | Blink, smile | **MediaPipe Face Landmarker** on face crops: 52 blendshapes (`eyeBlinkLeft/Right`, `mouthSmile*`) | Cross-checked with the eye aspect ratio from the 2d106 landmarks. Thresholds calibrated on the sample | small, Apache-2.0 | CPU |
 | Expression | **EmotiEffLib** 1.1 (`enet_b2`): happy probability, valence | successor of HSEmotion | 30 MB, Apache-2.0 | ONNX → CPU/any |
 | Face quality | **eDifFIQA** `LSIbabnikz/eDifFIQA_M` | the tiny ONNX variant in opencv_zoo; CR-FIQA | 177 MB, CC-BY-4.0 | PyTorch/ONNX |

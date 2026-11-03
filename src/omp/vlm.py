@@ -15,7 +15,8 @@ IMAGE_PX = 1152  # long side; ~1 MP at 4:3, about 1,000 image tokens for Qwen3.x
 
 
 def image_part(path, long_side=IMAGE_PX) -> dict:
-    img = Image.open(path).convert("RGB")
+    """An image message part from a file path or a PIL image."""
+    img = (path if isinstance(path, Image.Image) else Image.open(path)).convert("RGB")
     if max(img.size) > long_side:
         s = long_side / max(img.size)
         img = img.resize((round(img.width * s), round(img.height * s)), Image.Resampling.LANCZOS)

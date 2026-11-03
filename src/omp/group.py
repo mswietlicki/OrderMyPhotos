@@ -8,6 +8,7 @@ A≉C doesn't merge.
 
 import json
 import math
+import re
 import time
 
 import cv2
@@ -26,6 +27,17 @@ GPS_AFTER_S = 60
 VIEW_AFTER_S = 120            # longer gaps need a same-viewpoint check
 VIEW_MIN_INLIERS = 30
 COPY_SIM, COPY_PHASH = 0.97, 8
+SAME_TEXT = 0.7               # text pages are one burst only if this share of words matches (retakes)
+DOCSET_GAP = 30 * 60          # different pages shot within this of each other form a document set
+
+
+def text_similarity(a: str, b: str) -> float:
+    """Share of the shorter text's words (3+ letters) found in the other. On the sample, retakes of the same
+    page or board scored 0.84-0.99 and different pages at most 0.48; a character-level ratio scored some
+    retakes as low as 0.15, because OCR of a page shot from a step further away comes out in another order."""
+    words = lambda s: set(re.findall(r"\w{3,}", s.lower()))
+    wa, wb = words(a), words(b)
+    return len(wa & wb) / max(1, min(len(wa), len(wb)))
 
 
 def threshold(gap: float) -> float:
@@ -139,6 +151,11 @@ def run(cfg: Config, con, run_id: str):
                 seen.add(b["id"])
     photos = [p for p in photos if p["id"] not in seen]
 
+    try:
+        pages = {r[0]: r[1] for r in con.execute("SELECT id, text FROM text WHERE mostly_text=1")}
+    except Exception:  # noqa: BLE001 - no text stage yet
+        pages = {}
+    doc_links = []
     events = segment_events(photos)
     n_bursts = 0
     for e_idx, ev in enumerate(events):
@@ -156,6 +173,13 @@ def run(cfg: Config, con, run_id: str):
                 gap = ev[j]["taken_ts"] - ev[i]["taken_ts"]
                 if gap > WINDOW:
                     break
+                if ids[i] in pages and ids[j] in pages:
+                    # Pages of one document look alike to an image embedding; only retakes of the same page
+                    # (the same text) are a burst. Different pages make a document set instead (P16).
+                    if text_similarity(pages[ids[i]], pages[ids[j]]) < SAME_TEXT:
+                        if gap <= DOCSET_GAP:
+                            doc_links.append((ids[i], ids[j]))
+                        continue
                 m = sim[i, j] - threshold(gap)
                 if m < -DIAMETER:
                     continue
@@ -187,6 +211,20 @@ def run(cfg: Config, con, run_id: str):
                 "pairs": {f"{ids[i][:8]}-{ids[j][:8]}": detail.get((i, j)) for i, j in pairs},
             })
             n_bursts += 1
+    # Document sets: connected pages, in shooting order.
+    parent = {}
+    def root(x):
+        while parent.get(x, x) != x:
+            x = parent[x]
+        return x
+    for a, b in doc_links:
+        parent[root(a)] = root(b)
+    sets = {}
+    for x in {x for link in doc_links for x in link}:
+        sets.setdefault(root(x), []).append(x)
+    ts = {p["id"]: p["taken_ts"] for p in photos}
+    for members in sets.values():
+        add_group("docset", sorted(members, key=lambda i: ts[i]), None, {"pages": len(members)})
     con.commit()
     dt = time.perf_counter() - t0
     log_timing(con, "group", run_id, len(photos), dt, "cpu")
@@ -194,6 +232,6 @@ def run(cfg: Config, con, run_id: str):
     sizes = [r[0] for r in con.execute(
         "SELECT COUNT(*) FROM grp g JOIN grp_member m ON m.gid=g.gid WHERE g.run=? AND g.kind='burst' GROUP BY g.gid",
         (run_id,))]
-    print(f"group: {len(events)} events, {len(seen)} copies, {n_bursts} bursts (sizes {sorted(sizes, reverse=True)}),"
+    print(f"group: {len(events)} events, {len(seen)} copies, {len(sets)} document sets, {n_bursts} bursts (sizes {sorted(sizes, reverse=True)}),"
           f" {sum(sizes)} of {len(photos)} photos in bursts; {stats}; {dt:.1f} s")
     del by_id

@@ -22,7 +22,7 @@ Phased so that each step is measured on the sample album before it touches the l
 - [x] S0–S2 on the sample: inventory, QuickXorHash (matches OneDrive), capture times and their sources, v1 traces, previews and the full-resolution sharpness grid. 5.9 photos/s on 20 cores, too slow for the library (~8 h): to tune
 - [x] A minimal review page to **label the sample**: a static `index.html` per run with thumbnails and previews (`omp report`). It fixes bursts, verdicts (keep / archive / bad on its own) and reference categories, with keyboard shortcuts. Labels are exported as JSON and imported with `omp labels`
 - [x] **You:** label the sample on that page and export the labels (70/71 on 2026-11-03; `omp evaluate` measures a run against them)
-- [ ] **You:** label the four more albums of run s2 (2009 compact, 2015 wedding, 2021 two-camera trip, 2022 family), so the rules are fitted on more than one album
+- [x] **You:** label the four more albums of run s2 (2009 compact, 2015 wedding, 2021 two-camera trip, 2022 family), so the rules are fitted on more than one album
 
 ## Phase 2 — Grouping and picking (sample)
 
@@ -31,6 +31,7 @@ Run s1 (2026-11-03) did a first pass of every stage below on the B50 and the res
 - [ ] Cheap signals: DINOv2-B vs DINOv3-L, SigLIP 2, pHash, Q-ReAlign Mini, `buffalo_l` faces, sharpness/exposure/noise. Measure img/s on the 4090 and the B50
 - [ ] S3b kinds: `categories.yaml`; a SigLIP 2 linear probe trained on `Pictures/Info/*`, `Pictures/Other/*`, the invoice/scan folders, `Screenshots` and album photos (these are already on Mimir once the sync finishes, no sample needed); planarity and text-density features; measure accuracy and the memory→reference error
 - [ ] S4 groups (copies, bursts): calibrate the similarity-over-time curve, the GPS distance, the viewpoint check and the cluster diameter against the labels; report precision and recall for short and long gaps; compare with v1's groups
+- [x] Subjects and actions (P22), first pass: stored, but they don't separate the user's choices (P23), so they're not in the keep decision yet. Retry with pose sequences. Original item: RT-DETR people and animal boxes, ViTPose++ poses, facing and cut-off, SigLIP 2 zero-shot action on each crop. Use them in the keep count ("a main subject does something else"), in a "moment" score, in the judge (subject crops) and in captions (`subjects[]`). Measure on the s1 + s2 labels: false archives prevented against false keeps added, and img/s on the B50
 - [ ] Expensive signals on group members: depth (V2-Small vs DA3), BiRefNet, subject-masked sharpness, MediaPipe blink/smile, EmotiEffLib, eDifFIQA
 - [ ] S5 ranking: hard rejects, feature score, MMR keep count; measure top-1 agreement and the **false-archive rate** against the labels and against v1
 - [ ] Quality floor (P14): the pre-screen, the absolute thresholds per camera/era, the VLM "worth keeping?" verdict and value protection; measure precision and the singles' false-archive rate
@@ -70,6 +71,10 @@ Run s1 (2026-11-03) did a first pass of every stage below on the B50 and the res
 - [ ] The page saves decisions straight into `decisions/` (File System Access API) instead of a download; `omp` reads that folder back as labels on the next run
 - [ ] Libraries: a `library.json` ID, a DB and cache per library on Mimir, external drives and shares mounted read-only (mimir side), album-by-album processing order, per-album readiness
 - [ ] OneDrive: `mimir-onedrive` uploads the bundle album by album as albums are ready; the pull brings decisions back; `mimir-onedrive apply` executes moves and confirmed deletes
+- [x] Text pages (P24): `omp text` (orientation from the VLM, Unlimited-OCR-2 on the 4090), FTS5, `.txt` per text page in the bundle, `Dokumenty/` placement, document sets by word overlap; the page shows the OCR text, "rotate", "page n/m" and "→ Dokumenty/"
+- [ ] Apply for text pages: write the `.txt` next to the photo, set EXIF Orientation for the rotate proposals, move to `Dokumenty/`
+- [ ] Decisions per file for photos stored in more than one curated folder: each folder is judged on its own (s2: the user kept the `Places` copy of an album photo that isn't the best of its burst)
+- [ ] OCR speed: try base mode (one global view) instead of up to 16 tiles; ~58 s per page now
 - [ ] Unsorted folders in the bundle (S11): one review unit per proposed album, not one page per folder. Editable name and date, merge / split / add to an existing album / leave in place; apply creates the album folder and moves the kept photos. First on a slice of `Obrazy/Samsung Gallery` (a few weeks, a few hundred photos), measured against the existing albums of the same weeks
 
 ## Phase 6 — Videos (sample)

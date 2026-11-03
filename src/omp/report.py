@@ -86,6 +86,10 @@ def run(cfg: Config, con, run_id: str, out: str | None):
     photos = {r["id"]: dict(r) for r in con.execute("SELECT id, taken_local, taken_ts FROM photo")}
     dec = {r["id"]: dict(r) for r in con.execute("SELECT * FROM decision WHERE run=?", (run_id,))}
     caps = {r["id"]: json.loads(r["data"]) for r in con.execute("SELECT id, data FROM caption")}
+    try:
+        ocr = {r["id"]: dict(r) for r in con.execute("SELECT id, rotate, mostly_text, text FROM text")}
+    except Exception:  # noqa: BLE001 - no text stage yet
+        ocr = {}
     groups = {}
     for g in con.execute("SELECT gid, kind, cohesion, data FROM grp WHERE run=?", (run_id,)):
         groups[g["gid"]] = {"kind": g["kind"], "cohesion": g["cohesion"], **json.loads(g["data"] or "{}"),
@@ -115,6 +119,12 @@ def run(cfg: Config, con, run_id: str, out: str | None):
             src = f"../p/{id_}.jpg"
         feats = json.loads(d["features"])
         c = caps.get(id_)
+        tx = ocr.get(id_)
+        if tx and tx["mostly_text"]:
+            # The text file that goes next to the photo when the plan is applied; the bundle keeps a copy.
+            out = bundle / "text" / (f["path"].rsplit(".", 1)[0] + ".txt")
+            out.parent.mkdir(parents=True, exist_ok=True)
+            out.write_text(tx["text"].rstrip() + "\n", encoding="utf-8")
         return {
             "id": id_, "name": name, "src": src, "time": p["taken_local"][11:19], "date": p["taken_local"][:10],
             "ts": p["taken_ts"], "event": event_of.get(id_, 0), "group": f"B{d['gid']}" if d["gid"] is not None else "",
@@ -122,7 +132,9 @@ def run(cfg: Config, con, run_id: str, out: str | None):
             "reasons": json.loads(d["reasons"]), "floor": json.loads(d["floor"]) if d["floor"] else None,
             "protected": d["protected"],
             "f": {k: feats.get(k) for k in ("sharp", "rel_sharp", "quality", "aesthetics", "motion", "faces", "purpose",
-                                           "memory_p", "bt", "p_keep", "clip_hi")},
+                                           "memory_p", "bt", "p_keep", "clip_hi", "maybe", "p_extra", "rotate", "place",
+                                           "text_page", "docset")},
+            "ocr": tx["text"] if tx and tx["mostly_text"] else None,
             "v1": v1.get((f["album"], name)), "v1_archived": bool(f["v1_archived"]),
             "cap": None if not c else {k: c.get(k) for k in ("title_pl", "title_en", "description_pl", "description_en",
                                                              "text_in_image", "purpose", "category", "names")}

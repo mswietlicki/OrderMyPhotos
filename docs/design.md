@@ -136,6 +136,7 @@ Each signal is computed once per photo and stored. Photos with the `ignore` poli
 | Noise | MAD noise estimate in flat tiles, ISO | ranking, IQA cross-check |
 | Kind | memory / reference / media / junk, plus a category (S3b) | grouping, floor, albums, captions |
 | Faces | detector + landmarks + identity embedding + attributes (models.md): box, size, eyes open L/R, smile and expression, yaw/pitch/roll, face sharpness, face-quality score | ranking, people |
+| **Subjects and their actions** | every person and animal (RT-DETR boxes: person, dog, cat, horse, bird, …), the **pose** of each (ViTPose++ keypoints: 17 body points for people, the animal head for animals), **facing** the camera or away, cut by the frame edge or occluded, and an **action** label (SigLIP 2 zero-shot on the subject's crop over a verb list in English and Polish: standing, walking, running, jumping, sitting, skiing, climbing, hugging, eating, playing, …) | what happens in the frame: bursts, keep count, the moment, captions (P22) |
 
 **Expensive signals** go only to photos where a decision depends on them: members of a burst (S4 groups first, using only the cheap signals), and singles whose cheap scores fall below a pre-screen line, which makes them candidates for the quality floor in S5:
 
@@ -222,17 +223,18 @@ Copies are resolved first, so a burst never counts the same frame twice. Every p
 
 ### S5 Ranking and selection (CPU + VLM for close calls)
 
-Two questions are asked of every photo. **Is it the best of its burst?** That's relative, steps 1–6 below. **Is it worth keeping at all?** That's absolute: the *quality floor*, step 7, which also covers singles. v1 asked only the first question, and always kept at least one frame of each burst, however bad.
+Two questions are asked of every photo. **Is it the best of its burst?** That's relative, steps 1–7 below. **Is it worth keeping at all?** That's absolute: the *quality floor*, step 8, which also covers singles. v1 asked only the first question, and always kept at least one frame of each burst, however bad.
 
 For each burst:
 
 1. **Relative hard rejects.** A frame is rejected when its subject sharpness is below about half the group's best; when a main face has its eyes closed and another frame has them open; when it's heavily clipped; or when it's accidental.
 2. **Feature score.** A weighted sum of features normalized within the group: subject sharpness, face score (eyes, expression, gaze, face sharpness), technical IQA, aesthetics, exposure. The weights start hand-set and are then **fitted to the user's own choices**: a pairwise logistic / Bradley–Terry model on feature differences, trained from review overrides. The ranker becomes personal over time.
-3. **VLM judge, only for close calls** (the top candidates within a margin ε). Qwen3.8-27B (`:instruct`, thinking off) gets two photos at 1024–1536 px. For group shots it also gets their face crops side by side. It answers with a JSON rubric (per criterion which photo is better, plus the reasons), and the overall verdict is read from the logprobs of the `1`/`2` answer token. **Every pair is asked in both orders** and the two probabilities are averaged, so position bias cancels out. A near-even result is a tie. Groups with more than 2 contenders use a round-robin over the top 4 (≤ 12 calls), aggregated with Bradley–Terry. A parse failure means "no verdict", never "A wins".
-4. **How many to keep.** The best frame is kept unless it fails the quality floor (step 7), in which case the **whole burst can be archived**. More frames are kept only if their quality is within a margin of the best **and** they're visibly different (embedding distance, other expressions, or other people in frame). This is MMR-style diversity selection, capped by group size, and an album can override it, for example for sports or kids. For long, slow bursts (a landmark shot again and again over half an hour), the diversity test matters more than for a 2-second burst, so different light or compositions survive.
-5. **Decision record:** kept and archived frames, per-feature scores, plain-language reasons ("eyes closed: <name>", "subject soft: 38% of best"), confidence, the v1 suggestion and model versions.
-6. **Confidence tiers.** `auto` covers exact copies and bursts with a clear winner. `review` covers everything else. Nothing is applied until the user approves it; `auto` just makes bulk approval quick.
-7. **Quality floor: bad on its own.** A photo is proposed for archiving even when nothing similar exists, if it clearly fails on its own:
+3. **The moment** (P22). What the people and animals are doing is often why a photo is worth keeping, so it gets its own features: the action caught at its peak within the burst (the top of a jump, the widest stride, the throw), the subject facing the camera, eyes open, nobody cut off by the edge, and the subject sharp despite moving. Their weights come from the user's labels, like the rest of the score.
+4. **VLM judge, only for close calls** (the top candidates within a margin ε). Qwen3.8-27B (`:instruct`, thinking off) gets two photos at 1024–1536 px. For group shots it also gets their face crops side by side, and for action shots the crops of the main subject. The rubric asks first what each person and animal is doing in each frame, then which frame caught the better moment. It answers with a JSON rubric (per criterion which photo is better, plus the reasons), and the overall verdict is read from the logprobs of the `1`/`2` answer token. **Every pair is asked in both orders** and the two probabilities are averaged, so position bias cancels out. A near-even result is a tie. Groups with more than 2 contenders use a round-robin over the top 4 (≤ 12 calls), aggregated with Bradley–Terry. A parse failure means "no verdict", never "A wins".
+5. **How many to keep.** The best frame is kept unless it fails the quality floor (step 8), in which case the **whole burst can be archived**. More frames are kept only if they're not clearly worse than the best **and** they're visibly different: by the whole-frame embedding, or **because a main subject does something else** (P22). One person walking and another standing still, a dog before and after the jump, someone facing the camera and then turning away: those are different photos even when the frames are 0.97 alike as a whole. The subject comparison uses the pose (keypoints normalized to the subject's box), the action label, facing, and who is in the frame (someone entered or left). This is MMR-style diversity selection with no fixed cap (P20), and an album can override it, for example for sports or kids. For long, slow bursts (a landmark shot again and again over half an hour), the diversity test matters more than for a 2-second burst, so different light or compositions survive.
+6. **Decision record:** kept and archived frames, per-feature scores, plain-language reasons ("eyes closed: <name>", "subject soft: 38% of best"), confidence, the v1 suggestion and model versions.
+7. **Confidence tiers.** `auto` covers exact copies and bursts with a clear winner. `review` covers everything else. Nothing is applied until the user approves it; `auto` just makes bulk approval quick.
+8. **Quality floor: bad on its own.** A photo is proposed for archiving even when nothing similar exists, if it clearly fails on its own:
    - **badly blurred:** subject sharpness far below what the camera and ISO normally reach, motion or missed focus, not bokeh;
    - **nearly black or white:** blown or crushed with no recoverable subject;
    - **accidental:** pocket or floor shots, a finger over the lens, the ceiling, flat depth plus darkness, nothing recognizable;
@@ -297,7 +299,7 @@ The page itself:
 
 ### S7 Captions and tags (VLM, kept photos only)
 
-- **One request per photo** with a JSON schema enforced by llama-server's `response_format`. The fields: `title`, `description` (1–3 sentences), `tags[]`, `scene`, `activities[]`, `objects[]`, `text_in_image`, `kind`, `people_count`. This replaces v1's three chat turns.
+- **One request per photo** with a JSON schema enforced by llama-server's `response_format`. The fields: `title`, `description` (1–3 sentences), `tags[]`, `scene`, `activities[]`, `objects[]`, `text_in_image`, `kind`, `people_count`, and `subjects[]`: each person and animal with what they're doing ("a skier climbing", "a dog catching a ball"), so the description says it and the action becomes a tag (P22). This replaces v1's three chat turns.
 - **Context block,** computed and not rolling:
   - the album folder name (which often holds the place and people: "`<place> z <name>`");
   - the event summary;
@@ -320,9 +322,16 @@ The page itself:
 - **Reference photos get a different prompt:**
   - the title names the thing ("Tabliczka znamionowa pralki Bosch");
   - the description summarizes the content and repeats the **key codes** (model, serial, MAC, amounts, dates), so OneDrive and Windows search can find them;
-  - `text_in_image` holds the full transcription, with a larger output budget.
+  - `text_in_image` holds a short excerpt. The full transcription comes from the OCR stage below.
 
-  Text in **Sensitive** photos (card numbers checked by Luhn, PESEL by its checksum, IBAN, ID numbers) stays in the DB. It is never written into file metadata or captions. Multi-page document sets can later become a searchable PDF, once Unlimited-OCR-2 is on Mimir.
+  Text in **Sensitive** photos (card numbers checked by Luhn, PESEL by its checksum, IBAN, ID numbers) stays in the DB. It is never written into file metadata or captions.
+- **OCR of text pages** (`omp text`, decisions.md P24): for photos that the zero-shot kinds or the captions call text-like (documents, book pages, notes, receipts, labels, screens), before grouping:
+  1. **Orientation.** The resident VLM is asked "is the text upright?", about the photo as it is and, if not, about each rotation, and the best rotation wins. Asked which way a page is turned, it got the direction wrong. A turned page gets a **lossless rotate** proposal (EXIF Orientation, no re-encode), and the OCR reads it upright.
+  2. **OCR.** Unlimited-OCR-2 (mimir `stacks/ocr`, on the 4090 through llama-swap) reads the original at up to 2560 px and returns plain text per page, in reading order. Tables (receipts, price lists) become one line per row with tab-separated cells.
+  3. **Saved with the photo.** The text goes into the DB with an FTS5 index. A photo that is **mostly text** gets a **`.txt` file of the same name next to it** when the plan is applied (the bundle keeps a copy under `OrderMyPhotos/text/`).
+  4. **Its own subfolder.** In an album, the text pages move to the album's **`Dokumenty/`** subfolder (configurable), so the album shows the trip and the pages stay next to it (user, 2026-11-03).
+
+  Different pages shot together form a **document set** (S4): they're never culled against each other, the review page shows "page 2/4", and a set can later become one searchable PDF.
 - **Search:**
   - description and tags are embedded with Qwen3-Embedding-4B, and the image with SigLIP 2;
   - `text_in_image` and the captions also go into a **SQLite FTS5** full-text index, because embeddings are bad at exact strings like `SN: 2231A4F07`.
@@ -418,7 +427,7 @@ Videos are 4,786 files and 359 GiB, 37% of the library, and very lopsided: 56 fi
 | S0 inventory | `ffprobe`: duration, codec, bitrate, resolution, fps, rotation, creation time, QuickTime GPS |
 | S1 exact copies | **297 redundant copies, 46.8 GiB**: the same rule as for photos |
 | S4 copies | Re-encoded, trimmed or WhatsApp (`VID-…-WA`, 277 files) versions. Detected by keyframe DINO embeddings aligned in time, plus a Chromaprint audio fingerprint. The highest-quality original is kept |
-| Junk clips | The same quality floor as for photos (S5 step 7). 1,976 videos are under 10 MB. Very short, dark, pocket, extremely shaky or empty clips become archive suggestions in the review UI, never automatic, with the same value protection |
+| Junk clips | The same quality floor as for photos (S5 step 8). 1,976 videos are under 10 MB. Very short, dark, pocket, extremely shaky or empty clips become archive suggestions in the review UI, never automatic, with the same value protection |
 | S3 signals | Scene-change keyframes (capped per minute), decoded with NVDEC, with Q-ReAlign, faces and SigLIP on each keyframe. Audio: loudness, speech detection, and a **transcript** from a Polish-capable STT on the B50 |
 | S7 captions | The same VLM call with 4–8 keyframes plus a transcript excerpt gives the title, description and tags. The transcript is also searchable |
 | S8 people | Faces from keyframes |

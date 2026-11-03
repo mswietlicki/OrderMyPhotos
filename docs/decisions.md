@@ -125,6 +125,42 @@ Folders of thousands of unsorted photos are reviewed as proposed albums: one uni
 
 This supersedes P19's static page for the sample, and the FastAPI app (S6) as the main review UI. The app is kept for the Tags and Albums views and the daily digest.
 
+## P22 — What people and animals do is part of the photo (2026-11-03, user)
+
+From the review: a frame where someone walks and one where they stand are different photos, and often the action of a person or an animal is the reason a photo is worth keeping. The s1 notes say the same ("subject facing better", "I like the motion"). A whole-frame embedding misses it: the subject is small, so the frames stay ~0.97 alike.
+
+So S3 gets a **subjects** signal for every person and animal: a box (RT-DETR), a pose (ViTPose++ keypoints, people and animals), facing, cut-off and occlusion flags, and an action label (SigLIP 2 zero-shot on the subject's crop over a verb list). It is used in three places:
+- **Keep count:** a frame counts as different when a main subject's pose or action changed, or someone entered or left, even if the whole frame is near-identical.
+- **Ranking:** "the moment" features (the action at its peak within the burst, facing the camera, nobody cut off, sharp despite moving), weighted from the labels.
+- **VLM judge and captions:** the judge compares the subjects' crops and says what each one does before it picks a frame. Captions list the subjects' actions, which become activity tags.
+
+All three models are Apache-2.0 and run in `transformers` on the B50 like the other signals. They're measured on the s1 and s2 labels: how many false archives they prevent, and at what cost in false keeps.
+
+## P23 — Extra frames are decided by a model fitted to the user's labels (2026-11-03, measured)
+
+The s2 labels cover 467 photos in 5 albums, 272 of them non-best frames of bursts. They show that which extra frames the user keeps is mostly taste. Every signal tried separates the frames the user keeps from those they archive only weakly (AUC, 0.5 = chance):
+- DINOv2 similarity to the best frame: 0.64;
+- the VLM asked "keep this one too, or redundant?": 0.61 (it says "keep" to almost everything);
+- people and animals (P22: count, pose change, action, facing): ~0.5, because detection flickers and people move a little between any two frames.
+
+A logistic regression over the cheap features (similarity, sharpness against the best, quality and aesthetics differences, faces, burst size, rank) reaches **0.67 when each album is predicted by a model fitted on the other albums**. Adding the VLM answer or the subject features doesn't improve it, so neither is used for this.
+
+The rule is: keep an extra frame at P(user keeps it) ≥ 0.30, and mark it "maybe redundant" below 0.50. That leans towards keeping, because false archives are the costly mistake. On the s2 labels (honest, leave-one-album-out) the false-archive rate went from 15 % to 9 %, while false keeps rose from 20 % to ~55 %. The "maybe" mark doesn't separate cleanly either: 48 of its 108 frames are user keeps. So the review page can archive the maybes in one click, but trusting an album keeps them.
+
+The model refits on every run from all labels, so each labelled album improves it. P22's subject signal stays: it feeds the judge and the captions, and it will be retried once there are pose sequences to compare rather than pairs.
+
+## P24 — Text pages: OCR saved with the photo, a `Dokumenty/` subfolder, document sets (2026-11-03, user)
+
+From the review: "all of those are different pages of a book, … this one could be rotated, … if it's mostly text maybe create a txt file with OCR". Then: "run OCR on them and save the result with the photo", "pure text photos from the album should be moved to a subdirectory", and Unlimited-OCR (v1) as the fallback if v2 can't run.
+
+Unlimited-OCR-2 does run: through Baidu's transformers code on the 4090 (mimir D23), ~58 s per page, with Polish read well. The `text` stage runs before grouping:
+- orientation from the resident VLM, asked "upright?" per rotation (asked for the direction, it picked the wrong one, and the OCR read nonsense), with a lossless rotate proposal;
+- OCR of the upright original;
+- the text into the DB (FTS5), and a same-name `.txt` next to every photo that's mostly text when applied;
+- text pages of an album proposed into its `Dokumenty/` subfolder.
+
+Two photos of text are one burst only if their texts match (retakes of the same page). Otherwise they form a document set, whose pages are all kept. The subfolder name is configurable.
+
 ## Open — for the user
 
 1. **Language** of titles, descriptions and tags: English, Polish, or both. Tags could carry both; descriptions need one.

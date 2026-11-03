@@ -15,6 +15,7 @@ from PIL import Image
 
 from .config import Config
 from .db import get_data, get_vecs, log_timing
+from .evaluate import latest_labels
 
 VERSION = "rank@1"
 W_SHARP, W_QUALITY, W_AESTH, W_FACE = 0.35, 0.30, 0.25, 0.10
@@ -26,6 +27,14 @@ CLOSE = 0.08             # contenders within this score of the best go to the VL
 KEEP_DIVERSE = 0.95      # DINOv2 cosine to every kept frame must be below this
 KEEP_SOFT = -0.25        # ... and its sharpness within this of the best (log Tenengrad) ...
 KEEP_CLOSE = 0.08        # ... or its score within this of the best
+# Once there are labels, extra frames are decided by a small model fitted to them instead (decisions.md P23).
+# Measured on the s2 labels, each album predicted by a model fitted on the other albums: AUC 0.67; keeping
+# at P >= 0.30 left 13 of 109 user-kept extras archived and kept 99 of 163 the user archived.
+EXTRA_FEATURES = ["sim", "rel_sharp", "d_quality", "d_aesthetics", "d_score", "faces", "burst_size", "rank"]
+KEEP_P = 0.30            # keep an extra frame when P(the user keeps it) is at least this
+MAYBE_P = 0.50           # ... and mark it "maybe redundant" below this, so a review can sweep those quickly
+MIN_TRAIN = 50           # labelled extra frames needed before the model replaces the rules
+SAME = 0.985             # an extra this close to another kept extra is the same picture twice
 FLOOR_SHARP = 2.5        # log Tenengrad below the camera's median p90 (≈ e^-2.5 = 8 % of its energy)
 FLOOR_QUALITY = 0.60
 FLOOR_AESTH = 0.40
@@ -143,10 +152,57 @@ def suspect(x) -> str | None:
     return "zero-shot: looks accidental" if x["purpose"] == "junk" else None
 
 
+def extra_vec(i, best, pos, n, sc, feats, dino):
+    f, fb = feats[i], feats[best]
+    return [float(dino[i] @ dino[best]), sc[i]["rel_sharp"], (f["quality"] or 0) - (fb["quality"] or 0),
+            (f["aesthetics"] or 0) - (fb["aesthetics"] or 0), sc[i]["score"] - sc[best]["score"], f["faces"], n, pos]
+
+
+class ExtraModel:
+    """Logistic regression on EXTRA_FEATURES, fitted to the user's labels. A labelled album is always
+    predicted by a model fitted without it, so its evaluation stays honest."""
+
+    def __init__(self, X, y, albums):
+        self.X, self.y, self.albums, self.cache = np.array(X, float), np.array(y), np.array(albums), {}
+
+    def p(self, x, album):
+        from sklearn.linear_model import LogisticRegression
+
+        if album not in self.cache:
+            m = self.albums != album
+            if m.sum() < MIN_TRAIN or len(set(self.y[m])) < 2:
+                self.cache[album] = None
+            else:
+                mu, sd = self.X[m].mean(0), self.X[m].std(0) + 1e-9
+                self.cache[album] = (LogisticRegression(C=0.5, max_iter=1000).fit((self.X[m] - mu) / sd, self.y[m]), mu, sd)
+        fit = self.cache[album]
+        if fit is None:
+            return None
+        model, mu, sd = fit
+        return float(model.predict_proba(((np.array(x, float) - mu) / sd)[None])[0, 1])
+
+
 def run(cfg: Config, con, run_id: str):
     t0 = time.perf_counter()
     feats = photo_features(cfg, con)
     dino = get_vecs(con, "dino")
+    album_of = {}
+    for r in con.execute("SELECT id, album FROM file ORDER BY path"):
+        album_of.setdefault(r["id"], r["album"])
+    labels = latest_labels(con)
+    from .text import DOCS_FOLDER
+    try:
+        texts = {r["id"]: dict(r) for r in con.execute("SELECT id, rotate, mostly_text, chars FROM text")}
+    except Exception:  # noqa: BLE001 - no text stage yet
+        texts = {}
+    policy_of = {}
+    for r in con.execute("SELECT id, policy FROM file ORDER BY path"):
+        policy_of.setdefault(r["id"], r["policy"])
+    docset_of = {}
+    for g in con.execute("SELECT gid FROM grp WHERE run=? AND kind='docset'", (run_id,)):
+        members = [r[0] for r in con.execute("SELECT id FROM grp_member WHERE gid=? ORDER BY ord", (g["gid"],))]
+        for k, i in enumerate(members):
+            docset_of[i] = (k + 1, len(members))
     con.execute("DELETE FROM decision WHERE run=?", (run_id,))
 
     by_cam = {}
@@ -167,6 +223,16 @@ def run(cfg: Config, con, run_id: str):
         x = feats[id_]
         f = {k: (round(v, 4) if isinstance(v, float) else v) for k, v in x.items()}
         f.update(extra or {})
+        tx = texts.get(id_)
+        if tx:
+            f["rotate"] = tx["rotate"] or None
+            if tx["mostly_text"]:
+                f["text_page"] = True
+                if policy_of.get(id_) == "cull" and verdict == "keep":
+                    f["place"] = f"{album_of.get(id_)}/{DOCS_FOLDER}"  # an album's text pages go to its subfolder
+        if id_ in docset_of:
+            f["docset"] = list(docset_of[id_])
+            reasons = reasons + [f"page {docset_of[id_][0]} of a document set of {docset_of[id_][1]}"]
         con.execute(
             "INSERT OR REPLACE INTO decision(id, run, gid, verdict, rank, score, floor, protected, tier, reasons, features)"
             " VALUES (?,?,?,?,?,?,?,?,?,?,?)",
@@ -178,13 +244,32 @@ def run(cfg: Config, con, run_id: str):
             return "only photo of its day"
         return None
 
+    # The extra-frame model: features of every non-best frame, labels where the user gave them.
+    scored, train_X, train_y, train_album = {}, [], [], []
     for gid, members, cohesion in bursts:
         sc = burst_scores(members, feats)
         order = sorted(members, key=lambda i: -sc[i]["score"])
+        scored[gid] = (sc, order)
+        for pos, i in enumerate(order[1:], 1):
+            lab = labels.get(i, {}).get("verdict")
+            if lab:
+                train_X.append(extra_vec(i, order[0], pos, len(members), sc, feats, dino))
+                train_y.append(int(lab == "keep"))
+                train_album.append(album_of.get(i))
+    model = ExtraModel(train_X, train_y, train_album) if len(train_y) >= MIN_TRAIN else None
+
+    for gid, members, cohesion in bursts:
+        sc, order = scored[gid]
         best = order[0]
-        kept = [best]
-        for i in order[1:]:
+        kept, p_extra = [best], {}
+        for pos, i in enumerate(order[1:], 1):
             if sc[i]["hard"]:
+                continue
+            p = model.p(extra_vec(i, best, pos, len(members), sc, feats, dino), album_of.get(i)) if model else None
+            if p is not None:
+                p_extra[i] = p
+                if p >= KEEP_P and not any(float(dino[i] @ dino[k]) >= SAME for k in kept[1:]):
+                    kept.append(i)
                 continue
             similar = any(float(dino[i] @ dino[k]) >= KEEP_DIVERSE for k in kept)
             worse = sc[i]["rel_sharp"] < KEEP_SOFT and sc[i]["score"] < sc[best]["score"] - KEEP_CLOSE
@@ -200,17 +285,23 @@ def run(cfg: Config, con, run_id: str):
             keep = i in kept and not whole_bad
             if i == best:
                 reasons.insert(0, "best of burst" if not close else f"best of burst, close call with {len(close)} other(s)")
+            elif i in kept and i in p_extra:
+                reasons.insert(0, f"also kept: you'd likely keep it too ({p_extra[i]:.0%})" if p_extra[i] >= MAYBE_P
+                               else f"kept, but maybe redundant ({p_extra[i]:.0%} that you'd keep it)")
             elif i in kept:
                 reasons.insert(0, "also kept: visibly different and not clearly worse")
+            elif i in p_extra:
+                reasons.insert(0, f"likely redundant ({p_extra[i]:.0%} that you'd keep it)")
             elif not reasons:
                 reasons.append(f"weaker than the best frame (score {sc[i]['score'] - sc[best]['score']:+.2f})")
             if whole_bad:
                 reasons.append("whole burst below the quality floor")
-            tier = "auto" if (not close and cohesion is not None and cohesion > 0.1 and not floor) else "review"
+            maybe = i in kept and i in p_extra and p_extra[i] < MAYBE_P
+            tier = "auto" if (not close and cohesion is not None and cohesion > 0.1 and not floor and not maybe) else "review"
             decide(i, gid, "keep" if keep else "archive", rank, sc[i]["score"], reasons, tier, floor,
                    protection(x) if not keep else None,
                    {"judge": i in close or (i == best and bool(close)), "rel_sharp": round(sc[i]["rel_sharp"], 3),
-                    "suspect": suspect(x)})
+                    "suspect": suspect(x), "p_extra": round(p_extra[i], 3) if i in p_extra else None, "maybe": maybe})
 
     for id_, x in feats.items():
         if id_ in in_burst:
@@ -236,5 +327,5 @@ def run(cfg: Config, con, run_id: str):
     floors = con.execute("SELECT COUNT(*) FROM decision WHERE run=? AND floor IS NOT NULL", (run_id,)).fetchone()[0]
     judge = con.execute("SELECT COUNT(DISTINCT gid) FROM decision WHERE run=? AND json_extract(features,'$.judge')",
                         (run_id,)).fetchone()[0]
-    print(f"rank: {summary}; {floors} below the floor; {judge} bursts need the VLM judge; camera medians {cam_median};"
+    print(f"rank: extra-frame model {'fitted on ' + str(len(train_y)) + ' labelled frames' if model else 'not fitted (rules)'}; {summary}; {floors} below the floor; {judge} bursts need the VLM judge; camera medians {cam_median};"
           f" {dt:.1f} s")
