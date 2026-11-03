@@ -91,6 +91,40 @@ class Library:
                    sorted({a["name"] for a in albums.values()}), max(creators, key=creators.get) if creators else None,
                    dict(folders))
 
+    @classmethod
+    def from_db(cls, con, tz: str) -> "Library":
+        """The library's own albums, from its DB: for a drive or a test set, where nothing outside it may be
+        matched (user, 2026-11-03: "do not match to any album that is not in the test photos")."""
+        zone = ZoneInfo(tz)
+        times, by_hash, counts, folders = defaultdict(list), defaultdict(set), defaultdict(int), defaultdict(int)
+        for path, id_, album, ts in con.execute("SELECT f.path, f.id, f.album, p.taken_ts FROM file f"
+                                                " LEFT JOIN photo p ON p.id=f.id WHERE f.media='photo'"):
+            folders[str(PurePosixPath(path).parent)] += 1
+            if not ALBUMS.match(album or ""):
+                continue
+            counts[album] += 1
+            by_hash[id_].add(album)
+            if ts:
+                times[album].append(ts)
+        albums = {}
+        for album, n in counts.items():
+            ts = sorted(times.get(album, []))
+            name = PurePosixPath(album).name
+            if len(ts) >= 3:
+                lo, hi = ts[len(ts) // 20], ts[-1 - len(ts) // 20]
+            else:
+                m = ALBUM_DATE.match(name)
+                if not m:
+                    continue
+                try:
+                    lo = datetime(int(m[1]), int(m[2]), int(m[3] or 1), tzinfo=zone).timestamp()
+                except ValueError:
+                    continue
+                hi = lo + (86400 if m[3] else 31 * 86400)
+            albums[album] = {"start": lo, "end": hi, "photos": n, "name": name, "times": ts}
+        return cls(albums, {k: sorted(v) for k, v in by_hash.items()}, sorted({a["name"] for a in albums.values()}),
+                   None, dict(folders))
+
     def misplaced_albums(self) -> list[tuple[str, str, int]]:
         """Folders named like an album ("YYYY-MM-DD name", "YYYY-MM name") outside Pictures/Albums/<year>/,
         or under the wrong year: (folder, where it belongs, photos). The user's rule: they should be moved (P30).
@@ -150,3 +184,11 @@ class Library:
 
 def manifests_dir() -> Path:
     return Path(os.environ.get("OMP_MANIFESTS", "/manifests"))
+
+
+def library_for(cfg, con) -> "Library | None":
+    """The library index S11 and S8 work against: OneDrive's manifest (the whole library), or with
+    OMP_LIBRARY_INDEX=self the library's own DB (a drive, a share, a clean-slate test)."""
+    if os.environ.get("OMP_LIBRARY_INDEX") == "self":
+        return Library.from_db(con, cfg.tz)
+    return Library.load(manifests_dir(), cfg.tz)

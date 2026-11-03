@@ -252,3 +252,47 @@ The user labelled s4: 870 photos, 85 taken out of where S11 put them, and notes 
 - two folders with one name get their parent in the title ("Dom (Info)", "Dom (Other)");
 - pages of earlier runs are removed;
 - `m` / `Shift+M` move a photo or a burst, `r` turns a photo, and all of it was tested on the workstation copy.
+
+## Run s5: a clean-slate test set, everything on Mimir (2026-11-03)
+
+The user asked for a test from scratch, "like it would be a completely new set of photos":
+- the old sample and its data removed;
+- v1's `_archived/` photos back in their albums;
+- nothing matched outside the test set, and the thematic folders created anew;
+- nothing copied to the workstation;
+- moves in place, so no extra disk space.
+
+**The test set:** 437 photos from 1–12 October 2022:
+- 4 albums with 166 photos, their `_archived/` ones moved back in place;
+- 105 unsorted Samsung Gallery photos;
+- 166 WhatsApp images.
+
+Only photo files were copied, as btrfs reflinks of the mirror (0 bytes exclusive), so no v1 descriptions, context files or burst records came along. The library index is the test set's own (P37, `OMP_LIBRARY_INDEX=self`), so the 4 test albums are the only albums there are.
+
+**Speed:** about 55 min in all:
+- captions: 273 photos at 3.9 s;
+- S11: 180 decisions at 1.1 s;
+- `orient`: 2 min, with 4 turns confirmed by the VLM.
+
+**People:** 9 face clusters, 1 named from the test albums' own names (all four name the same person); there are no People folders. The namer, measured on photos that joined a test album, proposed a name with the same person and the same place as the user's own, only another activity at it.
+
+**Proposals:**
+- **Archive:** 164 photos (38 %), the restored v1 archive among them.
+- **Joining albums:** 23 WhatsApp images join a test album they look like.
+- **New albums:** 3 (a bike ride through the park and the city, an evening at the gym, the supplies for the riverside camping trip).
+- **Folders:**
+  - the owner's black cat gets a folder of its own, "Czarny kot" (35 photos, by the day-after-day rule, P37);
+  - other cats go to `Cats`;
+  - new folders: "Ciekawostki", "Autumn Views", "Działki na sprzedaż", "Most kolejowy";
+  - the rest goes to `Random`, `Meme` and `Screeshots`.
+- **Fixed during the run:**
+  - a new "Zdjęcia losowe" (Random again) is now mapped to `Random`;
+  - the black cat went to `Cats` until the pet rule;
+  - sessions without GPS merged across hours (now 1 h at most).
+- **Still rough:** a few cat groups in `Cats` and a new "Koty", and "Autumn Views" next to `Widoki`.
+
+**Where it is:**
+- the review at `https://mimir.tail3fb7b2.ts.net:8444/OrderMyPhotos/`, tailnet only (mimir D24);
+- the folders on `\\mimir\photo-test`: `before/` (the test set, with its bundle) and `after/`, the plan (`plan.json`: 356 moves, 3 turns) applied as hardlinks.
+
+The whole test takes 352 MiB of its own (DB, previews, bundle); the photos and `after/` take none.

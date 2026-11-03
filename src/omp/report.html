@@ -132,7 +132,7 @@ header input[type=range] { width: 120px; vertical-align: middle; }
 </head>
 <body>
 <header>
-  <a href="../index.html" title="all albums">← Albums</a>
+  <a href="../index.html" id="home" title="all albums (Esc)">← Albums</a>
   <h1 id="title">Review</h1>
   <span class="stats" id="stats"></span>
   <span class="spacer"></span>
@@ -365,6 +365,10 @@ document.getElementById("list").addEventListener("change", e => {
   const x = byName[e.target.closest(".card").dataset.n];
   setLabel(x, {group: e.target.value.trim()});
 });
+// Back to all albums: index.html from a file, the folder over HTTP (tailscaled's file server redirects a
+// request for .../index.html to the site root, not to its folder).
+const HOME = location.protocol === "file:" ? "../index.html" : "../";
+document.getElementById("home").href = HOME;
 const helpEl = document.getElementById("help");
 const toggleHelp = (show = helpEl.hidden) => { helpEl.hidden = !show; };
 helpEl.onclick = e => { if (e.target === helpEl) toggleHelp(false); };
@@ -427,7 +431,7 @@ document.addEventListener("keydown", e => {
   const k = e.key.length === 1 ? e.key.toLowerCase() : e.key;
   if (!helpEl.hidden && k !== "?") { if (k === "Escape") toggleHelp(false); e.preventDefault(); return; }
   if (k === "?") toggleHelp();
-  else if (k === "Escape") { if (lbOpen) closeLb(); else location.href = "../index.html"; }
+  else if (k === "Escape") { if (lbOpen) closeLb(); else location.href = HOME; }
   else if (e.shiftKey && k === "ArrowRight") goPage(1);
   else if (e.shiftKey && k === "ArrowLeft") goPage(-1);
   else if (e.shiftKey && k === "Enter") acceptPage();

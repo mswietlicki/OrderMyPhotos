@@ -298,6 +298,15 @@ The review shows one page per album or folder that receives photos. Each incomin
 
 Text pages keep the text stage's answer (P24). In the review, a proposed turn shows the photo turned, and `r` turns it 90° further. On apply, the turn becomes a lossless EXIF Orientation change. The cost per photo is three more SigLIP 2 passes, plus two VLM questions for each flagged photo.
 
+## P37 — No home; trips by a rolling base; the library index from the library; the plan (2026-11-03, user)
+
+- **No home.** "Over the years my home changed, so let's drop the idea of it. Make photos just another event wherever it happens."
+  - There's no "Dom" folder and no "taken at home" rule any more. Photos taken at home are decided like any other event.
+  - To tell a trip from everyday places, the **rolling base** is the median of the owner's daily positions within ±30 days. It follows a move, and each day counts once, so a trip's busy days don't pull it along.
+- **Trips:** "a euro trip where you drive all the time" is still one trip "if the people stay the same and the subject of the photos doesn't change completely". So sessions away from the base, up to 30 h apart, are one trip wherever the road goes. They part only when no person is in common and the photos look nothing alike (mean SigLIP 2 embeddings < 0.6).
+- **The library index from the library itself.** `OMP_LIBRARY_INDEX=self` builds it from the library's own DB instead of OneDrive's manifest. That's for a drive, a share or a clean-slate test ("do not match to any album that is not in the test photos"). Thematic folders then start empty and are proposed new ("all the theme directories created anew"). The default folders are only `Other/Cats` and `Other/Random`, not this code's category names.
+- **The plan.** `omp plan` writes `OrderMyPhotos/plan.json`: every photo's move once the review is applied (kept → its album or folder; archived, bad or a copy → `Archive/OrderMyPhotos/`), plus the proposed turns. Applying it is a move per photo, in place ("do the moving in place as not to extend disk space"). For a test, `python3 -m omp.plan --links` builds the resulting folders as hardlinks next to the library: the same files, so no extra space, and the review page still finds the photos where they were.
+
 ## Open — for the user
 
 1. **Language** of titles, descriptions and tags: English, Polish, or both. Tags could carry both; descriptions need one.

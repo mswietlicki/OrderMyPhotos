@@ -154,9 +154,9 @@ def run(cfg: Config, con, run_id: str, out: str | None):
     tz = ZoneInfo(cfg.tz)
     placed = {r[0]: r[1] for r in con.execute("SELECT id, value FROM signal WHERE kind='placed_at'")}
     from .albums import NOT_THEMES, THEME_ROOT
-    from .library import Library, manifests_dir
+    from .library import library_for
 
-    lib = Library.load(manifests_dir(), cfg.tz)
+    lib = library_for(cfg, con)
     known_albums = set(lib.albums) if lib else set()
     known_folders = ({m.group() for f in lib.folders if (m := THEME_ROOT.match(f))} if lib else set()) - NOT_THEMES
 

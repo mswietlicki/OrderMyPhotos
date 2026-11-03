@@ -19,7 +19,7 @@ import numpy as np
 
 from .config import Config
 from .db import log_timing
-from .library import Library, manifests_dir
+from .library import library_for
 from .vlm import VLM
 
 VERSION = "people@1"
@@ -90,7 +90,7 @@ def mentions(con, vlm, lib, folders):
 def run(cfg: Config, con, run_id: str):
     con.executescript(SCHEMA)
     t0 = time.perf_counter()
-    lib = Library.load(manifests_dir(), cfg.tz)
+    lib = library_for(cfg, con)
     files = defaultdict(list)
     for r in con.execute("SELECT id, path, album, policy FROM file"):
         files[r["id"]].append(dict(r))

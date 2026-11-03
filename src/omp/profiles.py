@@ -28,10 +28,7 @@ bouldering, indoors and on rock"). Give it in English (en) and Polish (pl)."""
 DEFAULT_FOLDERS = {
     "Pictures/Other/Cats": "Cats (koty) that aren't the owner's own pet: any other cat, met outside, friends' cats,"
                            " cats for adoption, cat pictures. Use this for cats; no other cat folders.",
-    "Pictures/Other/Widoki": "Views and landscapes that belong to no event: a sunset, a street, a skyline.",
-    "Pictures/Other/Dom": "Everyday photos at home that belong to no event or other folder.",
     "Pictures/Other/Random": "Photos that fit nowhere else.",
-    "Pictures/Other/Wallpapers": "Downloaded wallpapers.",
 }
 
 

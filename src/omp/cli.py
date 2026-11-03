@@ -11,7 +11,7 @@ from .db import connect
 def main(argv=None):
     ap = argparse.ArgumentParser(prog="omp")
     ap.add_argument("stage", choices=["inventory", "previews", "signals", "orient", "faces", "subjects", "depth", "text", "group", "rank",
-                                      "judge", "captions", "people", "place", "albums", "report", "ocr", "labels", "evaluate", "stats", "all"])
+                                      "judge", "captions", "people", "place", "albums", "report", "plan", "ocr", "labels", "evaluate", "stats", "all"])
     ap.add_argument("--only", help="signals: comma list of dino,siglip,iqa,nudity")
     ap.add_argument("--force", action="store_true")
     ap.add_argument("--run", default=datetime.now().strftime("%Y%m%d-%H%M%S"))
@@ -23,7 +23,7 @@ def main(argv=None):
     con = connect(cfg.db)
     started = time.perf_counter()
     stages = ["inventory", "previews", "signals", "orient", "faces", "subjects", "depth", "text", "place", "group", "rank", "judge",
-              "people", "captions", "albums", "report"] if args.stage == "all" else [args.stage]
+              "people", "captions", "albums", "report", "plan"] if args.stage == "all" else [args.stage]
     for stage in stages:
         if stage == "inventory":
             from . import inventory
@@ -63,6 +63,9 @@ def main(argv=None):
         elif stage == "people":
             from . import people
             people.run(cfg, con, args.run)
+        elif stage == "plan":
+            from . import plan
+            plan.run(cfg, con, args.run)
         elif stage == "orient":
             from . import orient
             orient.run(cfg, con, args.run)

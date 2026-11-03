@@ -189,7 +189,7 @@ Not every photo is a memory of a trip or event. Many were taken to keep informat
      - how much text is in the image;
      - close-up distance;
      - whether the photo is isolated in time or inside a dense event;
-     - whether it was taken at home (GPS).
+     - whether it was taken at the owner's everyday places (the rolling base, P37).
   3. **The VLM confirms** in its S7 JSON (`purpose`, `category`, `text_in_image`). When the probe and the VLM disagree, the photo goes to review.
 - **Safety:** moving a memory out of an event album by mistake is the costly error, so `memory` wins ties. Photos already in a curated album are moved to a category only on high confidence, and only after review.
 - *v1:* none. Receipts and product shots got trip captions ("… grocery shopping trip featuring …").
@@ -398,7 +398,7 @@ The phones upload to OneDrive: Samsung Gallery sync and OneDrive camera upload. 
 2. **S1/S4 copies against the whole library:** a photo that already exists elsewhere (copied into an album by hand, or sent back through WhatsApp) becomes a copy group straight away.
 3. **S4/S5 bursts:** decided once nothing new has arrived for a while (e.g. 2 h), so a burst isn't judged half-uploaded.
 4. **S7 captions + S8 faces:** new faces are matched to known people, and unknown faces wait for naming.
-5. **S11 albums:** memories join an open event. An event closes after ~12 h without photos, or when the device is back home after a trip. A closed event becomes an album suggestion, or is added to an existing album. **Reference photos go straight to their category album** ("3 receipts → Paragony, 1 label → Hardware"), and their text is searchable within the hour. A photo of a serial number taken today can be found by its code tonight.
+5. **S11 albums:** memories join an open event. An event closes after ~12 h without photos, or when the device is back at its everyday places after a trip. A closed event becomes an album suggestion, or is added to an existing album. **Reference photos go straight to their category album** ("3 receipts → Paragony, 1 label → Hardware"), and their text is searchable within the hour. A photo of a serial number taken today can be found by its code tonight.
 
 **Review:** the web UI collects everything a live run proposes into a **daily digest**, for example "143 new photos · 12 bursts → archive 31 · 4 copies · new album '2026-11-07 …' (86 photos)". The user approves it in a minute. Some op classes can be marked auto-apply once the numbers have proven safe; exact copies and metadata writes are the likely first. Until then, nothing touches OneDrive without approval. A phone notification is optional (it ties in with mimir Phase 7 alerts).
 
@@ -411,7 +411,7 @@ There are two kinds: **event albums** for memories, described here, and **catego
 - **Input:** photos and videos whose folder policy is `unsorted`: `Obrazy/Samsung Gallery`, `Camera Roll`, `Obrazy/Other`, `Pictures/Photos`, WhatsApp, Quick Share, …. Copies are resolved first, so a phone photo the user already copied into an album counts as "in an album".
 - **Events:**
   1. Segment one time stream across all devices. A boundary falls where the gap is long compared with the local shooting rate (for example, more than max(2 h, k × the median gap nearby)), or where the location jumps.
-  2. Merge consecutive days away from **home** into one **trip** event, with one sub-event per day. Home is the most frequent night-time GPS cluster for that period.
+  2. Merge consecutive days away into one **trip**, wherever the road goes. "Away" is far from the **rolling base**: the median of the owner's daily positions within ±30 days. There's no fixed home, because homes change (P37).
 - **Existing album first:** an event that overlaps an existing album's date range becomes "add these 23 photos to *`<YYYY-MM-DD> <trip name>`*". These are phone shots that were never copied over.
 - **New album otherwise:**
   - It's named in the existing style, `YYYY-MM-DD <name>` (trips may use `YYYY-MM <name>`).
@@ -437,7 +437,7 @@ There are two kinds: **event albums** for memories, described here, and **catego
   3. Downloaded images (memes, wallpapers, art, infographics, screenshots) → a media folder, never an event album (P31).
   4. Messenger photos carry only their arrival day. A real photo joins an album only if it looks like it (P32), otherwise it's decided like a one-photo event, always to a folder.
   5. **Sessions:** photos taken together (≤ 15 min apart, no jump over 1 km) move as one, and a burst is never split. A session inside an album's time span, at its place, joins that album. Just before or after the span, it joins only with shared people or a matching look (P35).
-  6. **Events:** sessions ≤ 3 h apart at one place, or ≤ 36 h apart sharing a person the owner doesn't photograph every day, or days away from home. The local LLM decides each event as a whole: a new album (and its name), an album close in time, a thematic folder, or a new thematic folder. It sees what the photos show, when, where and with whom, the reviewer's notes, and the **profiles** of the albums and folders. A person's folder or a pet's album is offered only when that person, or that very animal, is in the photos. Inside an album, text pages go to `Dokumenty/` and a receipt or document to its folder. Full nudity goes to the ` PRIV` sibling (P26).
+  6. **Events:** sessions ≤ 3 h apart at one place, or ≤ 36 h apart sharing a person the owner doesn't photograph every day, or days away from the rolling base (a trip, unless the people and the subject both change completely, P37). The local LLM decides each event as a whole: a new album (and its name), an album close in time, a thematic folder, or a new thematic folder. It sees what the photos show, when, where and with whom, the reviewer's notes, and the **profiles** of the albums and folders. A person's folder or a pet's album is offered only when that person, or that very animal, is in the photos. Inside an album, text pages go to `Dokumenty/` and a receipt or document to its folder. Full nudity goes to the ` PRIV` sibling (P26).
 
   Steps 1–5 (without the LLM) run as their own stage, `place`, before grouping (S4). A photo that joins an album is grouped, ranked, captioned and reviewed with that album: it can form a new burst with the album's photos, and it shows on the album's page (P33).
 
