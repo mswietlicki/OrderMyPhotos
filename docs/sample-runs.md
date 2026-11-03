@@ -213,3 +213,42 @@ The library index (599 dated albums, their content hashes and capture times) com
 - whether the two animal-looking undated albums should take photos by look;
 - the OCR post-process over the kept pages;
 - per-file decisions for copies in two curated folders.
+
+## Runs s4d–s4f: sorting by sessions and events, orientation (2026-11-03)
+
+The user labelled s4: 870 photos, 85 taken out of where S11 put them, and notes on where some belong ("Work", "Bilard z Kolegami", "hardware", "paragony", "rotate"). Their verdict: "Mostly I'm NOT happy with the sort" (decisions.md P35).
+
+**Sorting against those labels** (the same sample, the labels imported):
+
+| | s4 (photo by photo) | s4f (sessions, events, LLM decisions) |
+|---|---|---|
+| photos taken out that now go elsewhere | – (they were the complaint) | 84 of 85 |
+| work and billiards photos (notes) in an album of their own | 0 of 9 (split over 4 thematic folders) | 9 of 9, in 4 albums |
+| hardware, receipts (notes) | `Random`, `Documents` | `Info/Hardware`, `Info/Paragony` |
+| the 42-photo pantry series next to a trip | joined the trip album | an album of its own (a shopping series) |
+| photos given to the cat's album | 6, all taken out | 7, each within DINOv2 0.55 of one of its own; other cats to `Cats` |
+| new albums / new folders | 5 / – | 22 / 5 |
+
+- **Units:** 648 unsorted photos (85 of them taken out in review) became 95 sessions and 66 events.
+- **Speed:** each event is one LLM call; with the static part of the prompt first, the server's cache brings that to 1.1 s per call (332 calls, 6 min).
+- **What was tuned along the way:**
+  - At first, single WhatsApp photos invented a folder each, about 50 one-photo folders. A new folder now needs 3 photos, and smaller ones are decided again.
+  - "Koty" was created next to `Cats`.
+  - Dates appeared inside names.
+  - A folder the photos had been taken out of could be chosen again.
+  - The owner's name ended up in an album name.
+  - One- or two-photo walks near home became albums; an event that small now needs new people.
+  - Decisions were made at temperature 0, so the runs repeat: at 0.2, the work presentation went to a new `Praca` folder in one run and to an album in the next.
+- **Still open:** a few small new albums near home with 3 photos and no people ("… wieczór"), which the reviewer can turn down with "Not an album".
+
+**Orientation (P36):**
+- **One view:** a classifier on SigLIP 2 embeddings, trained on 1,500 photos turned four ways, got 63–69 % of held-out photos right and flagged 1 photo.
+- **Four views:** looking at each photo in all four turns finds the turn 93.5 % of the time on 200 held-out photos turned at random, with no mistakes above a margin of 4.
+- **Real turned photos:** on the user's noted photos and the turned text pages it points the right way every time, but with margins of 0.4–2.5. So the VLM checks what it flags.
+- **Result:** 2,476 photos were looked at (9 min on the B50, plus 186 VLM calls). 93 were flagged and 37 confirmed turned, the user's noted photo among them (the VLM says upright: 0.001 as it is, 0.998 turned back). 33 of them carry a proposed turn in the review.
+
+**Review:**
+- one page per album or folder that receives photos, each incoming photo marked with the folder it comes from;
+- two folders with one name get their parent in the title ("Dom (Info)", "Dom (Other)");
+- pages of earlier runs are removed;
+- `m` / `Shift+M` move a photo or a burst, `r` turns a photo, and all of it was tested on the workstation copy.

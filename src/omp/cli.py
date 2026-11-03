@@ -10,7 +10,7 @@ from .db import connect
 
 def main(argv=None):
     ap = argparse.ArgumentParser(prog="omp")
-    ap.add_argument("stage", choices=["inventory", "previews", "signals", "faces", "subjects", "depth", "text", "group", "rank",
+    ap.add_argument("stage", choices=["inventory", "previews", "signals", "orient", "faces", "subjects", "depth", "text", "group", "rank",
                                       "judge", "captions", "people", "place", "albums", "report", "ocr", "labels", "evaluate", "stats", "all"])
     ap.add_argument("--only", help="signals: comma list of dino,siglip,iqa,nudity")
     ap.add_argument("--force", action="store_true")
@@ -22,7 +22,7 @@ def main(argv=None):
     cfg = Config()
     con = connect(cfg.db)
     started = time.perf_counter()
-    stages = ["inventory", "previews", "signals", "faces", "subjects", "depth", "text", "place", "group", "rank", "judge",
+    stages = ["inventory", "previews", "signals", "orient", "faces", "subjects", "depth", "text", "place", "group", "rank", "judge",
               "people", "captions", "albums", "report"] if args.stage == "all" else [args.stage]
     for stage in stages:
         if stage == "inventory":
@@ -63,6 +63,9 @@ def main(argv=None):
         elif stage == "people":
             from . import people
             people.run(cfg, con, args.run)
+        elif stage == "orient":
+            from . import orient
+            orient.run(cfg, con, args.run)
         elif stage == "ocr":  # a post-process, not part of `all`: once the albums are done and photos sorted
             from . import text
             text.run_ocr(cfg, con, args.run)

@@ -265,6 +265,39 @@ On the s4 sample, 136 photos were OCR candidates (SigLIP 2's kind is document, l
 - **Until a page is read,** two text pages that look alike count as different pages, so all of them are kept. Retakes of the same page are found once the OCR has read them.
 - **The OCR, `omp ocr`,** is a post-process and not part of `all`. It reads only the kept pages (the reviewer's verdict wins) with the block layout, then runs the guarded repair (P28). It runs when the 4090 can be lent. Its `.txt` and `.ocr.json` then appear in the bundle with the next `omp report`.
 
+## P35 — Sorting by sessions and events, decided with album profiles (2026-11-03, user)
+
+The user reviewed s4's sorting: "Mostly I'm NOT happy with the sort." Their labels and notes showed one cause behind most of it:
+- **Photos were routed one by one.** A work presentation, five photos in four minutes, went to four different folders. A billiards evening with colleagues went to an acrobatics folder. Smartwatch internals went to `Random`, and a receipt to `Documents`.
+- **Events under 8 kept photos never became albums.** All 8 photos sent to `Dom` and all 6 sent to the cat's album were taken out.
+- **The pantry series:** 42 photos of jars in a shop, 45 minutes before a trip album, joined it through the 2-hour margin. 41 were taken out.
+
+The user's rules: similar photos stay together; even one photo can be an event "if it's in a new place with new people and not surrounded by photos with the same people"; "face identification should be a strong indicator that the event/trip album continues"; not every cat is the cat in the cat's album, so random cats go to a new `Cats`; a series of photos (shopping for glasses) is one album and even an event; every album should have a description; when in doubt, ask the LLM.
+
+So S11 now works on groups:
+1. **Sessions:** photos at most 15 min apart with no jump over 1 km were taken together and move as one. A burst or a document set that spans two sessions joins them.
+2. **Joining an existing album:** a session joins it when it's inside the album's time span at its place. Within 2 h before or after the span, it joins only if it shares people with the album or looks like it (SigLIP 2 ≥ 0.80). A session never goes back to an album the reviewer took its photos out of.
+3. **Events:** sessions up to 3 h apart at one place (≤ 5 km) are one event. So are sessions up to 36 h apart that share a person the owner doesn't photograph every day (seen on ≤ 6 days within ±60), and days away from home (one trip).
+4. **The decision:** for each event, the local LLM gets:
+   - what the photos show (captions), when and where they were taken, who is in them, and how many of those people appear nowhere else within 3 days;
+   - the reviewer's notes;
+   - the albums close in time with their summaries;
+   - every thematic folder with its **profile**: one sentence on what it collects, written from its photos' captions (or, uncaptioned, from a line about a few of them).
+
+   It answers: a new album (with a name in the owner's style), an existing album, a folder, or a new folder. A person's folder is offered only when that person is in the photos. A pet's album is offered only for its own animal: an undated album whose photos are mostly animals takes only photos with DINOv2 ≥ 0.55 to one of its own. On the sample, the cat's own photos are at 0.61 at the 10th percentile, and the six the reviewer rejected are all ≤ 0.42.
+5. **Inside an album:** text pages go to its `Dokumenty/`, and a receipt or a document among other photos goes to its folder.
+6. **Messenger photos** are decided the same way, photo by photo, always to a folder (P32).
+
+The review shows one page per album or folder that receives photos. Each incoming photo is marked with the folder it comes from: no "To …" pages, no duplicates. `m` moves a photo or a burst to any album or folder of the library, or to a new album the reviewer names. S11 takes moves as given, and outs (`o`) as "anywhere but there".
+
+## P36 — Orientation from the image, not only the EXIF tag (2026-11-03, user)
+
+"A lot of photos don't seem rotated correctly." The two the user noted carry `Rotate 90 CW` in EXIF, and the pipeline applies it. The phone's sensor was wrong: it was pointing down, at a page and at a shelf. So the `orient` stage looks at the image:
+1. **A screen learned from the library itself.** 1,500 photos, assumed upright once EXIF is applied, plus each one turned 90°, 180° and 270°: a logistic regression on SigLIP 2 embeddings learns the four turns. Classifying one view this way was too weak: 63–69 % on held-out photos, and it flagged 1 photo of 2,535. So each photo is looked at in all four turns, and the turn that makes the four views agree wins (the most likely t over the sum of log P(class t + k | view k)). On 200 held-out photos turned at random, this finds the turn 93.5 % of the time, with no mistakes above a margin of 4.
+2. **The VLM checks what the screen flags.** On the sample's real turned photos (the two noted ones and 12 text pages), the screen points the same way as the text stage every time, but with low margins (0.4–2.5): a shot pointing down has no natural "up". So every photo the screen calls turned (margin ≥ 0.3) is asked about with the resident VLM, as the text stage does: "is it upright?", as it is and turned back. The turn is proposed only when the VLM prefers the turned-back photo.
+
+Text pages keep the text stage's answer (P24). In the review, a proposed turn shows the photo turned, and `r` turns it 90° further. On apply, the turn becomes a lossless EXIF Orientation change. The cost per photo is three more SigLIP 2 passes, plus two VLM questions for each flagged photo.
+
 ## Open — for the user
 
 1. **Language** of titles, descriptions and tags: English, Polish, or both. Tags could carry both; descriptions need one.

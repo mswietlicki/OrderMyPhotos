@@ -59,11 +59,11 @@ class VLM:
         z = sum(math.exp(v) for v in lp.values())
         return {o: math.exp(lp[o]) / z if o in lp else 0.0 for o in options}
 
-    def json(self, content: list, schema: dict, system: str | None = None, max_tokens=1024) -> dict:
+    def json(self, content: list, schema: dict, system: str | None = None, max_tokens=1024, temperature=0.2) -> dict:
         messages = ([{"role": "system", "content": system}] if system else []) + [{"role": "user", "content": content}]
         for budget in (max_tokens, max_tokens * 3):  # an answer cut off at the budget is retried once with more
             d = self._post({
-                "messages": messages, "max_tokens": budget, "temperature": 0.2,
+                "messages": messages, "max_tokens": budget, "temperature": temperature,
                 "response_format": {"type": "json_schema", "json_schema": {"name": "out", "schema": schema, "strict": True}},
             })
             try:

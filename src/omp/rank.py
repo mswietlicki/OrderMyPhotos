@@ -198,6 +198,7 @@ def run(cfg: Config, con, run_id: str):
         texts = {r["id"]: dict(r) for r in con.execute("SELECT id, rotate, mostly_text, chars, blocks FROM text")}
     except Exception:  # noqa: BLE001 - no text stage yet
         texts = {}
+    orient = {r[0]: int(r[1]) for r in con.execute("SELECT id, value FROM signal WHERE kind='orient' AND value > 0")}
     policy_of = {}
     for r in con.execute("SELECT id, policy FROM file ORDER BY path"):
         policy_of.setdefault(r["id"], r["policy"])
@@ -236,6 +237,8 @@ def run(cfg: Config, con, run_id: str):
                     f["ocr_needed"] = True  # tagged until the OCR post-process reads it
                 if policy_of.get(id_) == "cull" and verdict == "keep":
                     f["place"] = f"{album_of.get(id_)}/{DOCS_FOLDER}"  # an album's text pages go to its subfolder
+        if not (tx and tx["mostly_text"]) and orient.get(id_):  # a turned photo (P36); text pages keep the text stage's
+            f["rotate"] = orient[id_]
         if id_ in nude:
             f["nudity"] = True
             album = album_of.get(id_) or ""

@@ -153,6 +153,15 @@ def run(cfg: Config, con, run_id: str, out: str | None):
         props = []
     tz = ZoneInfo(cfg.tz)
     placed = {r[0]: r[1] for r in con.execute("SELECT id, value FROM signal WHERE kind='placed_at'")}
+    from .albums import NOT_THEMES, THEME_ROOT
+    from .library import Library, manifests_dir
+
+    lib = Library.load(manifests_dir(), cfg.tz)
+    known_albums = set(lib.albums) if lib else set()
+    known_folders = ({m.group() for f in lib.folders if (m := THEME_ROOT.match(f))} if lib else set()) - NOT_THEMES
+
+    def base_of(target):
+        return (target or "").removesuffix(" PRIV").removesuffix("/Dokumenty")
     joining, joined_pids = defaultdict(dict), set()
     for pr in props:
         base = (pr["target"] or "").removesuffix(" PRIV").removesuffix("/Dokumenty")
@@ -211,43 +220,83 @@ def run(cfg: Config, con, run_id: str, out: str | None):
                     "proposals": [[x["name"], x["verdict"], x["group"]] for x in items], "seeded": data["user_labels"]}
         rows.append(row)
 
+    # S11's other proposals, one page per album or folder that receives photos (P35): its incoming photos,
+    # each marked with where it comes from. A new album's page lets the reviewer accept or rename it.
+    by_target = defaultdict(list)
     for pr in props:
-        if pr["pid"] in joined_pids:
+        if pr["pid"] in joined_pids or pr["action"] == "relocate":
             continue
-        ids = [r[0] for r in con.execute("SELECT id FROM proposal_member WHERE pid=?", (pr["pid"],)) if r[0] in dec]
-        if not ids:
+        kind = {"copy": "copies", "create": "new"}.get(pr["action"], "into")
+        by_target[(kind, pr["target"] if kind == "new" else base_of(pr["target"]))].append(pr)
+    for (kind, target), prs in sorted(by_target.items(), key=lambda kv: min(pr["start"] or 0 for pr in kv[1])):
+        members = {}
+        for pr in prs:
+            pdata = json.loads(pr["data"] or "{}")
+            for (i,) in con.execute("SELECT id FROM proposal_member WHERE pid=?", (pr["pid"],)):
+                if i in dec:
+                    members[i] = {"from": str(PurePosixPath(files[i]["path"]).parent),
+                                  "why": (pdata.get("reasons") or {}).get(i) or pdata.get("why"), "target": pr["target"]}
+        if not members:
             continue
-        pdata = json.loads(pr["data"] or "{}")
-        day = datetime.fromtimestamp(pr["start"], tz).strftime("%Y-%m-%d")
-        target = pr["target"] or ""
-        title = {"copy": f"Already in {PurePosixPath(target).name}", "add": f"Add to {target.split('/Albums/')[-1]}",
-                 "create": f"New album: {day} {pr['name']}", "leave": f"Small event {day}: stays where it is",
-                 "category": f"To {target}", "theme": f"To {target}",
-                 "relocate": f"Album folder to {target.split('/Albums/')[-1]}"}.get(pr["action"], pr["action"])
-        key = f"proposal:{pr['action']}:{target or day}"
-        slug = album_slug(f"{pr['action']} {day} {pr['name'] or PurePosixPath(target).name or ''}".strip(), taken)
-        items = sorted((item(i) for i in ids), key=lambda x: (x["ts"], x["name"]))
+        pr0, pdata = prs[0], json.loads(prs[0]["data"] or "{}")
+        day = datetime.fromtimestamp(min(pr["start"] for pr in prs), tz).strftime("%Y-%m-%d")
+        name = PurePosixPath(target).name
+        exists = target in album_files or target in known_albums
+        title = {"copies": f"Copies of photos in {name}", "new": name, "into": name}[kind]
+        key = {"copies": f"copies:{target}", "new": f"new:{target}", "into": target}[kind]
+        slug = album_slug(f"{kind} {name}", taken)
+        items = []
+        for i in members:
+            x = item(i)
+            x |= {"name": files[i]["path"], "joins": members[i]}  # named by its path: photos from many folders
+            items.append(x)
+        items.sort(key=lambda x: (x["ts"], x["name"]))
         gids = {x["group"] for x in items if x["group"]}
         bursts = {f"B{gid}": {"cohesion": g["cohesion"], "span": g.get("span_s"), "min": g.get("min_margin")}
                   for gid, g in groups.items() if g["kind"] == "burst" and f"B{gid}" in gids}
-        user = {x["name"]: seeded[(files[x["id"]]["album"], x["name"])] for x in items
-                if (files[x["id"]]["album"], x["name"]) in seeded}
+        user = {x["name"]: seeded[k] for x in items if (k := (files[x["id"]]["album"], PurePosixPath(x["name"]).name)) in seeded}
+        sources = Counter(m["from"] for m in members.values())
+        subtitle = {"new": f"new album · {day}", "copies": "copies to archive",
+                    "into": ("existing album" if exists else "new folder" if pdata.get("new_folder") else "folder")
+                    + " · " + ", ".join(f"{n} from {PurePosixPath(s).name}" for s, n in sources.most_common(3))}[kind]
         data = {"run": run_id, "album": key, "base": "../", "generated": datetime.now().isoformat(timespec="seconds"),
                 "items": items, "bursts": bursts, "summary": None, "timings": timings, "user_labels": user,
-                "proposal": {"pid": pr["pid"], "action": pr["action"], "target": target, "name": pr["name"], "title": title,
-                             "why": pdata.get("why"), "alternatives": pdata.get("alternatives", []), "days": pdata.get("days", []),
-                             "places": pdata.get("places", []), "away": pdata.get("away"),
-                             "sources": sorted({str(PurePosixPath(files[i]["path"]).parent) for i in ids})}}
+                "proposal": {"action": kind, "target": target, "name": pr0["name"], "title": title,
+                             "why": pdata.get("why"), "alternatives": pdata.get("alternatives", []),
+                             "days": pdata.get("days", []), "places": pdata.get("places", []), "away": pdata.get("away"),
+                             "exists": exists, "new_folder": bool(pdata.get("new_folder")),
+                             "sources": [[s, n] for s, n in sources.most_common()]}}
         (bundle / "albums" / f"{slug}.html").write_text(
             template.replace("/*DATA*/null", json.dumps(data, ensure_ascii=False).replace("</", "<\\/")), encoding="utf-8")
         rows.append({"album": key, "slug": slug, "photos": len(items), "ready": True, "kind": "proposal",
-                     "action": pr["action"], "title": title, "subtitle": pdata.get("why") or "",
+                     "action": kind, "title": title, "subtitle": subtitle,
                      "bursts": len(bursts), "keep": sum(1 for x in items if x["verdict"] == "keep"),
                      "review": sum(1 for x in items if x["tier"] == "review"), "start": day,
                      "cover": next((x["id"] for x in items if x["verdict"] == "keep"), items[0]["id"]),
                      "proposals": [[x["name"], x["verdict"], x["group"]] for x in items], "seeded": user})
+    # Every album and folder a photo can be moved to with `m`: the library's, and the new ones proposed here.
+    targets = {a: "album" for a in known_albums} | {f: "folder" for f in known_folders}
+    targets |= {r["album"][4:]: "new" for r in rows if r.get("action") == "new"}
+    (bundle / "albums" / "targets.js").write_text(
+        "window.OMP_TARGETS = " + json.dumps(sorted([p, k] for p, k in targets.items()), ensure_ascii=False) + ";\n",
+        encoding="utf-8")
+    # Two folders with one name ("Dom" in Other and in Info) get their parent in the title.
+    seen = Counter(r["title"] for r in rows if r.get("action") == "into")
+    for r in rows:
+        if r.get("action") == "into" and seen[r["title"]] > 1:
+            r["title"] = f"{r['title']} ({PurePosixPath(r['album']).parent.name})"
+    # Pages of earlier runs that this run didn't write again are gone from the index: remove them.
+    written = {r["slug"] + ".html" for r in rows if r["ready"]}
+    for old in (bundle / "albums").glob("*.html"):
+        if old.name not in written:
+            old.unlink()
     moves = [(json.loads(pr["data"] or "{}"), pr["target"]) for pr in props if pr["action"] == "relocate"]
     (bundle / "index.html").write_text(index_page(run_id, rows, moves), encoding="utf-8")
+    # The pages in the index's order, for Shift+arrows on a page (albums first, then those receiving photos).
+    pages = [r["slug"] + ".html" for kind in (False, True) for r in rows
+             if r["ready"] and (r.get("kind") == "proposal") == kind]
+    (bundle / "albums" / "nav.js").write_text(f"window.OMP_PAGES = {json.dumps(pages, ensure_ascii=False)};\n",
+                                              encoding="utf-8")
     (bundle / "README.txt").write_text(README, encoding="utf-8")
     lib = bundle / "library.json"
     meta = json.loads(lib.read_text(encoding="utf-8")) if lib.exists() else {
@@ -312,7 +361,7 @@ h2 {{ font-size: 15px; margin: 24px 0 10px; }}
 <header><h1>Review · run {html.escape(run_id)} <small>{ready} of {len(rows)} albums ready</small></h1><span class="sp"></span>
 <button class="primary" id="exp">Export all decisions</button></header>
 <div class="grid">{"".join(card(r) for r in rows if r.get("kind") != "proposal")}</div>
-{'<h2>Proposals for unsorted photos</h2><div class="grid">' + "".join(card(r) for r in rows if r.get("kind") == "proposal") + "</div>" if any(r.get("kind") == "proposal" for r in rows) else ""}
+{'<h2>Albums and folders receiving photos</h2><p class="k">Each one shows the photos that would move into it, marked with the folder they come from.</p><div class="grid">' + "".join(card(r) for r in rows if r.get("kind") == "proposal") + "</div>" if any(r.get("kind") == "proposal" for r in rows) else ""}
 {moves_html}</main>
 <script>
 const RUN = {json.dumps(run_id)};
@@ -352,6 +401,8 @@ refresh();
 
 def import_labels(cfg: Config, con, path: str):
     """Accepts one album's export ({album, labels}) or the index's ({albums: {album: {labels}}})."""
+    from .albums import page_target
+
     spec = json.loads(Path(path).read_text(encoding="utf-8"))
     albums = spec.get("albums") or {spec.get("album"): {"labels": spec["labels"]}}
     by_name = {}
@@ -373,14 +424,17 @@ def import_labels(cfg: Config, con, path: str):
             id_ = by_name.get((album, name)) or by_name.get((None, name))
             if not lab.get("confirmed") or not id_:
                 continue
-            kinds = ("group", "verdict", "category", "note")
+            kinds = ("group", "verdict", "category", "note", "rotate")
             for kind in kinds:
                 if kind in lab and (lab[kind] not in (None, "") or kind == "group"):
                     con.execute("INSERT INTO label(id, kind, value, source) VALUES (?,?,?,?)",
                                 (id_, kind, str(lab[kind]), src + (":trusted" if lab.get("trusted") else "")))
             if "out" in lab:  # taken out of this album or proposal ("" when undone): S11 routes it elsewhere
                 con.execute("INSERT INTO label(id, kind, value, source) VALUES (?,?,?,?)",
-                            (id_, "out", album if lab["out"] else "", src))
+                            (id_, "out", page_target(album) if lab["out"] else "", src))
+            if "move" in lab:  # moved with `m`: an album or folder path, or "new:<name>" ("" when undone)
+                con.execute("INSERT INTO label(id, kind, value, source) VALUES (?,?,?,?)",
+                            (id_, "move", lab["move"] or "", src))
             n += 1
     con.commit()
     print(f"labels: {n} confirmed photos imported from {path}")

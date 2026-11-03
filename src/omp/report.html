@@ -61,6 +61,9 @@ header input[type=range] { width: 120px; vertical-align: middle; }
 .card:not(.confirmed) { border-style: dashed; }
 .card.cur { box-shadow: 0 0 0 3px var(--focus); }
 .card img { display: block; width: 100%; aspect-ratio: 4 / 3; object-fit: contain; background: #000; cursor: zoom-in; }
+/* shown turned the way it should be (P36): the proposed or the reviewer's rotation, degrees clockwise */
+.card img.r90 { transform: rotate(90deg) scale(.75); } .card img.r180 { transform: rotate(180deg); } .card img.r270 { transform: rotate(270deg) scale(.75); }
+#lb img.r90, #lb img.r270 { max-width: 100vh; max-height: 100vw; } #lb img.r90 { transform: rotate(90deg); } #lb img.r180 { transform: rotate(180deg); } #lb img.r270 { transform: rotate(270deg); }
 .card .m { padding: 5px 7px 7px; font-size: 12px; }
 .card .t { display: flex; justify-content: space-between; color: var(--muted); }
 .card .cap { margin: 2px 0; font-weight: 500; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
@@ -104,6 +107,21 @@ header input[type=range] { width: 120px; vertical-align: middle; }
 #lb .mini img { display: block; width: 100%; aspect-ratio: 4 / 3; object-fit: contain; }
 #lb .mini div { font-size: 11px; padding: 1px 4px; color: #ccc; display: flex; justify-content: space-between; }
 #lb .close { position: absolute; top: 8px; right: 12px; }
+#help { position: fixed; inset: 0; z-index: 20; background: rgba(0,0,0,.55); display: flex; align-items: center; justify-content: center; }
+#help[hidden], #move[hidden] { display: none; }
+#move { position: fixed; inset: 0; z-index: 21; background: rgba(0,0,0,.55); display: flex; align-items: flex-start; justify-content: center; padding-top: 12vh; }
+#move .hbox { background: var(--panel); color: var(--ink); border: 1px solid var(--line); border-radius: 10px; padding: 14px 18px; width: min(640px, 94vw); }
+#move h2 { margin: 0 0 8px; }
+#mvq { width: 100%; padding: 6px 8px; font-size: 15px; }
+#mvlist div { padding: 4px 8px; border-radius: 6px; cursor: pointer; display: flex; justify-content: space-between; gap: 12px; }
+#mvlist div span { color: var(--muted); font-size: 12px; white-space: nowrap; }
+#mvlist div.on { background: var(--accent); color: var(--on-fill); }
+#mvlist div.on span { color: var(--on-fill); }
+#help .hbox { background: var(--panel); color: var(--ink); border: 1px solid var(--line); border-radius: 10px; padding: 14px 18px; max-width: 640px; max-height: 90vh; overflow: auto; }
+#help h2 { margin: 0 0 8px; }
+#help th { text-align: left; padding: 8px 0 2px; color: var(--muted); font-weight: 600; }
+#help td { padding: 2px 12px 2px 0; vertical-align: top; }
+#help kbd, header kbd { background: var(--chip); border: 1px solid var(--line); border-radius: 4px; padding: 0 5px; font-size: 12px; }
 @media (max-width: 700px) {
   .card { width: min(var(--card, 340px), calc(100vw - 54px)); }
   #lb { flex-direction: column; }
@@ -124,12 +142,36 @@ header input[type=range] { width: 120px; vertical-align: middle; }
   <button id="trust" title="accept every proposal you haven't labelled">Trust automatic picks</button>
   <button id="imp">Load labels…</button><input type="file" id="impf" accept=".json" hidden>
   <button class="primary" id="exp">Export labels</button>
+  <button id="helpb" title="keyboard shortcuts">?</button>
 </header>
 <main>
   <div class="intro" id="intro"></div>
   <div id="list"></div>
 </main>
+<div id="move" hidden><div class="hbox"><h2 id="mvtitle">Move to</h2>
+<input id="mvq" placeholder="type an album or folder name, or a new album's name" autocomplete="off">
+<div id="mvlist"></div><p class="k">↑ ↓ choose · Enter move · Esc cancel. A name that matches nothing makes a new album with that name.</p></div></div>
+<div id="help" hidden><div class="hbox"><h2>Shortcuts</h2><table>
+<tr><th colspan="2">Photos</th></tr>
+<tr><td><kbd>←</kbd> <kbd>→</kbd></td><td>previous / next photo; past the last one, the next album (before the first, the previous one)</td></tr>
+<tr><td><kbd>↑</kbd> <kbd>↓</kbd></td><td>previous / next burst (a single photo counts as one); past the last, the next album</td></tr>
+<tr><td><kbd>s</kbd> <kbd>a</kbd> <kbd>d</kbd></td><td>keep / archive / bad even if it's the only shot</td></tr>
+<tr><td><kbd>g</kbd> <kbd>x</kbd></td><td>join the previous photo's burst / leave the burst</td></tr>
+<tr><td><kbd>o</kbd></td><td>take the photo out of this album or proposal: it goes to the thematic folder it fits</td></tr>
+<tr><td><kbd>m</kbd> / <kbd>Shift</kbd>+<kbd>M</kbd></td><td>move the photo / its whole burst to an album or folder you choose, or to a new album you name</td></tr>
+<tr><td><kbd>r</kbd></td><td>turn the photo 90° clockwise (a lossless rotation when applied)</td></tr>
+<tr><td><kbd>Enter</kbd></td><td>accept the burst as it is, and go to the next one (after the last burst, the next album)</td></tr>
+<tr><td><kbd>Space</kbd></td><td>open or close the photo, with its burst, reasons and caption</td></tr>
+<tr><th colspan="2">This page</th></tr>
+<tr><td><kbd>Shift</kbd>+<kbd>Enter</kbd></td><td>accept what this page proposes (on an album: trust the automatic picks, after a confirmation)</td></tr>
+<tr><td><kbd>Shift</kbd>+<kbd>O</kbd></td><td>a new album only: not an album, each photo where it fits</td></tr>
+<tr><td><kbd>Shift</kbd>+<kbd>←</kbd> <kbd>Shift</kbd>+<kbd>→</kbd></td><td>previous / next album, in the index's order</td></tr>
+<tr><td><kbd>Esc</kbd></td><td>close the photo; with none open, back to all albums</td></tr>
+<tr><td><kbd>?</kbd></td><td>this list</td></tr>
+</table><p class="k">Labels are kept in this browser as you go: moving to another album loses nothing. Export them when you're done.</p></div></div>
 <div id="lb"><div class="img"><img id="lbimg" alt=""></div><aside id="lbside"></aside><button class="close" id="lbx">✕ Esc</button></div>
+<script src="nav.js"></script>
+<script src="targets.js"></script>
 <script>
 const DATA = /*DATA*/null;
 const B = DATA.base || "";  // where t/ m/ p/ are, relative to this page
@@ -151,6 +193,7 @@ const save = () => { try { localStorage.setItem(KEY, JSON.stringify(labels)); } 
 const L = x => labels[x.name] || {};
 const verdictOf = x => L(x).verdict || x.verdict;
 const groupOf = x => (L(x).group !== undefined ? L(x).group : x.group);
+const rotOf = x => +(L(x).rotate ?? x.f.rotate ?? 0) % 360;  // degrees clockwise to show it upright
 const esc = s => String(s ?? "").replace(/[&<>"]/g, c => ({"&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;"}[c]));
 let order = [], cur = 0, lbOpen = false;
 
@@ -174,13 +217,14 @@ function badges(x) {
                                             : '<span class="b ref" title="mostly text: OCR saved as a .txt next to it">text</span>');
   if (x.f.docset) b.push('<span class="b ref" title="a document set: different pages, all kept">page ' + x.f.docset[0] + '/' + x.f.docset[1] + '</span>');
   if (x.f.place) b.push('<span class="b ref" title="moves to ' + esc(x.f.place) + '">→ ' + esc(x.f.place.split("/").pop()) + '/</span>');
-  if (x.f.rotate) b.push('<span class="b rev" title="turned: a lossless rotation (EXIF) is proposed">rotate ' + x.f.rotate + '°</span>');
+  if (rotOf(x)) b.push('<span class="b rev" title="shown turned the way it should be; a lossless rotation (EXIF) is proposed. r turns it further">rotate ' + rotOf(x) + '°</span>');
   if (x.f.maybe) b.push('<span class="b rev" title="kept, but the model fitted to your labels thinks you may not want it">maybe</span>');
   if (x.floor) b.push('<span class="b floor">floor</span>');
   if (x.protected) b.push('<span class="b floor" title="' + esc(x.protected) + '">protected</span>');
   if ((x.cap && x.cap.purpose && x.cap.purpose !== "memory") || (!x.cap && x.f.purpose && x.f.purpose !== "memory"))
     b.push('<span class="b ref">' + esc((x.cap && x.cap.category !== "none" && x.cap.category) || (x.cap && x.cap.purpose) || x.f.purpose) + '</span>');
   if (x.joins) b.push('<span class="b ref" title="joins this album from ' + esc(x.joins.from) + (x.joins.why ? ": " + esc(x.joins.why) : "") + (x.joins.sent ? " (sent " + esc(x.joins.sent) + ", shown next to the album photo it looks most like)" : "") + '. o keeps it out">+ ' + esc(x.joins.from.split("/").pop()) + (x.joins.target !== DATA.album ? " → " + esc(x.joins.target.split("/").pop()) : "") + '</span>');
+  if (L(x).move) b.push('<span class="b rev" title="m: you moved it here">→ ' + esc(L(x).move.replace(/^new:/, "new album: ").split("/").pop()) + '</span>');
   if (L(x).out) b.push('<span class="b rev" title="o: does not belong in this ' + (DATA.proposal ? "proposal" : "album") + '; it goes to the thematic folder it fits">out</span>');
   if (L(x).confirmed && L(x).verdict && L(x).verdict !== x.verdict) b.push('<span class="b rev" title="your label differs from the proposal">pipeline: ' + esc(x.verdict) + '</span>');
   if (x.v1) b.push('<span class="b" title="v1 burst culling">v1 ' + (x.v1 === "kept" ? "kept" : "archived") + '</span>');
@@ -191,7 +235,7 @@ function badges(x) {
 function card(x) {
   const v = verdictOf(x), l = L(x);
   return `<div class="card ${v === "bad" ? "bad" : v} ${l.confirmed ? "confirmed" : ""} ${l.out ? "out" : ""}" data-n="${esc(x.name)}" tabindex="-1">
-    <img loading="lazy" src="${B}t/${x.id}.jpg" alt="${esc(x.name)}">
+    <img loading="lazy" src="${B}t/${x.id}.jpg" alt="${esc(x.name)}" class="r${rotOf(x)}">
     <div class="m"><div class="t"><span>${x.time}</span><span>${esc(x.name.replace(/\.[^.]+$/, "").slice(-6))}${x.v1_archived ? " ·_arch" : ""}</span></div>
     ${x.cap ? `<div class="cap" title="${esc(x.cap.title_pl)}">${esc(x.cap.title_pl)}</div>` : ""}
     <div class="badges">${badges(x)}</div>
@@ -273,6 +317,7 @@ function showLb(x = lbItem && lbOpen ? lbItem : order[cur]) {
     if (lbItem === x) document.getElementById("lbside").insertAdjacentHTML("afterbegin",
       `<p class="warn">The original isn't reachable from here (${esc(decodeURIComponent(x.src.replace(/^(\.\.\/)+/, "")))}), so this is the 512 px thumbnail. Open the bundle at the root of the library to see the originals.</p>`);
   };
+  im.className = "r" + rotOf(x);
   im.src = x.src;
   const c = x.cap, f = x.f, v = verdictOf(x);
   const num = (k, d = 2) => f[k] == null ? "–" : (+f[k]).toFixed(d);
@@ -294,7 +339,7 @@ function showLb(x = lbItem && lbOpen ? lbItem : order[cur]) {
     <select id="cat">${cats.map(k => `<option ${k === curCat ? "selected" : ""}>${k}</option>`).join("")}</select>
     <div class="k" style="margin-top:8px">Note</div><input id="note" style="width:100%" value="${esc(L(x).note || "")}">
     <p class="k">v1: ${x.v1 || "not in a v1 burst"}${x.v1_archived ? " (in _archived/)" : ""}</p>
-    <p class="k">← → move · a archive · s keep · d bad · g / x join or leave the burst · Enter accept burst · Esc close</p>`;
+    <p class="k">← → photo · ↑ ↓ burst · a archive · s keep · d bad · g / x join or leave the burst · o out · Enter accept burst, next · Esc close · ? all keys</p>`;
   document.querySelectorAll("#lbside button[data-v]").forEach(b => b.onclick = () => setLabel(x, {verdict: b.dataset.v}));
   document.querySelectorAll("#lbside .mini").forEach(m => m.onclick = () => {
     const y = byName[m.dataset.n];
@@ -320,32 +365,120 @@ document.getElementById("list").addEventListener("change", e => {
   const x = byName[e.target.closest(".card").dataset.n];
   setLabel(x, {group: e.target.value.trim()});
 });
+const helpEl = document.getElementById("help");
+const toggleHelp = (show = helpEl.hidden) => { helpEl.hidden = !show; };
+helpEl.onclick = e => { if (e.target === helpEl) toggleHelp(false); };
+document.getElementById("helpb").onclick = () => toggleHelp(true);
+function goPage(d, at = "first") {  // the previous / next album or proposal, in the index's order (nav.js)
+  const pages = window.OMP_PAGES || [];
+  const i = pages.indexOf(decodeURIComponent(location.pathname.split("/").pop()));
+  if (i >= 0 && pages[i + d]) location.href = encodeURIComponent(pages[i + d]) + `#at=${at}${lbOpen ? "&open=1" : ""}`;
+}
+// m: move the photo (Shift+M: its whole burst) to an album or folder of the library, or to a new album.
+let mvItems = [], mvOn = 0, mvFor = [];
+function openMove(x, burst) {
+  const g = groupOf(x);
+  mvFor = burst && g ? items.filter(y => groupOf(y) === g) : [x];
+  document.getElementById("mvtitle").textContent = `Move ${mvFor.length > 1 ? "these " + mvFor.length + " photos" : "this photo"} to`;
+  const q = document.getElementById("mvq");
+  q.value = ""; document.getElementById("move").hidden = false; q.focus(); listMove();
+}
+function listMove() {
+  const q = document.getElementById("mvq").value.trim().toLowerCase();
+  const all = (window.OMP_TARGETS || []).filter(([p]) => p !== DATA.album);
+  const words = q.split(/\s+/).filter(Boolean);
+  mvItems = all.filter(([p]) => words.every(w => p.toLowerCase().includes(w)))
+    .sort((a, b) => (b[0].split("/").pop().toLowerCase().startsWith(q) - a[0].split("/").pop().toLowerCase().startsWith(q)) || b[0].localeCompare(a[0]))
+    .slice(0, 12);
+  if (q) mvItems.push(["new:" + document.getElementById("mvq").value.trim(), "new album"]);
+  mvOn = 0; drawMove();
+}
+function drawMove() {
+  document.getElementById("mvlist").innerHTML = mvItems.map(([p, k], i) =>
+    `<div class="${i === mvOn ? "on" : ""}" data-i="${i}">${esc(p.startsWith("new:") ? "New album: " + p.slice(4) : p.split("/").pop())}<span>${esc(p.startsWith("new:") ? "" : p.split("/").slice(0, -1).join("/"))} · ${esc(k)}</span></div>`).join("");
+  document.querySelectorAll("#mvlist div").forEach(d => d.onclick = () => { mvOn = +d.dataset.i; doMove(); });
+}
+function doMove() {
+  const pick = mvItems[mvOn]; if (!pick) return;
+  mvFor.forEach(y => { labels[y.name] = Object.assign(labels[y.name] || {group: y.group, verdict: y.verdict}, {move: pick[0], out: false, confirmed: true}); });
+  closeMove(); save();
+}
+function closeMove() { document.getElementById("move").hidden = true; document.activeElement.blur(); }
+document.getElementById("mvq").addEventListener("input", listMove);
+document.getElementById("mvq").addEventListener("keydown", e => {
+  if (e.key === "ArrowDown") { mvOn = Math.min(mvOn + 1, mvItems.length - 1); drawMove(); }
+  else if (e.key === "ArrowUp") { mvOn = Math.max(mvOn - 1, 0); drawMove(); }
+  else if (e.key === "Enter") doMove();
+  else if (e.key === "Escape") closeMove();
+  else return;
+  e.preventDefault(); e.stopPropagation();
+});
+document.getElementById("move").onclick = e => { if (e.target.id === "move") closeMove(); };
+function acceptPage() {
+  if (DATA.proposal) { saveProposal("accept"); return; }
+  const n = items.filter(y => !L(y).confirmed).length;
+  if (n && confirm(`Trust the automatic picks for the ${n} photos you haven't labelled?`)) document.getElementById("trust").click();
+}
 document.addEventListener("keydown", e => {
   if (e.ctrlKey || e.metaKey || e.altKey) return;  // leave Ctrl+S, Ctrl+A etc. to the browser
   if (["INPUT", "SELECT", "TEXTAREA"].includes(document.activeElement.tagName)) { if (e.key === "Escape") document.activeElement.blur(); return; }
-  const x = lbOpen && lbItem ? lbItem : order[cur]; if (!x) return;
   // Verdicts sit on the left hand's home row (a s d), next to g and x, while the right hand stays on the
-  // arrows, Enter and Space. k and b still work.
+  // arrows, Enter and Space. k and b still work. Shift with Enter, O and the arrows acts on the whole page.
   const k = e.key.length === 1 ? e.key.toLowerCase() : e.key;
+  if (!helpEl.hidden && k !== "?") { if (k === "Escape") toggleHelp(false); e.preventDefault(); return; }
+  if (k === "?") toggleHelp();
+  else if (k === "Escape") { if (lbOpen) closeLb(); else location.href = "../index.html"; }
+  else if (e.shiftKey && k === "ArrowRight") goPage(1);
+  else if (e.shiftKey && k === "ArrowLeft") goPage(-1);
+  else if (e.shiftKey && k === "Enter") acceptPage();
+  else if (e.shiftKey && k === "o" && DATA.proposal && DATA.proposal.action === "new") saveProposal("themes");
+  else if (k === "m") { const x = lbOpen && lbItem ? lbItem : order[cur]; if (x) openMove(x, e.shiftKey); }
+  else return photoKey(e, k);
+  e.preventDefault();
+});
+function photoKey(e, k) {
+  const x = lbOpen && lbItem ? lbItem : order[cur]; if (!x) return;
+  // Past the last photo (or before the first) the arrows go on to the next (previous) album.
   const step = d => {
-    const i = order.indexOf(x);
-    cur = Math.min(Math.max((i < 0 ? cur : i) + d, 0), order.length - 1);
+    const i = (order.indexOf(x) < 0 ? cur : order.indexOf(x)) + d;
+    if (i >= order.length) return goPage(1, "first");
+    if (i < 0) return goPage(-1, "last");
+    cur = i;
     focusCur(); if (lbOpen) showLb(order[cur]);
+  };
+  // A burst is one stop for the up and down arrows, and so is each single photo.
+  const stop = y => groupOf(y) || "\u0000" + y.name;
+  const jump = d => {
+    const i = Math.max(order.indexOf(x), 0);
+    let j = i;
+    while (j > 0 && stop(order[j - 1]) === stop(order[i])) j--;  // the start of this burst
+    if (d > 0) {
+      j = i;
+      while (j < order.length && stop(order[j]) === stop(order[i])) j++;
+      if (j >= order.length) return goPage(1, "first");
+    } else if (j === i) {
+      if (j === 0) return goPage(-1, "last");
+      j--;
+      while (j > 0 && stop(order[j - 1]) === stop(order[j])) j--;
+    }
+    cur = j; focusCur(); if (lbOpen) showLb(order[cur]);
   };
   if (k === "ArrowRight") step(1);
   else if (k === "ArrowLeft") step(-1);
+  else if (k === "ArrowDown") jump(1);
+  else if (k === "ArrowUp") jump(-1);
   else if (k === "s" || k === "k") setLabel(x, {verdict: "keep"});
   else if (k === "a") setLabel(x, {verdict: "archive"});
   else if (k === "d" || k === "b") setLabel(x, {verdict: "bad"});
   else if (k === "g" && cur > 0) { const prev = order[cur - 1]; setLabel(x, {group: groupOf(prev) || ("U" + prev.name.slice(9, 15))}); if (!groupOf(prev)) setLabel(prev, {group: "U" + prev.name.slice(9, 15)}); }
   else if (k === "x" || k === "n") setLabel(x, {group: ""});
-  else if (k === "o") setLabel(x, {out: !L(x).out});
-  else if (k === "Enter") acceptGroup(x);
-  else if (k === " " || k === "z") { e.preventDefault(); lbOpen ? closeLb() : showLb(); }
-  else if (k === "Escape") closeLb();
+  else if (k === "o") setLabel(x, {out: !L(x).out, move: ""});
+  else if (k === "r") setLabel(x, {rotate: (rotOf(x) + 90) % 360});
+  else if (k === "Enter") { acceptGroup(x); jump(1); }
+  else if (k === " " || k === "z") { lbOpen ? closeLb() : showLb(); }
   else return;
   e.preventDefault();
-});
+}
 document.getElementById("lbx").onclick = closeLb;
 document.getElementById("filter").onchange = render;
 const sizeEl = document.getElementById("size");
@@ -375,23 +508,29 @@ document.getElementById("impf").onchange = async e => {
 
 document.getElementById("title").textContent = DATA.proposal ? DATA.proposal.title : DATA.album.split("/").pop();
 function proposalBox() {
-  // S11: what happens to these unsorted photos as a whole. Saved as labels.__proposal__.
+  // What happens to the photos on this page as a whole (P35). Saved as labels.__proposal__.
   const P = DATA.proposal, d = labels.__proposal__ || {};
-  const actionText = {copy: "These photos are already in that album: the copies here get archived.",
-    add: "These photos were taken during that album's event: they join it.",
-    create: "These photos make a new album:",
-    category: "Reference photos: they go to their category album.",
-    theme: "Not part of any album: these go to a thematic folder.",
-    relocate: "An album folder outside Pictures/Albums/<year>/: it moves there."}[P.action];
-  const state = d.confirmed ? (d.action === "themes" ? "you chose: no album, each photo to its thematic folder" : "you accepted" + (d.name ? ` as "${esc(d.name)}"` : "")) : "not decided yet";
+  const what = {
+    new: "These photos make a new album. Its name (the date goes in front):",
+    copies: "These photos are already in that album: the copies here get archived.",
+    into: P.exists ? "Photos that would join this album, each marked with the folder it comes from."
+      : P.new_folder ? "A new folder, for photos like these. Each is marked with the folder it comes from."
+      : "Photos that would move into this folder, each marked with the folder it comes from.",
+  }[P.action] || "";
+  const state = d.confirmed ? (d.action === "themes" ? "you chose: not an album, each photo where it fits"
+    : "you accepted" + (d.name ? ` as "${esc(d.name)}"` : "")) : "not decided yet";
+  const sources = (P.sources || []).map(([s, n]) => `${esc(s)} (${n})`).join(", ");
   return `<div class="prop"><h2>${esc(P.title)}</h2>
-    <div>${esc(actionText)}${P.why ? ` <span class="k">(${esc(P.why)})</span>` : ""}</div>
-    ${P.action === "create" ? `<p><input id="pname" value="${esc(d.name || P.name || "")}" title="album name; the date is added in front">
+    <div>${esc(what)}${P.why ? ` <span class="k">(${esc(P.why)})</span>` : ""}</div>
+    ${P.action === "new" ? `<p><input id="pname" value="${esc(d.name || P.name || "")}" title="album name; the date is added in front">
       ${(P.alternatives || []).map(a => `<span class="b alt" title="use this name">${esc(a)}</span>`).join(" ")}</p>
-      <div class="k">→ ${esc(P.target.split("/").slice(0, -1).join("/"))}/${esc(P.target.split("/").pop().slice(0, 11))}<b id="pprev">${esc(d.name || P.name || "")}</b></div>` : P.target ? `<div class="k">→ ${esc(P.target)}</div>` : ""}
-    <div class="k">${esc((P.days || []).join(", "))}${P.places && P.places.length ? " · " + P.places.map(p => esc(p[0]) + " (" + p[1] + ")").join(", ") : ""} · from ${esc((P.sources || []).join(", "))}</div>
-    <p><button class="primary" id="paccept">Accept proposal</button> <button id="pleave" title="nothing stays unsorted: each photo goes to the thematic folder it fits">Not an album: thematic folders</button>
-      <span class="k" id="pstate">${state}</span> · <kbd>o</kbd> takes one photo out: it goes to its thematic folder instead</p></div>`;
+      <div class="k">→ ${esc(P.target.split("/").slice(0, -1).join("/"))}/${esc(P.target.split("/").pop().slice(0, 11))}<b id="pprev">${esc(d.name || P.name || "")}</b></div>`
+      : `<div class="k">${esc(P.target)}</div>`}
+    <div class="k">${esc((P.days || []).join(", "))}${P.places && P.places.length ? " · " + P.places.map(p => esc(p[0]) + " (" + p[1] + ")").join(", ") : ""}${sources ? " · from " + sources : ""}</div>
+    <p><button class="primary" id="paccept">${P.action === "new" ? "Accept the album" : "Accept"}</button>
+      ${P.action === "new" ? `<button id="pleave" title="each photo goes where it fits">Not an album</button>` : ""}
+      <span class="k" id="pstate">${state}</span> · <kbd>Shift</kbd>+<kbd>Enter</kbd> accepts${P.action === "new" ? `, <kbd>Shift</kbd>+<kbd>O</kbd> is "not an album"` : ""},
+      <kbd>o</kbd> takes a photo out, <kbd>m</kbd> moves it (<kbd>Shift</kbd>+<kbd>M</kbd> its whole burst) to the album you choose</p></div>`;
 }
 function saveProposal(action) {
   const nameEl = document.getElementById("pname");
@@ -402,7 +541,8 @@ function saveProposal(action) {
 function wireProposal() {
   if (!DATA.proposal) return;
   document.getElementById("paccept").onclick = () => saveProposal("accept");
-  document.getElementById("pleave").onclick = () => saveProposal("themes");
+  const leave = document.getElementById("pleave");
+  if (leave) leave.onclick = () => saveProposal("themes");
   const nameEl = document.getElementById("pname");
   if (nameEl) nameEl.oninput = () => { document.getElementById("pprev").textContent = nameEl.value; };
   document.querySelectorAll("#pbox .alt").forEach(a => a.onclick = () => { nameEl.value = a.textContent; nameEl.oninput(); });
@@ -412,10 +552,17 @@ document.getElementById("intro").innerHTML = (DATA.proposal ? `<div id="pbox">${
   <p>Each box is a burst the pipeline found. Green is keep, grey archive, red bad on its own. A dashed border means it's only a proposal; a solid one means you labelled it.
   To label, keep your left hand on <kbd>a</kbd> <kbd>s</kbd> <kbd>d</kbd> and your right on the arrows: fix the verdicts (<kbd>a</kbd> archive, <kbd>s</kbd> keep, <kbd>d</kbd> bad even if it's the only shot), fix the bursts (<kbd>g</kbd> puts the photo in the same burst as the previous one, <kbd>x</kbd> takes it out, or type a label into the box under a photo), then <kbd>Enter</kbd> or "Accept burst" to confirm a whole burst as it is.
   <kbd>o</kbd> takes a photo out of this ${DATA.proposal ? "proposal" : "album"} without archiving it: it goes to the thematic folder it fits instead (press it again to undo).
-  <kbd>←</kbd> <kbd>→</kbd> move, <kbd>Space</kbd> opens the photo with captions and reasons. Labels stay in this browser until you click <b>Export labels</b>.</p>
+  <kbd>←</kbd> <kbd>→</kbd> move photo by photo, <kbd>↑</kbd> <kbd>↓</kbd> burst by burst, and past the end of the album on to the next one. <kbd>Space</kbd> opens the photo with captions and reasons.
+  <kbd>Shift</kbd>+<kbd>Enter</kbd> ${DATA.proposal ? "accepts the proposal" : "trusts the automatic picks for the rest"}, <kbd>Shift</kbd>+<kbd>→</kbd> goes to the next album, <kbd>Esc</kbd> back to all albums, <kbd>?</kbd> lists every key.
+  Labels stay in this browser until you click <b>Export labels</b>.</p>
   <details class="tim"><summary>Run ${esc(DATA.run)} · generated ${esc(DATA.generated)} · timings</summary>${DATA.timings.map(t => `${esc(t.stage)}: ${t.items} in ${t.s} s (${esc(t.device || "")})`).join("<br>")}</details>`;
 render();
 wireProposal();
+{  // arrived from the previous / next album with the arrows: start at its first or last photo
+  const h = new URLSearchParams(location.hash.slice(1));
+  if (h.get("at") === "last") cur = Math.max(order.length - 1, 0);
+  if (h.has("at")) { focusCur(); if (h.get("open")) showLb(); history.replaceState(null, "", location.pathname + location.search); }
+}
 </script>
 </body>
 </html>

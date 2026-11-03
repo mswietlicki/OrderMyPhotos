@@ -291,7 +291,15 @@ The open view loads the **original file through its relative path** (`../../<alb
 
 The page itself:
 - The album view shows each burst as a filmstrip with the picks highlighted and badges: blur, eyes closed, below the floor, v1 pick, confidence. Below the bursts comes a **"bad on their own"** strip: floor rejects with their reasons, and a warning on value-protected ones ("only photo of this event").
-- Keyboard-driven, with the left hand on the home row and the right on the arrows: `a` archive, `s` keep, `d` bad on its own, `g` / `x` join or leave the previous photo's burst, `o` takes a photo out of the album or proposal without archiving it. S11 then routes it to the thematic folder it fits, never back to where it came from. ←/→ move, `Enter` accepts the group, `Space` opens the photo. The open view shows the photo at full resolution beside the thumbnails of its burst (or a single's neighbours), its reasons and its caption. If the original isn't reachable (a copy of the bundle without the photos), it shows the thumbnail and says so.
+- Keyboard-driven, with the left hand on the home row and the right on the arrows: `a` archive, `s` keep, `d` bad on its own, `g` / `x` join or leave the previous photo's burst, `o` takes a photo out of the album or proposal without archiving it. S11 then routes it to the thematic folder it fits, never back to where it came from. The other keys:
+  - ←/→ move photo by photo and ↑/↓ burst by burst, and past the album's last photo (or before its first) on to the next (previous) album;
+  - `Enter` accepts the burst and goes to the next one, after the last burst to the next album;
+  - `Space` opens the photo;
+  - `Shift+Enter` accepts the proposal (on an album, it trusts the automatic picks, after a confirmation);
+  - `Shift+O` on a proposal is "not an album";
+  - `Shift+←/→` go to the previous or next album in the index's order (`albums/nav.js`);
+  - `Esc` closes the photo, or goes back to the index;
+  - `?` lists every key. The open view shows the photo at full resolution beside the thumbnails of its burst (or a single's neighbours), its reasons and its caption. If the original isn't reachable (a copy of the bundle without the photos), it shows the thumbnail and says so.
 - Readable in light and dark themes: text on the green, amber, blue and red fills is white in the light theme and dark in the dark one, and every text element is at least 4.5:1 against its background (measured on the sample bundle).
 - Approving an album, by labelling or trusting it, marks its decisions ready for the plan.
 - Every override is stored as a label, and the labels train the S5 ranker.
@@ -410,23 +418,28 @@ There are two kinds: **event albums** for memories, described here, and **catego
   - A text-only LLM call writes the name in Polish from the places, named people, holidays and the event's captions. A few dozen of the user's 632 album names serve as style examples.
   - Events below a minimum size (8 kept photos) don't get an album. Their photos go to a thematic folder (P29): a named person's folder, the user's thematic folder they look most like, `Other/Widoki`, `Other/Dom` or `Other/Random`. No photo stays unsorted.
 - **Ground truth for free:** the 632 existing albums. Running the segmenter over their photos, mixed into one stream, shows how well it reproduces the user's album boundaries (boundary F1, adjusted Rand index) before it proposes anything new.
-- **Review and apply, in the bundle (S6):** a folder of thousands of unsorted photos is never one review page. Each **proposed album** is its own unit in the bundle's index, next to the existing albums, marked as a proposal: "proposed: `<YYYY-MM-DD> <name>` · 86 photos · from `Obrazy/Samsung Gallery`". Its page is the same review page (bursts, keep / archive / bad, trust), plus:
-  - the proposed name and date, editable;
-  - "merge with the previous / next proposal" and "split here" at a photo;
-  - "add to the existing album …" when it overlaps one;
-  - "Not an album: thematic folders", which routes its photos like a small event's.
+- **Review, in the bundle (S6, P35):** a folder of thousands of unsorted photos is never one review page. The index lists every album and folder that receives photos, **one page per target**:
+  - an existing album, with its own photos and the joining ones;
+  - a folder, or an album that isn't processed here, with its incoming photos;
+  - a new album, with its name to accept or edit.
+
+  Each incoming photo is marked with the folder it comes from. The reviewer can:
+  - take a photo out with `o`: it goes where else it fits, never back;
+  - move a photo, or its whole burst, with `m` / `Shift+M` to any album or folder of the library, or to a new album they name;
+  - accept the page with `Shift+Enter`;
+  - turn down a new album with "Not an album".
 
   Every photo ends up in an album or a thematic folder (P29).
 - **Apply:** an approved proposal creates the album folder and moves its kept photos into `Pictures/Albums/<year>/<name>/`, while its culled photos go to the archive like any other. Reference photos go to their category albums the same way. On an external drive or share the page does this itself, like the other moves. On OneDrive `mimir-onedrive apply` does it, and photos from Samsung Gallery's synced folders are moved too, with the phone's copy cleaned (P30). Moves happen only in the production run, after review, never in a sample run. Immich albums can follow later, through its API.
-- **Rules, in order** (decisions.md P25, P29–P32):
-  1. Already in an album → archive the copy.
-  2. Downloaded images (memes, wallpapers, art, infographics, screenshots) → a media folder, never an event album, even when they arrived during the trip (P31).
-  3. Messenger photos (WhatsApp, Messenger, Facebook) carry only the day they arrived, so each is decided on its own. A real photo joins an album it arrived during (or up to 3 days after) if it looks like it, or one within 60 days it looks very much like, never on the day alone. A document goes to its category folder, and the rest to a thematic folder (P32).
-  4. **Taken while an album's event or trip was going on → it joins that album, whatever folder it's in.** Text pages go into its `Dokumenty/`, and full nudity into its ` PRIV` sibling (P26).
-  5. Other reference photos → their category album.
-  6. Other events → a new album, or a thematic folder when too small (P29).
+- **Rules, in order** (decisions.md P25, P29–P35):
+  1. The reviewer's moves (`m`) are taken as given.
+  2. Already in an album → archive the copy.
+  3. Downloaded images (memes, wallpapers, art, infographics, screenshots) → a media folder, never an event album (P31).
+  4. Messenger photos carry only their arrival day. A real photo joins an album only if it looks like it (P32), otherwise it's decided like a one-photo event, always to a folder.
+  5. **Sessions:** photos taken together (≤ 15 min apart, no jump over 1 km) move as one, and a burst is never split. A session inside an album's time span, at its place, joins that album. Just before or after the span, it joins only with shared people or a matching look (P35).
+  6. **Events:** sessions ≤ 3 h apart at one place, or ≤ 36 h apart sharing a person the owner doesn't photograph every day, or days away from home. The local LLM decides each event as a whole: a new album (and its name), an album close in time, a thematic folder, or a new thematic folder. It sees what the photos show, when, where and with whom, the reviewer's notes, and the **profiles** of the albums and folders. A person's folder or a pet's album is offered only when that person, or that very animal, is in the photos. Inside an album, text pages go to `Dokumenty/` and a receipt or document to its folder. Full nudity goes to the ` PRIV` sibling (P26).
 
-  Steps 1–4 run as their own stage, `place`, before grouping (S4). A photo that joins an album is grouped, ranked, captioned and reviewed with that album: it can form a new burst with the album's photos, and it shows on the album's page (P33).
+  Steps 1–5 (without the LLM) run as their own stage, `place`, before grouping (S4). A photo that joins an album is grouped, ranked, captioned and reviewed with that album: it can form a new burst with the album's photos, and it shows on the album's page (P33).
 
   Album folders outside `Pictures/Albums/<year>/` are proposed to move there (P30). The library's albums come from the OneDrive manifest, so the rules see the whole library.
 - **Progressive:** a proposal is ready when its event is closed (no photos for a while, or the next event has started) and its photos are processed. The folder is processed from the oldest photo onwards, so review can start long before a folder of 43k photos is done.
