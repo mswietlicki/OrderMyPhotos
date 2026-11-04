@@ -76,6 +76,11 @@ class Session:
     root: str
     library_index: str = "self"      # manifest: S11 knows the whole OneDrive library; self: only this root
     created: float = field(default_factory=time.time)
+    run: str | None = None           # the run id its DB rows carry, when it isn't the session's id (an adopted DB)
+
+    @property
+    def run_id(self) -> str:
+        return self.run or self.id
 
     @property
     def dir(self) -> Path:
@@ -94,7 +99,7 @@ class Session:
         c = self.config()
         return {"OMP_ROOT": str(c.root), "OMP_DB": str(c.db), "OMP_CACHE": str(c.cache), "OMP_BUNDLE": str(c.bundle),
                 "OMP_STATUS": str(self.dir / "status.json"), "OMP_LIBRARY_INDEX": self.library_index,
-                "OMP_RUN": self.id}
+                "OMP_RUN": self.run_id}
 
     def save(self):
         self.dir.mkdir(parents=True, exist_ok=True)

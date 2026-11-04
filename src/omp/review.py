@@ -68,7 +68,7 @@ def placements(session) -> dict:
     if _cache["key"] == (db, stamp):
         return _cache["data"]
     con = connect(session)
-    run = session.id
+    run = session.run_id
     files = {}
     for r in con.execute("SELECT id, MIN(path) AS path, MIN(album) AS album, MIN(policy) AS policy FROM file"
                          " WHERE media='photo' AND policy IN ('cull', 'describe', 'unsorted') GROUP BY id"):

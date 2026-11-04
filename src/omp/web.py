@@ -140,7 +140,7 @@ class Runner:
         log = open(self.log_path(), "ab")
         log.write(f"\n=== {time.strftime('%Y-%m-%d %H:%M:%S %Z')} {self.phase['title']}: {' '.join(stages)}\n".encode())
         log.flush()
-        self.proc = subprocess.Popen([sys.executable, "-m", "omp", *stages, "--run", self.session.id],
+        self.proc = subprocess.Popen([sys.executable, "-m", "omp", *stages, "--run", self.session.run_id],
                                      stdout=log, stderr=subprocess.STDOUT, env=os.environ | self.session.env(),
                                      cwd="/tmp" if os.name != "nt" else None)
         log.close()
@@ -285,7 +285,7 @@ def status() -> dict:
         "session": {"id": s.id, "name": s.name, "root": s.root, "library_index": s.library_index, "created": s.created},
         "phase": runner.phase["key"] if cur < len(PHASES) else None, "phases": phases, "rounds": c["rounds"],
         "wanted": c["wanted"], "stage": st.get("stage") if alive else None, "step": step,
-        "steps": st.get("steps", []) if st.get("run") == s.id else [], "started": c.get("started"), "pid": c.get("pid"),
+        "steps": st.get("steps", []) if st.get("run") == s.run_id else [], "started": c.get("started"), "pid": c.get("pid"),
         "retries": c["retries"], "next_try": c["next_try"] if out["state"] == "retrying" else None,
         "last_exit": c["last_exit"], "error": st.get("error") if st.get("state") == "failed" else None,
         "history": c["history"][-12:], "review": pending, "library": library_counts(s),
