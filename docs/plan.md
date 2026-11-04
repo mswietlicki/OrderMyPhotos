@@ -96,17 +96,19 @@ Run s1 (2026-11-03) did a first pass of every stage below on the B50 and the res
 - [x] Apply the plan to a test session's copy after the final decision: moves, turns, deleting the archived photos if decided, a log and undo (P48)
 - [ ] Apply the plan on OneDrive: `mimir-onedrive apply` (S9), server-side moves by item id, the archive, confirmed deletes
 - [x] When `fullrun` and the P45 sorting work are both on master (whoever merges second): albums.py's `vlm = VLM(cfg.llm)` becomes `VLM(cfg.llm, repeatable=True)` and the `:instruct` workaround wrapper under it goes (P46); the `OMP_PROMPT_LOG` wrapper stays
-- [ ] S11 answers kept across runs (by prompt hash and model), so a re-run of `albums` doesn't redo ~25k LLM calls
-- [ ] The neighbour table (top-20 look-alikes) at full scale: chunked on the GPU or with numpy
+- [x] S11 answers kept across runs (by the whole request, `answers.db`), so a re-run of `albums` doesn't redo ~25k LLM calls (P52: 104 s → 1 s on s6)
+- [x] The neighbour table (top-20 look-alikes) at full scale: it already goes in chunks of 1,024 rows with numpy, ~1–2 min for the library (P52)
+- [x] Bursts at full scale: the clustering no longer grows with the cube of an event's size (P52: 600 photos 140 s → 0.7 s, the same clusters)
 - [x] **Speed-ups (user, 2026-11-04):** use every resource the machine has. When the 4090 is idle and will stay so for a while, it does the same work as the B50 too, from the same queue of photos. Not the other way round: the 4090's work needs its VRAM and CUDA. Done for DINOv2, SigLIP 2 and Q-ReAlign (P49):
   - `omp worker` in `omp-cuda`, as llama-swap's `omp-vision-cuda`;
   - the three stages take 87 s instead of 239 s on s6;
   - on the way, Q-ReAlign on the B50 was found scoring low (a torch XPU bug) and fixed.
-- [ ] More speed-ups, by measured cost on s6 (captions 27%, Q-ReAlign 22% before P49, orient 17%, depth 10%, faces 9%, subjects 7%):
+- [x] More speed-ups, by measured cost on s6 (captions 27%, Q-ReAlign 22% before P49, orient 17%, depth 10%, faces 9%, subjects 7%). Mimir is the run's (user, P52):
   - ~~stages side by side, one lane per device: the CPU (faces, nudity), the B50 (the vision stages), the depth service, the 4090 (VLM checks)~~ Done (P51): on a copy of s6, 460 s instead of 639 s (−28 %);
-  - parallel Qwen requests (`-np` slots) for captions, orientation checks and the judge;
-  - batching DINOv2 and SigLIP on the B50, only if the results stay the same
-- [ ] Optional: take the hashes from the OneDrive manifest (the same QuickXorHash, already checked by `mimir-onedrive verify`) instead of reading the whole terabyte again
+  - ~~parallel Qwen requests (`-np` slots) for captions, orientation checks and the judge~~ Done (P52): 4 slots; captions four at a time, 538 s → 353 s on s6. The one-token checks (judge, orient, text) gained nothing and stay one at a time;
+  - ~~the 4090 for orient's views, depth and subjects too~~ Done (P52): looking at every photo takes 300 s on s6 instead of 639 s one after the other;
+  - batching DINOv2 and SigLIP on the B50, only if the results stay the same. Not done: the B50 is shared by the lanes now, and the 4090 takes most of it
+- [ ] ~~Optional: take the hashes from the OneDrive manifest~~ Not needed (P52): hashing is disk-bound at 1.5 GB/s per process, minutes for the terabyte
 
 ## Phase 6 — Videos (sample)
 

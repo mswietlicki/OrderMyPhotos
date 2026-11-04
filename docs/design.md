@@ -506,6 +506,7 @@ Every number is shown before anything is approved.
   - A crash is retried with growing pauses, and a reboot or redeploy resumes the run.
   - Every stage skips what it has committed, so resuming costs at most the last 10 s of work.
   - "Look at every photo" runs its stages side by side, one lane per device (P51): the B50's vision models, the CPU's nudity and faces, the depth service, and the chat model's orientation and text checks once SigLIP is done. `OMP_LANES=0` runs them one after the other.
+  - The 4090 is the run's (P52): `omp worker` takes photos from the other end of DINOv2's, SigLIP's, Q-ReAlign's, orient's, depth's and subjects' lists. The chat model serves 4 requests at once, and captions use them. The album sorting keeps its answers, so a re-run after a review round asks only what's new.
 - **Phases**, server and reviewer, in order:
   1. read;
   2. look at every photo;

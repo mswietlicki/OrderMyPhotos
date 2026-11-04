@@ -753,6 +753,41 @@ Part of the user's "use all resources we have to speed up the process". One afte
   - Stopped after 100 s, it exited in 3 s. The resume did only what wasn't committed, and its results matched too.
   - B50 memory: the lanes take up to ~7 GB, against ~4.3 GB one after the other. With the RAG models at their usual 8.7 GB the peak was 15.2 of 16.3 GB, so it fits, with ~1 GB to spare.
 
+## P52 — Mimir is the run's: the 4090 for the run, the chat model on 4 slots, answers kept, three more stages on the 4090, bursts at scale (2026-11-04, user, measured)
+
+The user: "The server will be restricted to only work regarding this OrderMyPhotos work. So 4090 does not need to keep Qwen during the run if it's not needed for the run. If something else will need the resources it will pause the run. So optimize the whole system for the run tasks."
+
+- **Where a whole-library run spends its time.** The library is ~172,000 photos (1.07 TB), ~330× s6. At s6's rates:
+  - captions ~100 h;
+  - the album sorting ~15 h a run, run again after every review round;
+  - looking at every photo ~40 h;
+  - the burst judge ~17 h.
+- **The 4090 belongs to the run.** `deploy/mimir.env` sets `OMP_4090_IDLE=0`, so the helper (P49) doesn't wait for chat to be quiet. The run's own chat calls still close its gate (P51).
+- **The chat model serves 4 requests at once** (mimir D28: `-np 4 -kvu`, the 64K context shared).
+  - One request runs at the same speed as before.
+  - 6 slots weren't faster; 8 don't fit.
+  - It pays where answers are long. Captions on s6, 113 photos: 538 s one at a time, 353 s four at a time.
+  - Questions answered with one token are bound by reading the prompt. The judge took 597 s four at a time against 608 s one at a time, and its probabilities moved by up to 0.16 (the verdicts didn't). So the judge, orient's checks and text stay one at a time.
+  - A first benchmark, which reused the same images, had shown them faster; the server's prompt cache had done that.
+- **The album sorting keeps its answers** (`answers.db` next to the session's DB, by the whole request).
+  - A re-run asks only what's new. On s6 without its review, the first run asked 107 questions in 104 s; the same run again took 1 s, with the same 25 proposals for all 386 photos.
+  - It's a DB of its own, so a write never waits for the stage's open transaction.
+- **Three more stages share their photos with the 4090** (P49's two ends), as engines in `omp worker`:
+  - orient's turned views: 15.7 photos/s against 8.7 on the B50, cosine ≥ 0.9998;
+  - depth, the service's model and scaling: 8.8 against 5.8, mean difference ≤ 0.0007 (0..1);
+  - subjects: 16.9 against 7.0. The same, but for one person at score 0.401 (the threshold is 0.4) and one tied action (0.215 vs 0.212).
+  - `omp-cuda:0.3` adds scipy for ViTPose. The worker takes 9.5 GB with all six engines.
+  - Depth maps are now written as new files, never through a hardlink to another session's cache.
+- **Bursts at library scale.** `group.cluster` recomputed every pair of clusters each round, ~n³/3 submatrices for an event of n photos. Now each connected part of the allowed pairs is clustered on its own, with the pair sums and minimums kept.
+  - 600 photos: 140 s → 0.7 s; 2,000: hours → 21 s.
+  - The same clusters in the same order: on 288 random events, and on s6 (133 groups).
+- **Looking at every photo** on a fresh copy of s6: 300 s, against 460 s in lanes alone and 639 s one stage after another (−53 %). The results match the reference.
+- **Looked at, not done:**
+  - Hashes from the OneDrive manifest (it has them): QuickXorHash runs at 1.5 GB/s per process, so the terabyte is disk-bound, minutes on 24 cores.
+  - Previews decoded at a reduced size: the sharpness is measured on the full image, so it would change.
+  - The album sorting in parallel: each question depends on the answers before it.
+  - The neighbour table already goes in chunks (~1–2 min for the library).
+
 ## Open — for the user
 
 1. ~~**Language** of titles, descriptions and tags.~~ Resolved by P42: both languages; S11 reads English only.
