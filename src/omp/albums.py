@@ -641,13 +641,7 @@ def run(cfg: Config, con, run_id: str, place_only: bool = False):
     # a birthday party inside a week-long album "clearly deserves its own album"). So is a crowd the album's
     # photos around it don't have, at a place their backgrounds say is another (user: a new place doesn't make
     # an album, but with other things, like the number of people, it may).
-    vlm = VLM(cfg.llm)
-    # The ":instruct" alias has llama-swap sample at temperature 0.7 with a presence penalty (its setParams
-    # filter), whatever a request asks, so S11's "temperature 0" answers changed from run to run (P45). S11 asks
-    # the same loaded model by its own id, with thinking off, where temperature 0 holds.
-    plain = vlm._post
-    vlm._post = lambda body: plain({**body, "model": "qwen3.8-27b", "chat_template_kwargs": {"enable_thinking": False},
-                                    "cache_prompt": False})
+    vlm = VLM(cfg.llm, repeatable=True)  # the same question gets the same answer, so a run repeats (P45, P46)
     if os.environ.get("OMP_PROMPT_LOG"):  # every question and answer, to find what differs between two runs (P45)
         prompt_log, post = open(os.environ["OMP_PROMPT_LOG"], "w", encoding="utf-8"), vlm._post
 
