@@ -1,8 +1,9 @@
 # OrderMyPhotos on one host: the web app (`omp serve`), a wizard that runs one session at a time over a
 # root directory and pauses for the reviewer (docs/design.md S13, decisions P43, P44, P47). From a clone:
 #   docker compose -p omp --env-file deploy/mimir.env up -d --build
-# The code is mounted from ./src, so `git pull` and `docker compose ... up -d` deploy a change; a rebuild is
-# only needed when docker/Dockerfile or docker/requirements.txt change.
+# The code is mounted from ./src. Deploy a change with `git pull` and `docker compose -p omp --env-file deploy/mimir.env
+# restart`: pages are read on every request, but the server's Python only at start (`up -d` alone doesn't restart
+# it). A restart is safe, since a running pipeline stops cleanly and resumes. Rebuild only when docker/ changes.
 # Host network: it calls llama-swap on 127.0.0.1:9292 and listens on 127.0.0.1:$OMP_WEB_PORT only.
 services:
   omp:
