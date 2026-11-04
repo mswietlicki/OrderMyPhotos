@@ -100,7 +100,7 @@ def run_stage(stage, cfg, con, args):
 
 def main(argv=None):
     ap = argparse.ArgumentParser(prog="omp")
-    ap.add_argument("stage", nargs="+", choices=STAGES + ["all", "serve"])
+    ap.add_argument("stage", nargs="+", choices=STAGES + ["all", "serve", "worker"])
     ap.add_argument("--only", help="signals: comma list of dino,siglip,iqa,nudity")
     ap.add_argument("--force", action="store_true")
     ap.add_argument("--run", default=datetime.now().strftime("%Y%m%d-%H%M%S"))
@@ -112,6 +112,9 @@ def main(argv=None):
     if args.stage == ["serve"]:
         from . import web
         return web.main()
+    if args.stage == ["worker"]:  # the 4090's share of the vision stages, started by llama-swap (P49)
+        from . import worker
+        return worker.main()
     stages = [s for a in args.stage for s in (ALL if a == "all" else [a])]
     cfg = Config()
     held = lock(cfg)  # noqa: F841 - held until the process exits

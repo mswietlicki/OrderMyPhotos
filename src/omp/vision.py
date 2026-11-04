@@ -69,35 +69,60 @@ def _timed(con, run_id, stage, n, t0, dev):
 
 # --- DINOv2: near-duplicate / burst embedding ------------------------------------------------------
 
+# The models as engines: one photo's preview in, its result out (JSON-able), the same code here on the B50
+# and in `omp worker` on the 4090, which takes photos from the other end of a stage's list (P49).
+
+def open_preview(path, long_side=None) -> Image.Image:
+    img = Image.open(path).convert("RGB")
+    if long_side and max(img.size) > long_side:
+        s = long_side / max(img.size)
+        img = img.resize((round(img.width * s), round(img.height * s)), Image.Resampling.LANCZOS)
+    return img
+
+
+class Dino:
+    def __init__(self, dev):
+        from transformers import AutoModel
+
+        self.dev, self.dtype = dev, torch.float16 if dev != "cpu" else torch.float32
+        self.model = AutoModel.from_pretrained(DINO, dtype=self.dtype).to(dev).eval()
+        self.mean = torch.tensor([0.485, 0.456, 0.406]).view(3, 1, 1)
+        self.std = torch.tensor([0.229, 0.224, 0.225]).view(3, 1, 1)
+
+    def __call__(self, path) -> dict:
+        img = open_preview(path)
+        # Keep the aspect ratio: long side 448, both sides multiples of the 14 px patch.
+        s = 448 / max(img.size)
+        w, h = (max(14, round(img.width * s / 14) * 14), max(14, round(img.height * s / 14) * 14))
+        x = torch.from_numpy(np.asarray(img.resize((w, h), Image.Resampling.BICUBIC), np.float32) / 255)
+        x = ((x.permute(2, 0, 1) - self.mean) / self.std).unsqueeze(0).to(self.dev, self.dtype)
+        with torch.inference_mode():
+            out = self.model(pixel_values=x)
+        cls = torch.nn.functional.normalize(out.pooler_output.float(), dim=-1)[0].cpu().numpy()
+        patch = torch.nn.functional.normalize(out.last_hidden_state[:, 1:].float().mean(1), dim=-1)[0].cpu().numpy()
+        return {"cls": cls.tolist(), "patch": patch.tolist()}
+
+
 def run_dino(cfg: Config, con, run_id: str):
-    from transformers import AutoModel
+    from .helper import Share
 
     ids = todo_ids(con, "dino", DINO)
     if not ids:
         return
     dev = device()
-    dtype = torch.float16 if dev != "cpu" else torch.float32
-    model = AutoModel.from_pretrained(DINO, dtype=dtype).to(dev).eval()
-    mean = torch.tensor([0.485, 0.456, 0.406]).view(3, 1, 1)
-    std = torch.tensor([0.229, 0.224, 0.225]).view(3, 1, 1)
+    engine = Dino(dev)
     t0 = time.perf_counter()
     with Progress(con, "signals.dino", DINO, total=len(ids)) as prog:
-        for id_ in ids:
+        share = Share(cfg, "dino", ids)
+        for id_, r in share:
             with prog.item(id_):
-                img = load_preview(cfg, id_)
-                # Keep the aspect ratio: long side 448, both sides multiples of the 14 px patch.
-                s = 448 / max(img.size)
-                w, h = (max(14, round(img.width * s / 14) * 14), max(14, round(img.height * s / 14) * 14))
-                x = torch.from_numpy(np.asarray(img.resize((w, h), Image.Resampling.BICUBIC), np.float32) / 255)
-                x = ((x.permute(2, 0, 1) - mean) / std).unsqueeze(0).to(dev, dtype)
-                with torch.inference_mode():
-                    out = model(pixel_values=x)
-                cls = torch.nn.functional.normalize(out.pooler_output.float(), dim=-1)[0].cpu().numpy()
-                patch = torch.nn.functional.normalize(out.last_hidden_state[:, 1:].float().mean(1), dim=-1)[0].cpu().numpy()
-                put_signal(con, id_, "dino", DINO, vec=cls)
-                put_signal(con, id_, "dino_patch", DINO, vec=patch)
-    _timed(con, run_id, "signals.dino", prog.ok, t0, dev)
-    del model
+                r = r or engine(cfg.preview(id_))
+                if "error" in r:
+                    raise RuntimeError(r["error"])
+                put_signal(con, id_, "dino", DINO, vec=r["cls"])
+                put_signal(con, id_, "dino_patch", DINO, vec=r["patch"])
+    _timed(con, run_id, "signals.dino", prog.ok, t0, dev + share.note())
+    del engine
     free()
 
 
@@ -156,8 +181,28 @@ def kind_row(soft, probs) -> tuple[float, dict]:
                                          "top": [{"key": a, "p": round(b, 4), "sigmoid": round(c, 4)} for a, b, c in top]}
 
 
+class Siglip:
+    def __init__(self, dev):
+        from transformers import AutoModel, AutoProcessor
+
+        self.dev, self.dtype = dev, torch.float16 if dev != "cpu" else torch.float32
+        self.model = AutoModel.from_pretrained(SIGLIP, dtype=self.dtype).to(dev).eval()
+        self.processor = AutoProcessor.from_pretrained(SIGLIP)
+
+    def embed(self, img: Image.Image) -> np.ndarray:
+        inputs = self.processor(images=[img], return_tensors="pt", max_num_patches=576).to(self.dev)
+        inputs["pixel_values"] = inputs["pixel_values"].to(self.dtype)
+        with torch.inference_mode():
+            out = self.model.get_image_features(**inputs)
+        out = out if torch.is_tensor(out) else out.pooler_output
+        return torch.nn.functional.normalize(out.float(), dim=-1)[0].cpu().numpy()
+
+    def __call__(self, path) -> dict:
+        return {"emb": self.embed(open_preview(path, 1024)).tolist()}
+
+
 def run_siglip(cfg: Config, con, run_id: str):
-    from transformers import AutoModel, AutoProcessor
+    from .helper import Share
 
     ids = todo_ids(con, "siglip", SIGLIP)
     # Kinds from an older label list are recomputed from the stored embeddings: no image pass needed.
@@ -167,9 +212,8 @@ def run_siglip(cfg: Config, con, run_id: str):
     if not ids and not stale:
         return
     dev = device()
-    dtype = torch.float16 if dev != "cpu" else torch.float32
-    model = AutoModel.from_pretrained(SIGLIP, dtype=dtype).to(dev).eval()
-    processor = AutoProcessor.from_pretrained(SIGLIP)
+    engine = Siglip(dev)
+    model, processor = engine.model, engine.processor
     prompts = [p for _, _, ps in KINDS for p in ps]
     text = siglip_text(model, processor, prompts, dev)
     k = 2
@@ -177,21 +221,19 @@ def run_siglip(cfg: Config, con, run_id: str):
     scale, bias = model.logit_scale.detach().exp().float(), model.logit_bias.detach().float()
     t0 = time.perf_counter()
     with Progress(con, "signals.siglip", SIGLIP, total=len(ids)) as prog:
-        for id_ in ids:
+        share = Share(cfg, "siglip", ids)
+        for id_, r in share:
             with prog.item(id_):
-                img = load_preview(cfg, id_, 1024)
-                inputs = processor(images=[img], return_tensors="pt", max_num_patches=576).to(dev)
-                inputs["pixel_values"] = inputs["pixel_values"].to(dtype)
-                with torch.inference_mode():
-                    out = model.get_image_features(**inputs)
-                out = out if torch.is_tensor(out) else out.pooler_output
-                emb = torch.nn.functional.normalize(out.float(), dim=-1)
+                r = r or engine(cfg.preview(id_))
+                if "error" in r:
+                    raise RuntimeError(r["error"])
+                emb = torch.tensor(r["emb"], device=dev, dtype=torch.float32)[None]
                 logits = (emb @ text.T) * scale + bias
                 value, data = kind_row(torch.softmax(logits[0], -1).cpu().numpy(), torch.sigmoid(logits)[0].cpu().numpy())
-                put_signal(con, id_, "siglip", SIGLIP, vec=emb[0].cpu().numpy())
+                put_signal(con, id_, "siglip", SIGLIP, vec=r["emb"])
                 put_signal(con, id_, "kind", KINDS_MODEL, value=value, data=data)
     if ids:
-        _timed(con, run_id, "signals.siglip", prog.ok, t0, dev)
+        _timed(con, run_id, "signals.siglip", prog.ok, t0, dev + share.note())
     stored = get_vecs(con, "siglip")
     for id_ in stale:
         if id_ in stored:
@@ -202,7 +244,7 @@ def run_siglip(cfg: Config, con, run_id: str):
     con.commit()
     if stale:
         print(f"signals.siglip: kinds recomputed for {len(stale)} photos from their stored embeddings")
-    del model
+    del engine, model
     free()
 
 
@@ -212,49 +254,61 @@ LEVELS = ["excellent", "good", "fair", "poor", "bad"]
 WEIGHTS = [1.0, 0.75, 0.5, 0.25, 0.0]
 
 
+class Iqa:
+    def __init__(self, dev):
+        from transformers import AutoModelForImageTextToText, AutoProcessor
+
+        self.dev, self.dtype = dev, torch.bfloat16 if dev != "cpu" else torch.float32
+        self.processor = AutoProcessor.from_pretrained(QREALIGN)
+        self.processor.tokenizer.padding_side = "left"
+        self.model = AutoModelForImageTextToText.from_pretrained(QREALIGN, dtype=self.dtype).to(dev).eval()
+        self.level_ids = [self.processor.tokenizer(" " + w, add_special_tokens=False).input_ids[0] for w in LEVELS]
+        self.weights = torch.tensor(WEIGHTS)
+
+        def prompt(what):
+            msgs = [{"role": "user", "content": [
+                {"type": "image"}, {"type": "text", "text": f"How would you rate the {what} of this image?"}]}]
+            return self.processor.apply_chat_template(msgs, add_generation_prompt=True) + f"The {what} of the image is"
+
+        self.prompts = [prompt("quality"), prompt("aesthetics")]
+
+    def __call__(self, path) -> dict:
+        img = open_preview(path, 1024)
+        rows = []
+        for p in self.prompts:  # one at a time: batching two image prompts breaks Qwen3.5's rope index
+            batch = self.processor(text=[p], images=[img], return_tensors="pt")
+            # Batch of one, no padding: without the mask, get_rope_index skips a boolean-mask index
+            # that returns the wrong length on XPU (torch 2.15.0+xpu).
+            del batch["attention_mask"]
+            batch = batch.to(self.dev)
+            batch["pixel_values"] = batch["pixel_values"].to(self.dtype)
+            with torch.inference_mode():
+                rows.append(self.model(**batch).logits[0, -1, self.level_ids].float().cpu())
+        probs = torch.stack(rows).softmax(-1)
+        quality, aesthetics = (probs * self.weights).sum(-1).tolist()
+        return {"quality": quality, "aesthetics": aesthetics,
+                "q_probs": [round(p, 4) for p in probs[0].tolist()], "a_probs": [round(p, 4) for p in probs[1].tolist()]}
+
+
 def run_iqa(cfg: Config, con, run_id: str):
-    from transformers import AutoModelForImageTextToText, AutoProcessor
+    from .helper import Share
 
     ids = todo_ids(con, "iqa", QREALIGN)
     if not ids:
         return
     dev = device()
-    dtype = torch.bfloat16 if dev != "cpu" else torch.float32
-    processor = AutoProcessor.from_pretrained(QREALIGN)
-    processor.tokenizer.padding_side = "left"
-    model = AutoModelForImageTextToText.from_pretrained(QREALIGN, dtype=dtype).to(dev).eval()
-    level_ids = [processor.tokenizer(" " + w, add_special_tokens=False).input_ids[0] for w in LEVELS]
-    weights = torch.tensor(WEIGHTS)
-
-    def prompt(what):
-        msgs = [{"role": "user", "content": [
-            {"type": "image"}, {"type": "text", "text": f"How would you rate the {what} of this image?"}]}]
-        return processor.apply_chat_template(msgs, add_generation_prompt=True) + f"The {what} of the image is"
-
-    prompts = [prompt("quality"), prompt("aesthetics")]
+    engine = Iqa(dev)
     t0 = time.perf_counter()
     with Progress(con, "signals.iqa", QREALIGN, total=len(ids)) as prog:
-        for id_ in ids:
+        share = Share(cfg, "iqa", ids)
+        for id_, r in share:
             with prog.item(id_):
-                img = load_preview(cfg, id_, 1024)
-                rows = []
-                for p in prompts:  # one at a time: batching two image prompts breaks Qwen3.5's rope index
-                    batch = processor(text=[p], images=[img], return_tensors="pt")
-                    # Batch of one, no padding: without the mask, get_rope_index skips a boolean-mask index
-                    # that returns the wrong length on XPU (torch 2.15.0+xpu).
-                    del batch["attention_mask"]
-                    batch = batch.to(dev)
-                    batch["pixel_values"] = batch["pixel_values"].to(dtype)
-                    with torch.inference_mode():
-                        rows.append(model(**batch).logits[0, -1, level_ids].float().cpu())
-                probs = torch.stack(rows).softmax(-1)
-                quality, aesthetics = (probs * weights).sum(-1).tolist()
-                put_signal(con, id_, "iqa", QREALIGN, value=quality,
-                           data={"quality": quality, "aesthetics": aesthetics,
-                                 "q_probs": [round(p, 4) for p in probs[0].tolist()],
-                                 "a_probs": [round(p, 4) for p in probs[1].tolist()]})
-    _timed(con, run_id, "signals.iqa", prog.ok, t0, dev)
-    del model
+                r = r or engine(cfg.preview(id_))
+                if "error" in r:
+                    raise RuntimeError(r["error"])
+                put_signal(con, id_, "iqa", QREALIGN, value=r["quality"], data=r)
+    _timed(con, run_id, "signals.iqa", prog.ok, t0, dev + share.note())
+    del engine
     free()
 
 
