@@ -38,9 +38,11 @@
   button.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
   button.danger { color: var(--bad); } button:disabled { opacity: .4; }
   .summary { color: var(--muted); margin: 6px 0 12px; }
-  .grid { display: flex; flex-wrap: wrap; gap: 8px; }
-  .burst { display: flex; flex-wrap: wrap; gap: 6px; padding: 6px; border: 1px dashed var(--line); border-radius: 10px; }
-  .burst > .lbl { width: 100%; font-size: 11px; color: var(--muted); margin: -2px 2px 0; }
+  /* every photo sits in the same frame, a burst's dashed and labelled on its border, so all line up in rows */
+  .grid { display: flex; flex-wrap: wrap; gap: 14px 8px; padding-top: 4px; }
+  .burst, .solo { position: relative; display: flex; flex-wrap: wrap; gap: 6px; padding: 6px; border: 1px solid transparent; border-radius: 10px; }
+  .burst { border: 1px dashed var(--line); }
+  .burst > .lbl { position: absolute; top: -8px; left: 10px; padding: 0 5px; font-size: 11px; line-height: 14px; color: var(--muted); background: var(--bg); }
   .ph { position: relative; width: var(--size, 150px); height: var(--size, 150px); border-radius: 8px; overflow: hidden; cursor: pointer;
         outline: 3px solid transparent; outline-offset: -3px; background: var(--soft);
         scroll-margin: 70px 0 24px; }  /* the sticky header doesn't cover a selected photo */
@@ -161,7 +163,7 @@ function section(list) {
       if (i - j0 > 1) { out.push(`<div class="burst"><div class="lbl">burst of ${i - j0}</div>${list.slice(j0, i).map(q => tile(q, photos.indexOf(q))).join("")}</div>`); continue; }
       i = j0;
     }
-    out.push(tile(p, photos.indexOf(p))); i++;
+    out.push(`<div class="solo">${tile(p, photos.indexOf(p))}</div>`); i++;
   }
   return `<div class="grid">${out.join("")}</div>`;
 }
