@@ -424,6 +424,7 @@ def run(cfg: Config, con, run_id: str, place_only: bool = False):
             moved[i] = v
             if kind == "place":
                 placed.add(i)
+    pinned = set(moved)  # its own name: `moved` is reused as a counter further down
     # Albums and folders the reviewer dismantled: no photo goes there any more.
     try:
         dismantled = {r[0] for r in con.execute("SELECT key FROM review_unit WHERE status='dismantled'")}
@@ -1700,7 +1701,7 @@ def run(cfg: Config, con, run_id: str, place_only: bool = False):
     where, action_of = {}, {}
     for r in con.execute("SELECT p.pid, p.action, p.target, m.id FROM proposal p JOIN proposal_member m ON m.pid=p.pid"
                          " WHERE p.run=? AND p.action IN ('add', 'create', 'theme')", (run_id,)):
-        if not r["target"].endswith(" PRIV") and r["id"] not in moved:
+        if not r["target"].endswith(" PRIV") and r["id"] not in pinned:
             where[r["id"]], action_of[r["pid"]] = r["pid"], r["action"]
     burst_ids = defaultdict(list)
     for i, gid in burst_of.items():
