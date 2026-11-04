@@ -61,8 +61,15 @@
   .help { color: var(--muted); font-size: 12px; margin-top: 18px; } kbd { border: 1px solid var(--line); border-radius: 4px; padding: 0 4px; font-size: 11px; }
   dialog { border: 1px solid var(--line); border-radius: 12px; background: var(--card); color: var(--fg); }
   dialog::backdrop { background: rgba(0,0,0,.6); }
-  #big { max-width: min(1200px, 96vw); padding: 0; } #big > img { max-width: 100%; max-height: 70vh; display: block; margin: 0 auto; }
-  #big .info { padding: 10px 14px; } #big .info .muted { color: var(--muted); font-size: 12px; }
+  /* the large view fills the screen, the photo above a caption bar of fixed height: going from photo to
+     photo, nothing changes size */
+  #big { width: 100vw; height: 100vh; max-width: none; max-height: none; margin: 0; padding: 0; border: 0; border-radius: 0;
+         background: #000; color: #e6e8eb; overflow: hidden; }
+  #big[open] { display: flex; flex-direction: column; }
+  #bigBox { flex: 1; min-height: 0; position: relative; overflow: hidden; cursor: zoom-out; }
+  #bigImg { position: absolute; top: 50%; left: 50%; object-fit: contain; }
+  #big .info { flex: none; height: 168px; overflow: auto; padding: 10px 16px; background: #15171b; border-top: 1px solid #2c3038; }
+  #big .info .muted { color: #98a2b3; font-size: 12px; } #big a { color: #6b9cff; }
   .muted { color: var(--muted); }
   .err { color: var(--bad); } #bigInfo b.keep { color: var(--ok); } #bigInfo b.archive { color: var(--bad); }
   #big kbd { border: 1px solid var(--line); border-radius: 4px; padding: 0 4px; font-size: 11px; }
@@ -89,7 +96,7 @@
 </div>
 <section class="main" id="final" hidden></section>
 
-<dialog id="big"><img id="bigImg" alt=""><div class="info" id="bigInfo"></div></dialog>
+<dialog id="big"><div id="bigBox"><img id="bigImg" alt=""></div><div class="info" id="bigInfo"></div></dialog>
 <dialog id="moveDlg">
   <b>Move to</b>
   <p class="muted" style="margin: 4px 0 8px">An album or folder, or type a new album name.</p>
@@ -291,9 +298,10 @@ async function rename(name) {
 // --- large view: the arrows go on to the next photo ---
 function showBig(p) {
   $("bigImg").src = `/api/photo/${p.id}/preview`;
-  $("bigImg").style.transform = p.rotate ? `rotate(${p.rotate}deg)` : "";
-  bigInfo(p);
+  $("bigImg").dataset.rotate = p.rotate || 0;
   if (!$("big").open) $("big").showModal();
+  fitBig();
+  bigInfo(p);
 }
 function bigInfo(p) {
   const c = p.caption || {};
@@ -351,7 +359,15 @@ document.addEventListener("keydown", e => {
   else if (e.key === "Enter" && (e.ctrlKey || e.metaKey)) { if (!big && cur.state === "open") confirmUnit(); }  // on purpose only
   else if (e.key === "z" || e.key === "Enter") { e.preventDefault(); if (big) $("big").close(); else showBig(p); }
 });
-$("bigImg").onclick = () => $("big").close();
+$("bigBox").onclick = () => $("big").close();
+// The photo fitted to the frame; a photo turned a quarter is laid out with the sides swapped, then turned.
+function fitBig() {
+  const img = $("bigImg"), box = $("bigBox").getBoundingClientRect(), turn = +img.dataset.rotate || 0, side = turn % 180 !== 0;
+  img.style.width = (side ? box.height : box.width) + "px";
+  img.style.height = (side ? box.width : box.height) + "px";
+  img.style.transform = `translate(-50%, -50%) rotate(${turn}deg)`;
+}
+window.addEventListener("resize", () => { if ($("big").open) fitBig(); });
 $("search").oninput = drawUnits;
 $("size").oninput = e => document.documentElement.style.setProperty("--size", e.target.value + "px");
 for (const b of $("tabs").children) b.onclick = () => { filter = b.dataset.f; for (const x of $("tabs").children) x.classList.toggle("on", x === b); drawUnits(); };
