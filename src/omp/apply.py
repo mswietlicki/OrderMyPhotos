@@ -50,14 +50,19 @@ def orientation(path: Path) -> int | None:
     return int(out) if out.isdigit() else None
 
 
-def turn(path: Path, degrees: int) -> str:
-    """A clockwise turn written as the EXIF Orientation: lossless, the pixels stay as they are."""
+def set_orientation(path: Path, value: int) -> bool:
+    res = subprocess.run(["exiftool", "-n", f"-Orientation={value}", "-overwrite_original", "-q", str(path)], capture_output=True, text=True)
+    return res.returncode == 0
+
+
+def turn(path: Path, degrees: int) -> tuple[int | None, int | None]:
+    """A clockwise turn written as the EXIF Orientation: lossless, the pixels stay as they are. Returns the
+    orientation before and after (after None: not turned)."""
     now = orientation(path) or 1
-    if now not in TURN:
-        return f"left as it is: mirrored orientation {now}"
+    if now not in TURN:  # mirrored: left as it is
+        return now, None
     new = TURN[(TURN.index(now) + degrees // 90) % 4]
-    res = subprocess.run(["exiftool", "-n", f"-Orientation={new}", "-overwrite_original", "-q", str(path)], capture_output=True, text=True)
-    return f"orientation {now} -> {new}" if res.returncode == 0 else f"not turned: {res.stderr.strip()[:200]}"
+    return now, new if set_orientation(path, new) else None
 
 
 def run(cfg, con, run_id: str):
@@ -71,6 +76,12 @@ def run(cfg, con, run_id: str):
     state = Path(cfg.db).parent
     final = json.loads((state / "final.json").read_text(encoding="utf-8"))
     hashes = {r[0]: r[1] for r in con.execute("SELECT path, id FROM file")}
+    ours = {}  # photo id -> hashes this session's own turns and undos gave it
+    if (state / "apply.jsonl").exists():
+        for line in open(state / "apply.jsonl", encoding="utf-8"):
+            e = json.loads(line)
+            if e.get("id") and e.get("hash"):
+                ours.setdefault(e["id"], set()).add(e["hash"])
     log = open(state / "apply.jsonl", "a", encoding="utf-8")
 
     def note(**entry):
@@ -87,7 +98,8 @@ def run(cfg, con, run_id: str):
                 note(op="skip", path=m["from"], why="missing")
                 skipped += 1
                 continue
-            if hashes.get(m["from"]) and quickxorhash_file(src).hex() != hashes[m["from"]]:
+            h, want = quickxorhash_file(src).hex(), hashes.get(m["from"])
+            if want and h != want and h not in ours.get(want, ()):
                 prog.fail(m["from"], "changed since the run")
                 note(op="skip", path=m["from"], why="changed")
                 skipped += 1
@@ -95,18 +107,21 @@ def run(cfg, con, run_id: str):
             dst.parent.mkdir(parents=True, exist_ok=True)
             os.rename(src, dst)
             rel = dst.relative_to(root).as_posix()
-            placed[m["to"]] = rel
-            note(op="move", src=m["from"], dst=rel, why=m.get("why"))
+            placed[m["to"]] = (rel, want)
+            note(op="move", src=m["from"], dst=rel, id=want, why=m.get("why"))
             if rel.startswith(ARCHIVE + "/"):
                 archived.append(rel)
             moved += 1
             prog.done(m["from"])
     turned = 0
     for r in plan.get("rotations", []):
-        p = root / placed.get(r["path"], r["path"])
+        rel, id_ = placed.get(r["path"], (r["path"], hashes.get(r["path"])))
+        p = root / rel
         if p.is_file():
-            note(op="turn", path=p.relative_to(root).as_posix(), degrees=r["degrees"], result=turn(p, r["degrees"]))
-            turned += 1
+            before, after = turn(p, r["degrees"])
+            note(op="turn", path=rel, degrees=r["degrees"], before=before, after=after, id=id_,
+                 hash=quickxorhash_file(p).hex() if after else None)
+            turned += after is not None
     deleted = 0
     if final.get("archived") == "delete":
         for rel in archived:  # only what this apply archived, nothing else in the archive
@@ -135,6 +150,13 @@ def undo(cfg):
     entries = [json.loads(line) for line in open(state / "apply.jsonl", encoding="utf-8")]
     last = max(i for i, e in enumerate(entries) if e["op"] == "start")
     gone = {e["path"] for e in entries[last:] if e["op"] == "delete"}
+    log = open(state / "apply.jsonl", "a", encoding="utf-8")
+    for e in entries[last:]:  # the turns first, while the photos are where the turns found them
+        p = Path(cfg.root) / e.get("path", "")
+        if e["op"] == "turn" and e.get("after") and e["path"] not in gone and p.is_file() and set_orientation(p, e["before"]):
+            log.write(json.dumps({"op": "unturn", "path": e["path"], "id": e.get("id"), "hash": quickxorhash_file(p).hex(),
+                                  "t": time.time()}) + "\n")
+    log.close()
     back = 0
     for e in reversed(entries[last:]):
         if e["op"] == "move" and e["dst"] not in gone and (Path(cfg.root) / e["dst"]).is_file():
