@@ -24,7 +24,7 @@ from pathlib import Path
 from fastapi import Body, FastAPI, HTTPException
 from fastapi.responses import FileResponse, HTMLResponse, PlainTextResponse
 
-from . import review, sessions
+from . import apply, review, sessions
 from .config import Policy
 from .sessions import PHASE, PHASES
 from .sysmon import Sampler
@@ -129,10 +129,14 @@ class Runner:
                                              "move them by hand (M), or put them back where they were (O)")
                 nxt = "resort" if pending["to_sort"] else "plan"
             elif key == "final":
+                if (data or {}).get("archived") not in ("keep", "delete"):
+                    raise HTTPException(400, "decide what happens to the archived photos: keep or delete")
                 _write_json(self.session.dir / "final.json", (data or {}) | {"at": time.time()})
-                self.control.update(phase=len(PHASES), wanted="finished")
-                self.save()
-                return
+                if not apply.appliable(Path(self.session.root))[0]:  # OneDrive: applied there, later (S9)
+                    self.control.update(phase=len(PHASES), wanted="finished")
+                    self.save()
+                    return
+                nxt = "apply"
             else:
                 nxt = PHASES[self.control["phase"] + 1]["key"]
             self.control.update(phase=PHASE[nxt], wanted="running", retries=0, next_try=0)
@@ -289,9 +293,13 @@ def status() -> dict:
             "stages": p.get("stages")})
     if c["phase"] > PHASE["resort"] and not any(h["phase"] == "resort" for h in c["history"]):
         phases[PHASE["resort"]]["state"] = "skipped"
+    can_apply, why_not = apply.appliable(Path(s.root))
+    if not can_apply:
+        phases[PHASE["apply"]] |= {"state": "skipped" if cur >= PHASE["apply"] else "pending", "about": why_not}
     pending = review.pending(s) if runner.phase["key"] in ("review", "resort", "plan", "final") else None
     out.update({
-        "session": {"id": s.id, "name": s.name, "root": s.root, "library_index": s.library_index, "created": s.created},
+        "session": {"id": s.id, "name": s.name, "root": s.root, "library_index": s.library_index, "created": s.created,
+                    "apply": {"possible": can_apply, "why_not": why_not}},
         "phase": runner.phase["key"] if cur < len(PHASES) else None, "phases": phases, "rounds": c["rounds"],
         "wanted": c["wanted"], "stage": st.get("stage") if alive else None, "step": step,
         "steps": st.get("steps", []) if st.get("run") == s.run_id else [], "started": c.get("started"), "pid": c.get("pid"),

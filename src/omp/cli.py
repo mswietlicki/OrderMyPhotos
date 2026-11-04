@@ -11,7 +11,7 @@ from .config import Config
 from .db import connect
 
 STAGES = ["inventory", "previews", "signals", "orient", "faces", "subjects", "depth", "text", "group", "rank",
-          "judge", "captions", "people", "place", "albums", "report", "plan", "ocr", "labels", "evaluate", "stats"]
+          "judge", "captions", "people", "place", "albums", "report", "plan", "apply", "ocr", "labels", "evaluate", "stats"]
 ALL = ["inventory", "previews", "signals", "orient", "faces", "subjects", "depth", "text", "people", "place", "group", "rank",
        "judge", "captions", "albums", "report", "plan"]
 
@@ -72,6 +72,9 @@ def run_stage(stage, cfg, con, args):
     elif stage == "plan":
         from . import plan
         plan.run(cfg, con, args.run)
+    elif stage == "apply":  # the plan, done on the session's own copy (a test set); never on OneDrive
+        from . import apply
+        apply.undo(cfg) if args.undo else apply.run(cfg, con, args.run)
     elif stage == "orient":
         from . import orient
         orient.run(cfg, con, args.run)
@@ -103,6 +106,7 @@ def main(argv=None):
     ap.add_argument("--run", default=datetime.now().strftime("%Y%m%d-%H%M%S"))
     ap.add_argument("--out", help="report: output directory")
     ap.add_argument("--file", help="labels: JSON exported from the report")
+    ap.add_argument("--undo", action="store_true", help="apply: move the last apply's photos back")
     args = ap.parse_args(argv)
 
     if args.stage == ["serve"]:

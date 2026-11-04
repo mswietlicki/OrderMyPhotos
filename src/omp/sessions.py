@@ -55,6 +55,10 @@ PHASES = [
      "stages": ["albums", "plan"]},
     {"key": "final", "kind": "review", "title": "Final decision", "page": "final",
      "about": "Check the plan, and decide what happens to the archived photos."},
+    {"key": "apply", "kind": "server", "title": "Apply the plan",
+     "about": "Move the photos as planned, turn them upright, and delete the archived ones if you chose so. A test "
+              "session changes only its own copy; the OneDrive library's plan goes to OneDrive (still to build).",
+     "stages": ["apply"]},
 ]
 PHASE = {p["key"]: i for i, p in enumerate(PHASES)}
 

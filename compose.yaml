@@ -24,6 +24,7 @@ services:
       OMP_STATE_DIR: /state                              # sessions: DB, status, review state, log
       OMP_SESSIONS_CACHE: /cache                         # sessions: previews and the review bundle
       OMP_ROOTS: ${OMP_ROOTS:?}                          # where a session's root may be, as host paths
+      OMP_APPLY_ROOTS: ${OMP_APPLY_ROOTS:?}              # where a plan may be applied: copies, never OneDrive
       OMP_MODELS: /models
       OMP_MANIFESTS: /manifests
       OMP_WORKERS: ${OMP_WORKERS:-20}
@@ -40,6 +41,7 @@ services:
       - ${OMP_MANIFESTS_DIR:?}:/manifests:ro
       - ./src:/code:ro
       - /run/mimir-gpu:/run/mimir-gpu:ro
-      # The libraries, read-only at the same paths as on the host: a session's root is picked by its host path.
+      # The libraries, at the same paths as on the host: a session's root is picked by its host path. OneDrive is
+      # read-only (its plan goes to OneDrive itself); the test sets are copies, so their plan is applied in them.
       - ${OMP_LIBRARIES_A:?}:${OMP_LIBRARIES_A}:ro
-      - ${OMP_LIBRARIES_B:?}:${OMP_LIBRARIES_B}:ro
+      - ${OMP_LIBRARIES_B:?}:${OMP_LIBRARIES_B}

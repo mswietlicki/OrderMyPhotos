@@ -430,6 +430,7 @@ $("finished").onclick = async () => {
 for (const b of $("tabs").children) b.onclick = () => { filter = b.dataset.f; for (const x of $("tabs").children) x.classList.toggle("on", x === b); drawUnits(); };
 
 // --- the final decision ---
+let applyHere = false;  // a session on a copy: the plan is applied here, after the decision
 async function showFinal() {
   // the final decision is a page of its own: none of the review's controls
   for (const id of ["layout", "tabs", "counts", "finished"]) $(id).hidden = true;
@@ -440,6 +441,7 @@ async function showFinal() {
   let plan;
   try { plan = await api("/api/review/plan"); } catch (e) { $("final").innerHTML = `<p>${esc(e.message)}</p>`; return; }
   const c = plan.counts, gb = b => (b / 2 ** 30).toFixed(1) + " GiB";
+  applyHere = plan.apply.possible;
   $("final").innerHTML = `<div class="card"><h2>The plan</h2>
       <table><tr><td>Photos moved to albums and folders</td><td class="n">${(c.create || 0) + (c.add || 0) + (c.theme || 0) + (c.place || 0)}</td></tr>
       <tr><td>Photos that stay where they are</td><td class="n">${c.stays || 0}</td></tr>
@@ -449,12 +451,15 @@ async function showFinal() {
     <div class="card"><h2>The archived photos</h2>
       <label class="opt"><input type="radio" name="arch" value="keep" checked> Keep them in <code>Archive/OrderMyPhotos/</code>, where they can be restored</label>
       <label class="opt"><input type="radio" name="arch" value="delete"> Delete them once the plan is applied</label>
-      <p class="muted">Applying the plan to the library is a separate step (not built yet); this records your decision.</p>
-      <button class="primary" onclick="__v.finish()">Save the decision</button> <a href="#/" style="margin-left:10px">Back</a></div>`;
+      <p class="muted">${plan.apply.possible
+        ? `This session works on a copy, in <code>${esc(plan.apply.root)}</code>. Applying moves the photos there, and deletes the archived ones if you chose so. OneDrive isn't touched.`
+        : `${esc(plan.apply.why_not)}. Your decision is recorded for then.`}</p>
+      <button class="primary" onclick="__v.finish()">${plan.apply.possible ? "Apply the plan" : "Save the decision"}</button> <a href="#/" style="margin-left:10px">Back</a></div>`;
 }
 async function finish() {
   const arch = document.querySelector("input[name=arch]:checked").value;
   if (arch === "delete" && !confirm("Delete the archived photos once the plan is applied?")) return;
+  if (applyHere && !confirm("Apply the plan now? The photos in this session's copy are moved as planned.")) return;
   try { await api("/api/phase/final/done", {archived: arch}); OMP.go("#/"); } catch (e) { alert(e.message); }
 }
 

@@ -433,7 +433,11 @@ def api_plan():
         except OSError:
             pass
     to = Counter(str(PurePosixPath(m["to"]).parent) for m in plan["moves"] if not m["to"].startswith("Archive/"))
-    return {"counts": plan["counts"], "moves": len(plan["moves"]), "rotations": len(plan.get("rotations", [])),
+    from .apply import appliable  # noqa: PLC0415
+
+    can, why = appliable(Path(s.root))
+    return {"apply": {"possible": can, "why_not": why, "root": s.root},
+            "counts": plan["counts"], "moves": len(plan["moves"]), "rotations": len(plan.get("rotations", [])),
             "archive": {"n": len(arch), "bytes": size, "why": Counter(m["why"] for m in arch).most_common()},
             "targets": to.most_common(), "generated": plan.get("generated")}
 
