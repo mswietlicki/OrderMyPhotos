@@ -105,7 +105,8 @@ Run s1 (2026-11-03) did a first pass of every stage below on the B50 and the res
 
 ## Phase 7 — Whole library, read-only
 
-- [ ] Wait for the first full OneDrive sync, `mimir-onedrive verify`, and the "pristine" snapshot
+- [x] Wait for the first full OneDrive sync, `mimir-onedrive verify`, and the "pristine" snapshot (2026-11-04: 235,409 files, snapshot #38, read through `/srv/mimir/onedrive/pristine`)
+- [x] The library instance of the web app on `:8445`, idle until the user starts pass 1
 - [ ] S0–S4 over everything (photos and videos), then S3's expensive signals for group members
 - [ ] Space report: exact copies, cross-folder copies, culling, junk clips, re-encode, Motion Photos
 - [ ] Album segmentation measured against the 632 existing albums (boundary F1, adjusted Rand index)
