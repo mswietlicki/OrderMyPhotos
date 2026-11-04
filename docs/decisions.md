@@ -564,6 +564,65 @@ The S11 session found that llama-swap's `qwen3.8-27b:instruct` alias has a `setP
 - Results stay recorded under `qwen3.8-27b:instruct`, so nothing done is redone silently. The yes/no logprobs (judge, floor, orientation checks) are identical through either name (measured: the same top-5 to 4 decimals). Captions written before this were sampled at 0.7. Whether to redo them is a captions decision.
 - `VLM(..., repeatable=True)` also turns off the server's prompt-prefix cache, which made long answers drift (P45). The same question then gets the same answer (measured twice at temperature 0). It costs a full prompt recompute per call, so captions don't use it; S11 does.
 
+## P47 — A wizard over sessions, with every review in it; every album reviewed the same way (2026-11-04, user)
+
+**What the user asked for:**
+- "Start should start the process, and pause when user input is required: reviewing and naming faces, reviewing sorting and archived photos, and the delete decision at the end. This page should be like a wizard, guiding through phases and the work needed by the server or a reviewer."
+- "The photo review page needs improvements: cleaner, hide unneeded text, think about whether all features are still needed (e.g. accept). A reviewer may exclude some photos from the albums, so another sorting run will be needed to put them somewhere else, and then another manual review that takes the new sorting into account but doesn't redo already confirmed photos."
+- "Remove the idea of albums and folders receiving photos: all albums should be treated equally in the review. All may get new inclusions or be dismantled, and their photos will need resorting."
+- "Let the web app start by specifying a root directory for the session (only one session will run at one time)." Future test sessions use the app too.
+
+**Sessions** (`sessions.py`):
+- A session is one root directory: the library's pristine snapshot, or a test set in `/srv/mimir/cache/photos/tests/`.
+- Each session has its own DB, status, log and review state in `<state>/sessions/<id>/`, and its cache and bundle in `<cache>/<id>/`.
+- One session is active at a time. A new one is made from the app by picking a folder under the allowed roots.
+- An adopted DB keeps its run id (`run`): s6 became a session with its existing DB.
+
+**Phases:**
+1. read (server);
+2. signals (server);
+3. people (server);
+4. **names** (you): the People page saves straight to the app;
+5. picks (server: people again with the names, then place, group, rank, judge);
+6. sort (server: captions, albums);
+7. **review** (you);
+8. resort (server: albums), back to the review, as often as needed;
+9. plan (server: albums once more to apply the confirmations, then plan);
+10. **final** (you).
+
+Start runs the server phases one after another and stops at the next review. "Done, go on" continues. Any finished phase can be redone. The combobox of pipelines is gone.
+
+**The review** (`review.py`, `review.html`):
+- **Units:** every album and folder is one unit, whether it exists or is new. It shows the photos that will be in it: its own photos that stay, and those the sorting put there. ` PRIV` and `/Dokumenty` are parts of their album's unit.
+- **Controls:**
+  - a click keeps or archives a photo;
+  - O takes it out, M moves it to a chosen album or folder or a new album name, Z shows it large;
+  - the unit can be renamed (an album keeps its date) or dismantled: all its photos go back to sorting, and nothing is sorted into it again;
+  - **Confirm** pins every photo in the unit: a `place` label for its place, and a `verdict` label for keep or archive.
+- **What Done does:** Done needs every unit confirmed. Photos taken out (or from dismantled units) go to the `resort` phase. After the resort, only units that received photos are open again, and their new photos come first. What was confirmed is folded away as "Already confirmed" and isn't asked again.
+- **The final decision:** the plan's counts, archived photos with their size, and where photos go; then "keep the archived photos in `Archive/OrderMyPhotos/`" or "delete them once the plan is applied". Applying the plan to OneDrive (S9) is still to build.
+
+**The sorting honours the review** (`albums.py`):
+- The reviewer's latest word on a photo wins: out, move or place.
+- A photo confirmed in its own album stays and isn't sorted again. One confirmed anywhere else goes exactly there, its PRIV or Dokumenty part too. Neither is moved by "a burst moves as one".
+- A photo moved by hand still goes to the album's private part when it shows full nudity.
+- A dismantled unit is banned for every photo.
+
+**Gone from the review:**
+- "Accept" (proposal labels were never read) and "Trust automatic picks": Confirm is the one confirmation.
+- Burst editing, category and rotate, which no stage read.
+- "bad", now the same as archive.
+- Load and export of labels files: the app saves.
+- "Not an album", now Dismantle.
+- The separate proposal, copies, PRIV and Dokumenty pages.
+
+The static bundle (`omp report`) is still there for a library someone reviews offline (P21), but it's no longer a phase.
+
+**Tested** on a copy of s6 through the API:
+- **Round 1:** dismantled a new album (34 photos), took one photo out of a folder, renamed a new album, confirmed the rest. That left 35 photos to sort again.
+- **Round 2:** came back from the resort with only the units that received photos open.
+- Then the plan and the final decision; the results are in sample-runs.md.
+
 ## Open — for the user
 
 1. ~~**Language** of titles, descriptions and tags.~~ Resolved by P42: both languages; S11 reads English only.

@@ -500,15 +500,28 @@ Every number is shown before anything is approved.
 
 ### S13 The web app and runs (decisions.md P43, P44)
 
-`omp serve` is the one place to run and follow the pipeline, and the review pages move into it next. It runs as a container from a clone of this repo (`compose.yaml`, `deploy/mimir.env`), listens on 127.0.0.1 and is published on the tailnet only.
+`omp serve` is the one place to run, follow and review the pipeline (P47): a wizard over **sessions**. A session is one root folder, the library or a test set, with its own DB and review. One is active at a time. It runs as a container from a clone of this repo (`compose.yaml`, `deploy/mimir.env`), listens on 127.0.0.1 and is published on the tailnet only.
 - **Runs:**
   - The pipeline is the app's child process (`python -m omp <stages> --run <run>`), and the wanted state is kept on disk. Start, Pause (a clean stop after the photo in hand) and Resume are buttons and API calls.
   - A crash is retried with growing pauses, and a reboot or redeploy resumes the run.
   - Every stage skips what it has committed, so resuming costs at most the last 10 s of work.
-- **Three passes** over the library, because each needs the one before it and the user in between:
-  1. the signals per photo: inventory, previews, signals, orient, faces, subjects, depth, text;
-  2. people, bursts and picks, then the People page;
-  3. captions, which use the names, then the albums, which read the captions, then the plan.
+- **Phases**, server and reviewer, in order:
+  1. read;
+  2. look at every photo;
+  3. find people;
+  4. **name them**;
+  5. bursts and picks;
+  6. describe and sort;
+  7. **review the albums**;
+  8. sort the photos taken out, then back to 7;
+  9. the plan;
+  10. **the final decision**.
+
+  Start runs the server's phases and stops where the reviewer is needed.
+- **The review:** every album and folder, existing or new, is one unit with the photos it will hold.
+  - In it the reviewer keeps or archives, takes photos out, moves them, renames, dismantles or confirms.
+  - Confirmed photos are pinned, and the sorting never moves them again.
+  - Photos taken out are sorted again, and only what's new is reviewed then.
 - **What it shows:**
   - progress per step (done of total, speed, time left);
   - the steps finished, the photos skipped with their errors, and the stage timings;

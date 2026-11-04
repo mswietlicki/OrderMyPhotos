@@ -90,7 +90,9 @@ Run s1 (2026-11-03) did a first pass of every stage below on the B50 and the res
 - [x] Face clustering per connected component, so a whole library's faces fit in memory (P43)
 - [x] `omp serve`: start and pause, the pipeline as a supervised child that resumes after a crash or reboot, progress, steps, skipped photos, timings, machine resources, results, a label API (P44)
 - [x] Runs from a clone of this repo on Mimir (`compose.yaml`, `deploy/`); tested on a copy of s6: redeploy, pause, `kill -9`
-- [ ] The review pages in the app: album review, the People page and the proposals, saving decisions through the API instead of a download
+- [x] The review in the app (P47): a wizard over sessions (a root folder each, one at a time), phases that stop for the reviewer, every album and folder one review unit (keep/archive, out, move, rename, dismantle, confirm), a resort loop that leaves confirmed photos alone, the People page saving to the app, the final decision
+- [ ] The People page rebuilt in the app's style (it's the bundle's page, saving to the app)
+- [ ] Apply the plan from the final decision: moves and the archive on OneDrive (`mimir-onedrive apply`, S9), hardlinks for a test set
 - [x] When `fullrun` and the P45 sorting work are both on master (whoever merges second): albums.py's `vlm = VLM(cfg.llm)` becomes `VLM(cfg.llm, repeatable=True)` and the `:instruct` workaround wrapper under it goes (P46); the `OMP_PROMPT_LOG` wrapper stays
 - [ ] S11 answers kept across runs (by prompt hash and model), so a re-run of `albums` doesn't redo ~25k LLM calls
 - [ ] The neighbour table (top-20 look-alikes) at full scale: chunked on the GPU or with numpy

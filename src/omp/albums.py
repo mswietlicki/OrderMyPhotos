@@ -635,11 +635,11 @@ def run(cfg: Config, con, run_id: str, place_only: bool = False):
         r["purpose"] = purpose_of(r)
         (unplaced if r["id"] not in camera and MESSENGER.search("/" + r["path"]) else rest).append(r)
 
-    def base(t):
+    def unit_of(t):  # not `base`: that name is the rolling base further down, which once shadowed it here
         return (t or "").removesuffix(" PRIV").removesuffix(f"/{DOCS_FOLDER}")
 
     def banned_of(rs):
-        return {base(taken_out[r["id"]]) for r in rs if r["id"] in taken_out} | dismantled
+        return {unit_of(taken_out[r["id"]]) for r in rs if r["id"] in taken_out} | dismantled
 
     sessions = sessions_of(rest, burst_of)
     try:  # face clusters (S8) other than the owner's, and the names album names use

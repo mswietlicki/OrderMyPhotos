@@ -31,6 +31,6 @@ Organizes a private photo library of about 175k photos, 2008–2026, kept in One
 | [docs/decisions.md](docs/decisions.md) | Decision log |
 | [docs/legacy.md](docs/legacy.md) | What v0 (C#, 2013) and v1 (PowerShell + Ollama, 2026) did and left behind |
 
-Code: [`src/omp/`](src/omp/) (Python 3.13, one package with a stage CLI), image [`docker/Dockerfile`](docker/Dockerfile). On Mimir it runs from a clone of this repo as the web app `omp serve` ([`compose.yaml`](compose.yaml), [`deploy/`](deploy/); design.md S13): start, pause and follow the pipeline on the tailnet, or through its API. The sample test sets still run as one-shot jobs from the mimir repo's `stacks/photos`.
+Code: [`src/omp/`](src/omp/) (Python 3.13, one package with a stage CLI), image [`docker/Dockerfile`](docker/Dockerfile). On Mimir it runs from a clone of this repo as the web app `omp serve` ([`compose.yaml`](compose.yaml), [`deploy/`](deploy/); design.md S13). It's a wizard over sessions: pick a root folder (the library or a test set), press Start, and it stops where you're needed (naming people, reviewing the albums, the final decision). It has a JSON API for monitoring.
 
 Old code lives in [`archive/`](archive/) and under the tag `legacy-final`.
