@@ -423,3 +423,24 @@ The user: the week album is fine, but its Event 11, a birthday party at another 
 **Against the user's last review:** the beer shopping (8 photos) is an album of its own, not in Shopping. One photo went from Screens to Maps and one from Documents to Random.
 
 **The loop adopted** as the default (user): the next run placed every photo as before. The review now flags the unsure ones: 11 photos of the pet-shop trip, 5 of the beer shopping, and one each in `Other/2022`, `Documents`, `Food`, `Maps` and `Random`.
+
+## The review loop in the web app, on a copy of s6 (2026-11-04, P47)
+
+s6 became the first session of the web app (its DB, cache and bundle adopted; root `tests/s6/before`). A copy of it, `s6-autotest`, was driven through the review loop through the API, like a reviewer:
+- **Round 1 (15 units):**
+  - dismantled a new album of 34 photos;
+  - took one photo out of a folder;
+  - renamed a new album;
+  - confirmed the other 13.
+
+  Done: 35 photos to sort again.
+- **The resort** (`albums`, 5 s, 4 LLM calls): every photo the review confirmed stayed where it was. The 35 went elsewhere:
+  - the one photo to `Other/2022`;
+  - the 34 also to `Other/2022`: an event of a dismantled album may not become a new album again, and the sort's answer was one.
+- **Round 2:** only `Other/2022` was open, with its 35 new photos; its 10 confirmed photos were folded away. Confirmed; Done.
+- **The plan** (`albums` once more, then `plan`): the renamed album is in it (`… Autotest renamed`), and the dismantled one isn't. The final decision (keep the archived photos) was saved, and the session finished.
+
+**Bugs the loop found, fixed:**
+- In `albums.run`, the out-label helper `base()` was shadowed by the rolling `Base` further down. It never ran before, because no run had out photos at that point; the first resort crashed. It's `unit_of()` now.
+- The pinned set was checked under the name `moved`, which `run` reuses as a counter. Now `pinned`.
+- The dismantled album was made again under the same name, so its photos stayed "to sort" for ever. Now no new album is made for them. Separately, a resort that places nothing stops the loop: Done asks to move those photos by hand.
