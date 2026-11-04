@@ -496,6 +496,26 @@ The UI shows where the space goes and what each action would free:
 
 Every number is shown before anything is approved.
 
+### S13 The web app and runs (decisions.md P43, P44)
+
+`omp serve` is the one place to run and follow the pipeline, and the review pages move into it next. It runs as a container from a clone of this repo (`compose.yaml`, `deploy/mimir.env`), listens on 127.0.0.1 and is published on the tailnet only.
+- **Runs:**
+  - The pipeline is the app's child process (`python -m omp <stages> --run <run>`), and the wanted state is kept on disk. Start, Pause (a clean stop after the photo in hand) and Resume are buttons and API calls.
+  - A crash is retried with growing pauses, and a reboot or redeploy resumes the run.
+  - Every stage skips what it has committed, so resuming costs at most the last 10 s of work.
+- **Three passes** over the library, because each needs the one before it and the user in between:
+  1. the signals per photo: inventory, previews, signals, orient, faces, subjects, depth, text;
+  2. people, bursts and picks, then the People page;
+  3. captions, which use the names, then the albums, which read the captions, then the plan.
+- **What it shows:**
+  - progress per step (done of total, speed, time left);
+  - the steps finished, the photos skipped with their errors, and the stage timings;
+  - the library's counts per signal;
+  - the run's and the host's CPU, memory and disk I/O, and both GPUs;
+  - which models llama-swap holds.
+- **API** (`/docs`): monitoring is `GET /api/status`, `/api/history` and `/api/log`; control is `POST /api/run/start` and `/api/run/pause`; `POST /api/labels` imports a review page's export.
+- **Input:** the library run reads the "pristine" snapshot of the mirror, not the mirror itself, so files don't move under a run that takes days. Live mode (S10) catches up afterwards.
+
 ## Running it on Mimir
 
 | Step | Resource | Rough cost (to be measured on the sample album) |

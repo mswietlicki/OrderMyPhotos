@@ -83,6 +83,19 @@ Run s1 (2026-11-03) did a first pass of every stage below on the B50 and the res
 - [ ] Messenger thresholds (P32) checked on the first OneDrive batch, with every album embedded: arrival lag, look-alike 0.80 / 0.88
 - [ ] Unsorted folders in the bundle (S11): one review unit per proposed album, not one page per folder. Editable name and date, merge / split / add to an existing album / leave in place; apply creates the album folder and moves the kept photos. First on a slice of `Obrazy/Samsung Gallery` (a few weeks, a few hundred photos), measured against the existing albums of the same weeks
 
+## Phase 5c — The web app and the whole-library run (decisions.md P42–P44)
+
+- [x] Folder policy for the run: `leave` for `Pictures/Private` and `Code`; wallpapers and the thermal camera ignored (P42)
+- [x] Restart-safe stages: commits every 500 photos or 10 s, a clean stop after the photo in hand, bad photos skipped and logged, llama-swap calls retried, one lock per DB (P43)
+- [x] Face clustering per connected component, so a whole library's faces fit in memory (P43)
+- [x] `omp serve`: start and pause, the pipeline as a supervised child that resumes after a crash or reboot, progress, steps, skipped photos, timings, machine resources, results, a label API (P44)
+- [x] Runs from a clone of this repo on Mimir (`compose.yaml`, `deploy/`); tested on a copy of s6: redeploy, pause, `kill -9`
+- [ ] The review pages in the app: album review, the People page and the proposals, saving decisions through the API instead of a download
+- [ ] S11 answers kept across runs (by prompt hash and model), so a re-run of `albums` doesn't redo ~25k LLM calls
+- [ ] The neighbour table (top-20 look-alikes) at full scale: chunked on the GPU or with numpy
+- [ ] **Later, speed-ups (user, 2026-11-04):** use every resource the machine has. When the 4090 is idle and will stay so for a while, it does the same work as the B50 too, from the same queue of photos (a CUDA worker, the `omp-vision-cuda` image and a llama-swap entry, so chat can still take the GPU back). Not the other way round: the 4090's work needs its VRAM and CUDA
+- [ ] Optional: take the hashes from the OneDrive manifest (the same QuickXorHash, already checked by `mimir-onedrive verify`) instead of reading the whole terabyte again
+
 ## Phase 6 — Videos (sample)
 
 - [ ] ffprobe, keyframes (NVDEC), Chromaprint, copy detection on WhatsApp pairs, junk-clip rules

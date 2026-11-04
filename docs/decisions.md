@@ -444,14 +444,94 @@ The user, on the s6 review: the week-long album "<name>" (12–19 Nov) is fine, 
   - the cat's own photos are in its folder (11, 5 of them from `Cats`);
   - new albums' names vary a little.
 
+## P42 — Two folders are left as they are; descriptions in both languages, sorting in English (2026-11-04, user)
+
+The user, on the folders with no rule: "Leave Pictures/Private as is. Leave Code as is." On the language (open question 1): "Both English and Polish descriptions and tags, but for AI sorting use only English."
+
+- **A `leave` policy** (`policy.yaml`) for `Pictures/Private` and `Code`. The inventory doesn't enter these folders, so their files are never:
+  - read or hashed;
+  - compared as copies or used as examples;
+  - moved;
+  - served by the web app (P44).
+- **Folders the design already called "not personal photos"** whose real names the rules missed are now `ignore`: `Obrazy/Tapety` and `Obrazy/wallpaper` (wallpapers), and `Obrazy/thermo_tc2c` (the thermal camera). `Obrazy/Screenshots 1` is `describe`, like `Screenshots`.
+- **The other folders without a rule stay `unsorted`** (the default) until the user says otherwise:
+  - `Obrazy/Historia` (1,314 media files), `Dokumenty` (443), `Video` (345);
+  - `Obrazy/Random`, `Meme`, `9GAG`, `Download` and `Quick Share`;
+  - `Projects`, `Desktop`, `Main` and a .NET folder;
+  - an album folder outside `Albums/`, which P30 relocates.
+- **Language:** captions already write the title and description in both languages, and every tag maps to a vocabulary entry that has both names. S11 reads only the English fields: the one prompt that read `title_pl` was switched in P41. Album names stay Polish. They're the owner's naming style, an output of the sorting, not an input to it.
+
+## P43 — A run that takes days survives stops, crashes and reboots (2026-11-04, user)
+
+The user, before the whole-library run: "resilience to breaks and restarts. This takes a long time and we may need to stop and restore the process at any time."
+
+**What was there:**
+- Most per-photo stages committed only at the end: inventory, previews, DINOv2, SigLIP, Q-ReAlign, nudity, faces and depth. A stop at hour 16 of Q-ReAlign's ~17 would have redone all of it.
+- LLM calls failed on the first 502, and a llama-swap restart takes ~100 s.
+- One unreadable photo stopped a GPU stage.
+- Runs were `nohup setsid` scripts, so a reboot ended them.
+
+**Now** (`runtime.py`):
+- **Commits** every 500 photos or 10 s, always between photos. Short transactions also let the web app write labels during a run.
+- **A stop** (SIGTERM or SIGINT, i.e. `docker stop`, Pause in the web app, Ctrl-C) ends a stage loop after the photo in hand. Outside a loop (model loading, the CPU stages that redo their whole run anyway) it stops at once. The exit code is 143, and the same command resumes.
+- **A bad photo** is logged as an `error.<stage>` signal and skipped. Twenty in a row stop the stage, since then it's the model or the GPU.
+- **llama-swap calls** are retried for up to 15 minutes on connection errors, timeouts, 429 and 5xx. A 4xx raises `ValueError` at once, so captions skip that photo.
+- **Process pools** cancel their queued work on a stop.
+- **One lock per DB:** a second `omp` on the same library exits.
+- **Several stages per call:** `omp inventory previews signals`.
+- **Hashing and EXIF** are committed in batches, and exiftool runs in parallel threads.
+- **Face clustering** runs per connected component of the "closer than the threshold" graph (`people.cluster`). Average linkage never merges clusters with no pair under the threshold, so the result is the same: s6 gives 69 clusters, ARI 1.000. Memory stays bounded: 80k synthetic faces took 53 s and 0.8 GiB, where the old way needs ~25 GB for 80k. A component over 30k faces is clustered in slices, which are then merged by their mean faces (on s6, forced: ARI 0.90).
+
+**Tested** on a copy of s6 under the web app:
+- a redeploy in the middle of SigLIP: it stopped cleanly and resumed with the 216 photos left;
+- Pause and Resume in the middle of Q-ReAlign;
+- `kill -9`: retried after 30 s, with at most 10 s of work lost.
+
+**Not yet:**
+- The stages that recompute their whole run (group, rank, people, albums) redo it on resume.
+- The albums stage keeps no LLM answers across runs, which is about 8 h at full scale.
+
+## P44 — A web app runs and shows the pipeline, from the repo's own clone on Mimir (2026-11-04, user)
+
+**The user's requests:**
+- "an OrderMyPhotos webpage with start/pause button, progress status, link to results. Hosted on Mimir with the rest of the tools. The final run will use Claude only for monitoring via API and SSH, but the tool itself should be a standalone solution running from the OrderMyPhotos repo on Mimir. This laptop will be used only for monitoring."
+- "full web app management, merge all the manual review steps pages, create api server";
+- "the process should show a lot of details, what steps are running, how many photos were processed, how much system resources is used and more."
+
+**`omp serve`** (`web.py`, `web.html`; FastAPI, already in the image) is a page and a JSON API: `/api/status`, `/api/run/start`, `/api/run/pause`, `/api/log`, `/api/history`, `/api/labels`, and the API docs at `/docs`.
+- **The pipeline is its child process.** The wanted state is kept in `control.json` next to the DB, so after a crash, a redeploy or a reboot the run resumes on its own.
+  - A failed run is retried after 30 s, 2 min, 10 min and 30 min. After 5 failures in a row it's marked failed.
+  - The count starts again after 10 minutes of running.
+- **Three pipelines**, because each needs the one before and the user in between:
+  1. signals per photo;
+  2. people, bursts and picks; then the user names people;
+  3. captions, which use the names, and albums, which read the captions.
+- **What it shows:**
+  - the stage and step, photos done of the total, the speed overall and over the last minute, and the time left;
+  - the steps finished, the skipped photos with their errors, the stage timings and the library's counts per signal;
+  - the run's CPU, memory, disk I/O and process count; the host's CPU, memory and free disk;
+  - the B50's load (from the xe driver's idle residency) and the run's own B50 VRAM and engine load (from its DRM fdinfo);
+  - the 4090 and the B50's total VRAM, from the host (mimir `mimir-gpu-stats`);
+  - the models llama-swap has loaded, and charts of the last 10 minutes.
+- **No NVIDIA device in the container:** with the NVIDIA CDI device there, PyTorch saw no XPU (measured), so every B50 stage would run on the CPU.
+- **The results:** the bundle's pages, served by the app from the library, read-only, with `leave` folders hidden. `/api/labels` imports a page's export (decisions or names) at once.
+- **Next:** the review pages (albums, the People page, proposals) move into the app and save through the API instead of a download.
+
+**Deployment:**
+- `compose.yaml` at the repo root, with two env files of host paths:
+  - `deploy/mimir.env`: the whole library, read from the "pristine" snapshot so files don't move under a run while the hourly pull goes on;
+  - `deploy/test.env`: a test set next to it.
+- The code is mounted from the clone, so `git pull` and a restart deploy a change.
+- It's tailnet-only, through Tailscale Serve (mimir D25).
+
 ## Open — for the user
 
-1. **Language** of titles, descriptions and tags: English, Polish, or both. Tags could carry both; descriptions need one.
+1. ~~**Language** of titles, descriptions and tags.~~ Resolved by P42: both languages; S11 reads English only.
 2. **Archive and deletion:** is `Archive/OrderMyPhotos/` on OneDrive right, or should culled files leave OneDrive for a local archive on Mimir? How long before a delete?
 3. **Edited copies:** keep both the edit and the original (the default), or only the edit?
 4. **Live mode auto-apply:** which operation classes may skip review once proven safe (exact copies, metadata, bursts with a clear winner)?
 5. **Video re-encoding:** yes or no, and is AV1 acceptable for playback on your devices?
-6. **Folder policy:** confirm which top-level folders are `unsorted` (album candidates), `describe` or `ignore` (e.g. `Obrazy/Historia`, `Obrazy/Druk`, `Pictures/Private`, `Hosting`).
+6. **Folder policy:** confirm which top-level folders are `unsorted` (album candidates), `describe` or `ignore`. `Pictures/Private` and `Code` are left as they are (P42); the folders still on the default are listed there.
 7. ~~**The public GitHub repo** had personal photos in its history.~~ Resolved by P15.
 8. **Category albums:**
    - Are the default folders and names right (design.md S3b)? Should new ones be Polish (`Info/Dom`, `Info/Notatki`) or English like `Info/Documents`?

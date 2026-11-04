@@ -47,6 +47,8 @@
   th { text-align: left; font-weight: 600; color: var(--muted); font-size: 12px; padding: 4px 6px 4px 0; border-bottom: 1px solid var(--line); }
   td { padding: 4px 6px 4px 0; border-bottom: 1px solid var(--line); vertical-align: top; }
   td.n, th.n { text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
+  #machine td:first-child, #library td:first-child { white-space: nowrap; padding-right: 12px; }
+  #machine td.n { white-space: normal; }
   .scroll { overflow-x: auto; }
   pre { margin: 0; max-height: 380px; overflow: auto; font: 12px/1.4 ui-monospace, Consolas, monospace; white-space: pre-wrap; word-break: break-word; }
   a { color: var(--accent); }
@@ -112,7 +114,7 @@ const fmtDur = s => s == null ? "—" : s < 90 ? `${Math.round(s)} s` : s < 5400
   : s < 172800 ? `${(s / 3600).toFixed(1)} h` : `${(s / 86400).toFixed(1)} days`;
 const fmtTime = t => t ? new Date(typeof t === "number" ? t * 1000 : t.replace(" ", "T") + "Z").toLocaleString() : "—";
 const num = n => n == null ? "—" : Number(n).toLocaleString();
-const gib = b => b == null ? "—" : `${(b / 2 ** 30).toFixed(1)} GiB`;
+const gib = b => b == null ? "—" : b >= 2 ** 30 ? `${(b / 2 ** 30).toFixed(1)} GiB` : `${Math.round(b / 2 ** 20)} MiB`;
 const mbs = b => b == null ? "—" : `${(b / 1e6).toFixed(1)} MB/s`;
 let pipelinesShown = false;
 
