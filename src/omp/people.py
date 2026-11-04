@@ -29,6 +29,7 @@ from .vlm import VLM
 VERSION = "people@1"
 MIN_SIZE, MIN_SCORE = 0.04, 0.65   # faces smaller or less certain than this aren't clustered
 LINK = 0.55                        # average-linkage cosine distance at which clusters stop merging
+MAX_EXACT = 30000                  # faces in one component clustered exactly (~7 GB while scipy works)
 MIN_CLUSTER = 3                    # faces a cluster needs to become a person
 FOLDER_SHARE = 0.3                 # a People folder names the cluster found in at least this share of its photos
 FRONT_SHARE, FRONT_MIN = 0.4, 5    # a camera setting with this share of selfies (of at least this many photos) is a front camera
@@ -84,13 +85,57 @@ Albums:
 {albums}"""
 
 
-def cluster(emb: np.ndarray, link: float = LINK) -> np.ndarray:
+def _average_linkage(emb: np.ndarray, link: float) -> np.ndarray:
     from sklearn.cluster import AgglomerativeClustering
 
     if len(emb) < 2:
         return np.zeros(len(emb), int)
     return AgglomerativeClustering(n_clusters=None, metric="cosine", linkage="average",
                                    distance_threshold=link).fit_predict(emb)
+
+
+def _components(emb: np.ndarray, link: float, chunk: int = 1024) -> np.ndarray:
+    """Connected components of the graph "cosine distance below `link`", a block of rows at a time (a little
+    looser, so rounding never cuts an edge the clustering would use)."""
+    from scipy.sparse import coo_matrix
+    from scipy.sparse.csgraph import connected_components
+
+    x = (emb / np.linalg.norm(emb, axis=1, keepdims=True)).astype(np.float32)
+    n = len(x)
+    comp = np.arange(n)
+    for i in range(0, n, chunk):
+        r, c = np.nonzero(x[i:i + chunk] @ x.T > 1 - link - 1e-4)
+        a, b = comp[r + i], comp[c]
+        keep = a != b
+        if keep.any():
+            g = coo_matrix((np.ones(int(keep.sum()), np.int8), (a[keep], b[keep])), shape=(n, n))
+            comp = connected_components(g, directed=False)[1][comp]
+    return comp
+
+
+def cluster(emb: np.ndarray, link: float = LINK) -> np.ndarray:
+    """Average-linkage clusters cut at `link`, one connected component at a time (P43). Average linkage never
+    merges two clusters that have no pair closer than `link`, so this is the same as clustering all faces at
+    once, without the n² distance matrix that a whole library's faces (~80k: 25 GB, twice that while it
+    works) don't fit in. A component too big even for that is clustered in slices whose clusters are then
+    merged by their mean faces: close to the exact result, and logged."""
+    labels = np.empty(len(emb), int)
+    nxt = 0
+    for k in np.unique(comp := _components(emb, link)):
+        idx = np.flatnonzero(comp == k)
+        if len(idx) <= MAX_EXACT:
+            lab = _average_linkage(emb[idx], link)
+        else:
+            print(f"people: a component of {len(idx)} faces, over {MAX_EXACT}: clustered in slices, then merged")
+            part = np.empty(len(idx), int)
+            for s in range(0, len(idx), MAX_EXACT):
+                part[s:s + MAX_EXACT] = _average_linkage(emb[idx[s:s + MAX_EXACT]], link) + s
+            ids = np.unique(part)
+            means = np.stack([emb[idx[part == p]].mean(0) for p in ids])
+            lab = _average_linkage(means, link)[np.searchsorted(ids, part)]
+        labels[idx] = lab + nxt
+        nxt += int(lab.max()) + 1
+    return labels
 
 
 def user_names(clusters, keys, said, vecs, same):

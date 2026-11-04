@@ -42,6 +42,7 @@ PIPELINES = {
 RETRY_AFTER = [30, 120, 600, 1800]   # seconds before restarting a run that failed, by attempt
 MAX_RETRIES = 5
 STOP_WAIT = 75                       # seconds a stopping run gets before it's killed (compose: 90 s)
+HEALTHY = 600                        # seconds of running after which the retry count starts again
 
 cfg = Config()
 STATE = cfg.db.parent
@@ -136,6 +137,9 @@ class Runner:
                     self._ended(code)
                 if self.control["wanted"] == "running" and not self.alive() and time.time() >= self.control["next_try"]:
                     self._spawn()
+                if self.alive() and self.control["retries"] and time.time() - self.control["started"] > HEALTHY:
+                    self.control["retries"] = 0  # it got going again: the next failure starts the count afresh
+                    self.save()
             time.sleep(2)
 
     def shutdown(self):
