@@ -158,7 +158,7 @@ function tile(p, i) {
   return `<div class="ph ${p.verdict} ${p.state === "out" ? "out" : ""} ${i === focusIdx ? "focus" : ""}" data-i="${i}" title="${esc(p.name)}">
     <img loading="lazy" src="/api/photo/${p.id}/thumb" style="${p.rotate ? `transform: rotate(${p.rotate}deg)` : ""}" alt="">
     <div class="b">${badges}</div>
-    <div class="tools"><button data-a="big" title="Show (Z)">⤢</button><button data-a="move" title="Move to… (M)">→</button><button data-a="out" title="Take out or put back (O)">✕</button></div></div>`;
+    <div class="tools"><button data-a="move" title="Move to… (M)">→</button><button data-a="out" title="Take out or put back (O)">✕</button></div></div>`;
 }
 
 function section(list) {
@@ -198,17 +198,16 @@ function drawUnit() {
     <div class="summary" id="summary">${summary()}</div>
     ${fresh.length ? section(fresh) : `<p class="muted">Everything here is confirmed.</p>`}
     ${done.length ? `<details class="done" ${fresh.length ? "" : "open"}><summary>Already confirmed (${done.length})</summary>${section(done)}</details>` : ""}
-    <div class="help">Click a photo to keep or archive it · <kbd>O</kbd> take out or put back · <kbd>M</kbd> move · <kbd>Enter</kbd> or <kbd>Z</kbd> show large · <kbd>←</kbd><kbd>→</kbd><kbd>↑</kbd><kbd>↓</kbd> select · <kbd>Ctrl</kbd>+<kbd>Enter</kbd> confirm · every change is saved at once</div>`;
+    <div class="help">Click to show large · right-click or <kbd>Space</kbd> to keep or archive · <kbd>O</kbd> take out or put back · <kbd>M</kbd> move · <kbd>Enter</kbd> or <kbd>Z</kbd> show large · <kbd>←</kbd><kbd>→</kbd><kbd>↑</kbd><kbd>↓</kbd> select · <kbd>Ctrl</kbd>+<kbd>Enter</kbd> confirm · every change is saved at once</div>`;
   for (const el of $("main").querySelectorAll(".ph")) {
-    el.onclick = e => {
+    el.onclick = e => {  // a click opens the photo large; the corner buttons do the rest
       const i = +el.dataset.i, a = e.target.dataset.a;
       setFocus(i);
-      if (a === "big") return showBig(photos[i]);
       if (a === "move") return askMove(photos[i]);
       if (a === "out") return toggleOut(photos[i]);
-      toggleVerdict(photos[i]);
+      showBig(photos[i]);
     };
-    el.ondblclick = () => showBig(photos[+el.dataset.i]);
+    el.oncontextmenu = e => { e.preventDefault(); setFocus(+el.dataset.i); toggleVerdict(photos[+el.dataset.i]); };  // right click: keep or archive
   }
   const name = $("uname");
   name.onchange = () => rename(name.value);
@@ -312,12 +311,11 @@ function bigInfo(p) {
     ${p.pipeline && p.pipeline !== p.verdict ? ` · the pipeline said ${p.pipeline}` : ""}${p.rotate ? ` · turned ${p.rotate}°` : ""}
     · <a href="/library/${p.path.split("/").map(encodeURIComponent).join("/")}" target="_blank">original</a></div>
     ${strip(p)}
-    <div class="muted"><kbd>←</kbd><kbd>→</kbd> previous, next · <kbd>Space</kbd> keep or archive · <kbd>O</kbd> take out · <kbd>Enter</kbd> or <kbd>Esc</kbd> back</div>`;
-  for (const img of $("bigInfo").querySelectorAll(".strip img")) img.onclick = e => {
-    e.stopPropagation();
-    setFocus(+img.dataset.i);
-    showBig(photos[+img.dataset.i]);
-  };
+    <div class="muted"><kbd>←</kbd><kbd>→</kbd> previous, next · right-click or <kbd>Space</kbd> keep or archive · <kbd>O</kbd> take out · <kbd>Enter</kbd> or <kbd>Esc</kbd> back</div>`;
+  for (const img of $("bigInfo").querySelectorAll(".strip img")) {
+    img.onclick = e => { e.stopPropagation(); setFocus(+img.dataset.i); showBig(photos[+img.dataset.i]); };
+    img.oncontextmenu = e => { e.preventDefault(); toggleVerdict(photos[+img.dataset.i]); bigInfo(photos[focusIdx]); };
+  }
 }
 // The rest of the photo's burst, under it: kept or archived, the one shown outlined.
 function strip(p) {
@@ -360,6 +358,7 @@ document.addEventListener("keydown", e => {
   else if (e.key === "z" || e.key === "Enter") { e.preventDefault(); if (big) $("big").close(); else showBig(p); }
 });
 $("bigBox").onclick = () => $("big").close();
+$("bigBox").oncontextmenu = e => { e.preventDefault(); if (photos[focusIdx]) toggleVerdict(photos[focusIdx]); };
 // The photo fitted to the frame; a photo turned a quarter is laid out with the sides swapped, then turned.
 function fitBig() {
   const img = $("bigImg"), box = $("bigBox").getBoundingClientRect(), turn = +img.dataset.rotate || 0, side = turn % 180 !== 0;

@@ -595,7 +595,7 @@ Start runs the server phases one after another and stops at the next review. "Do
 **The review** (`review.py`, `review.html`):
 - **Units:** every album and folder is one unit, whether it exists or is new. It shows the photos that will be in it: its own photos that stay, and those the sorting put there. ` PRIV` and `/Dokumenty` are parts of their album's unit.
 - **Controls:**
-  - a click keeps or archives a photo;
+  - a click opens a photo large; a right-click (or Space) keeps or archives it;
   - O takes it out, M moves it to a chosen album or folder or a new album name, Z shows it large;
   - the unit can be renamed (an album keeps its date) or dismantled: all its photos go back to sorting, and nothing is sorted into it again;
   - **Confirm** pins every photo in the unit: a `place` label for its place, and a `verdict` label for keep or archive.
