@@ -103,7 +103,7 @@ Run s1 (2026-11-03) did a first pass of every stage below on the B50 and the res
   - the three stages take 87 s instead of 239 s on s6;
   - on the way, Q-ReAlign on the B50 was found scoring low (a torch XPU bug) and fixed.
 - [ ] More speed-ups, by measured cost on s6 (captions 27%, Q-ReAlign 22% before P49, orient 17%, depth 10%, faces 9%, subjects 7%):
-  - ~~stages side by side, one lane per device: the CPU (faces, nudity), the B50 (the vision stages), the depth service, the 4090 (VLM checks)~~ Done (P51): on a copy of s6, 596 s instead of 808 s, and 461 s with the final code;
+  - ~~stages side by side, one lane per device: the CPU (faces, nudity), the B50 (the vision stages), the depth service, the 4090 (VLM checks)~~ Done (P51): on a copy of s6, 460 s instead of 639 s (−28 %);
   - parallel Qwen requests (`-np` slots) for captions, orientation checks and the judge;
   - batching DINOv2 and SigLIP on the B50, only if the results stay the same
 - [ ] Optional: take the hashes from the OneDrive manifest (the same QuickXorHash, already checked by `mimir-onedrive verify`) instead of reading the whole terabyte again
