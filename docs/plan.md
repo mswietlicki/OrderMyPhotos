@@ -86,6 +86,7 @@ Run s1 (2026-11-03) did a first pass of every stage below on the B50 and the res
 ## Phase 5c — The web app and the whole-library run (decisions.md P42–P44)
 
 - [x] Folder policy for the run: `leave` for `Pictures/Private` and `Code`; wallpapers and the thermal camera ignored (P42)
+- [x] Facial expressions (user, P50): EmotiEffLib per face in the faces stage; a happier frame wins in a burst; captions told how people look, and the tag People/Smiling
 - [x] Restart-safe stages: commits every 500 photos or 10 s, a clean stop after the photo in hand, bad photos skipped and logged, llama-swap calls retried, one lock per DB (P43)
 - [x] Face clustering per connected component, so a whole library's faces fit in memory (P43)
 - [x] `omp serve`: start and pause, the pipeline as a supervised child that resumes after a crash or reboot, progress, steps, skipped photos, timings, machine resources, results, a label API (P44)

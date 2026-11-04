@@ -135,7 +135,7 @@ Each signal is computed once per photo and stored. Photos with the `ignore` poli
 | Exposure | clipped highlights and shadows (%), median luminance, luminance on faces vs. background | hard filters, ranking |
 | Noise | MAD noise estimate in flat tiles, ISO | ranking, IQA cross-check |
 | Kind | memory / reference / media / junk, plus a category (S3b) | grouping, floor, albums, captions |
-| Faces | detector + landmarks + identity embedding + attributes (models.md): box, size, eyes open L/R, smile and expression, yaw/pitch/roll, face sharpness, face-quality score | ranking, people |
+| Faces | detector + landmarks + identity embedding + attributes (models.md): box, size, eyes open L/R, smile and expression (P50: P(happiness), valence, arousal, the likeliest of 8 expressions), yaw/pitch/roll, face sharpness, face-quality score | ranking, people, captions and tags |
 | **Subjects and their actions** | every person and animal (RT-DETR boxes: person, dog, cat, horse, bird, …), the **pose** of each (ViTPose++ keypoints: 17 body points for people, the animal head for animals), **facing** the camera or away, cut by the frame edge or occluded, and an **action** label (SigLIP 2 zero-shot on the subject's crop over a verb list in English and Polish: standing, walking, running, jumping, sitting, skiing, climbing, hugging, eating, playing, …) | what happens in the frame: bursts, keep count, the moment, captions (P22) |
 
 **Expensive signals** go only to photos where a decision depends on them: members of a burst (S4 groups first, using only the cheap signals), and singles whose cheap scores fall below a pre-screen line, which makes them candidates for the quality floor in S5:

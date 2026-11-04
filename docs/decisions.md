@@ -694,6 +694,31 @@ The user: "If the 4090 is idle, and will be for some time, it could also do the 
     - Ranked again the same way (before the VLM judge), 35 verdicts change: 23 archive → keep, 12 keep → archive, in 26 groups.
     - s6's own scores are left as they are. Its decisions went through the review, and the user decides whether to recompute them. The whole-library run uses the fixed code.
 
+## P50 — Facial expressions: a happier frame wins, and captions say how people look (2026-11-04, user, measured)
+
+The user: "Did we add face mood recognition? If not, let's do this and add it to signals. Happier photos are better. This could also be used for descriptions and tagging." It wasn't there: design.md listed "smile and expression" for faces, but only the VLM judge looked at expression, for near-tie bursts.
+
+- **Model:** EmotiEffLib's `enet_b0_8_va_mtl` (sb-ai-lab, Apache-2.0, the successor of HSEmotion).
+  - An EfficientNet-B0 trained on AffectNet: 8 expressions, valence and arousal.
+  - ONNX on the CPU, 16 MB, in `/srv/mimir/models/emotiefflib/`, pinned to the repo's commit `520a051c64`.
+  - It runs in the faces stage after detection, on each face counted by rank (score ≥ 0.6, height ≥ 3 % of the frame), with the library's own preprocessing.
+- **Measured on s6's 287 faces against the local VLM** (Qwen3.8, "is this person smiling or laughing?", on a crop with margin):
+  - P(happiness) agrees at AUC 0.85, and 0.88 on the faces the VLM is sure about. Where it says ≥ 0.5, the VLM agrees 99 %, so it's the stricter of the two.
+  - Valence agrees less, AUC 0.81, so P(happiness) is the smile measure.
+  - `enet_b2_8` (30 MB) did no better (0.84), so the smaller model, which also gives valence.
+  - The crop: a square of the box's longer side (0.85), better than the box as it is (0.83) or with a 20 % margin (0.79).
+- **Stored:** `face_expr` per face (P(happiness), valence, arousal, the likeliest expression, all 8). The signal `expression` per photo: the mean P(happiness) of its faces, how many smile (≥ 0.5), the maximum, the mean valence. The faces stage redoes a photo's expressions when it redoes its faces.
+- **Rank:** within a burst, the frame whose people smile more scores higher.
+  - The weight is 0.15, with the full penalty at 0.30 less than the best frame. The reason shown is "smiles less than the best frame (40 % vs 85 %)".
+  - `d_smile` is a feature of the extra-frame model fitted to the user's labels.
+  - On s6, ranked again with the same labels (before the VLM judge): photos the user keeps that would be archived went from 12 % to 10 % (Camera 10 % → 7 %), keeps that the user archived stayed at 41 %, and 4 fewer bursts need the judge.
+- **Captions and tags:**
+  - The caption's context gets a line "Facial expressions, left to right (from a face model, it can be wrong): Jan smiling, someone neutral", with the names the People page knows. It covers only faces the model is fairly sure about (≥ 0.5), and a count for more than six faces.
+  - The prompt asks to say how people look where the photo agrees, and to tag it.
+  - A photo where most faces smile gets the tag `People/Smiling` (`Uśmiech`), new in vocab.yaml, so it can be searched.
+  - Captions already written aren't redone for this: the whole-library run writes them with it.
+  - Tested on a scratch copy of s6: three photos with smiling faces, captioned again, all had the line in their prompt, a description that says so, and the tag. The tag pass put `People/Smiling` on 64 of 363 captions.
+
 ## Open — for the user
 
 1. ~~**Language** of titles, descriptions and tags.~~ Resolved by P42: both languages; S11 reads English only.

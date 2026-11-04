@@ -14,7 +14,7 @@ import numpy as np
 import yaml
 
 from .config import PACKAGE_DIR, Config
-from .db import get_vecs, log_timing
+from .db import get_data, get_vecs, log_timing
 from .text import OCR_TAG, ocr_needed
 from .vlm import VLM, image_part
 
@@ -66,7 +66,9 @@ Write:
   words, no people. "unknown" when the background doesn't show the place.
 - Names: when the context says who is in the photo (face recognition) or names an animal, call them by those
   names in the titles and descriptions, in the right Polish forms ("Jan z Filemonem", "Ola i Jan na szczycie
-  góry"), where it's clear who is who. Never give anyone else a name."""
+  góry"), where it's clear who is who. Never give anyone else a name.
+- Expressions: where the photo agrees with the facial expressions in the context, say how the people look
+  (smiling, laughing, surprised) in the descriptions, and add a tag for it ("smiling", "laughing")."""
 
 SEASONS = {12: "winter", 1: "winter", 2: "winter", 3: "spring", 4: "spring", 5: "spring", 6: "summer", 7: "summer",
            8: "summer", 9: "autumn", 10: "autumn", 11: "autumn"}
@@ -158,6 +160,8 @@ def knew(caption: dict) -> str:
 
 RECOGNIZED = "- Recognized in the photo: "
 ALBUM_LINE = "- Album name (the owner's): \"{}\""
+EXPRESSIONS_LINE = "- Facial expressions, left to right (from a face model, it can be wrong): "
+SMILING_TAG = "People/Smiling"
 
 
 def run(cfg: Config, con, run_id: str):
@@ -170,6 +174,9 @@ def run(cfg: Config, con, run_id: str):
     from .people import recognized
 
     names = recognized(con)
+    from .faces import described
+
+    moods = described(con)
     done = {r[0]: json.loads(r[1]) for r in con.execute("SELECT id, data FROM caption WHERE model=?", (model,))}
     rows = [dict(r) for r in con.execute(
         "SELECT p.id, p.taken_local, p.lat, p.lon, MIN(f.album) AS album FROM photo p JOIN file f ON f.id = p.id"
@@ -211,6 +218,8 @@ def run(cfg: Config, con, run_id: str):
             ctx.append(f"- The owner's notes for this album: {trusted[r['album']][:500]}")
         if names.get(r["id"]):
             ctx.append(RECOGNIZED + names[r["id"]])
+        if moods.get(r["id"]):
+            ctx.append(EXPRESSIONS_LINE + moods[r["id"]])
         t1 = time.perf_counter()
         try:
             out = vlm.json([image_part(cfg.preview(r["id"])), {"type": "text", "text": INSTRUCTIONS.format(context="\n".join(ctx))}],
@@ -226,6 +235,7 @@ def run(cfg: Config, con, run_id: str):
     # Tags: re-mapped for every caption on each run (cheap), so vocabulary edits apply without new VLM calls.
     month = {r["id"]: int(r["taken_local"][5:7]) for r in rows}
     needs_ocr = ocr_needed(con)
+    smiles = {i: d for i, d in get_data(con, "expression").items() if d.get("faces")}
     for r in con.execute("SELECT id, data FROM caption WHERE model=?", (model,)).fetchall():
         if r["id"] not in month:  # captioned earlier, now only in a folder that isn't captioned (People)
             continue
@@ -246,6 +256,9 @@ def run(cfg: Config, con, run_id: str):
                                "siglip_share": round(shares.get(path, -1), 2)})
         if r["id"] in needs_ocr:  # a page of text the OCR post-process hasn't read yet
             mapped.append({"path": OCR_TAG[0], "pl": OCR_TAG[1], "from": "text stage"})
+        sm = smiles.get(r["id"])
+        if sm and 2 * sm["smiling"] >= sm["faces"] and SMILING_TAG not in [m["path"] for m in mapped]:
+            mapped.append({"path": SMILING_TAG, "pl": mapper.pl[SMILING_TAG], "from": "face expressions"})  # P50
         season = f"Seasons/{SEASONS[out['month']].capitalize()}"
         if season not in [m["path"] for m in mapped]:
             mapped.append({"path": season, "pl": mapper.pl[season], "from": "capture date"})

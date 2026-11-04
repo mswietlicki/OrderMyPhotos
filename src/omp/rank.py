@@ -19,6 +19,8 @@ from .evaluate import latest_labels
 
 VERSION = "rank@1"
 W_SHARP, W_QUALITY, W_AESTH, W_FACE = 0.35, 0.30, 0.25, 0.10
+# Happier is better (user, P50): the frame where its people smile more, by the mean P(happiness) of the faces.
+W_SMILE, SMILE_SPAN = 0.15, 0.30   # the full penalty at 0.30 less than the group's best
 HARD_SHARP = -1.0        # log Tenengrad vs the group's best: 37 % of its gradient energy, ~60 % of the edge strength
 CLOSE = 0.08             # contenders within this score of the best go to the VLM judge
 # An extra frame is kept when it looks different from every kept frame and isn't clearly worse: on the
@@ -30,7 +32,7 @@ KEEP_CLOSE = 0.08        # ... or its score within this of the best
 # Once there are labels, extra frames are decided by a small model fitted to them instead (decisions.md P23).
 # Measured on the s2 labels, each album predicted by a model fitted on the other albums: AUC 0.67; keeping
 # at P >= 0.30 left 13 of 109 user-kept extras archived and kept 99 of 163 the user archived.
-EXTRA_FEATURES = ["sim", "rel_sharp", "d_quality", "d_aesthetics", "d_score", "faces", "burst_size", "rank"]
+EXTRA_FEATURES = ["sim", "rel_sharp", "d_quality", "d_aesthetics", "d_score", "faces", "burst_size", "rank", "d_smile"]
 KEEP_P = 0.30            # keep an extra frame when P(the user keeps it) is at least this
 MAYBE_P = 0.50           # ... and mark it "maybe redundant" below this, so a review can sweep those quickly
 MIN_TRAIN = 50           # labelled extra frames needed before the model replaces the rules
@@ -60,7 +62,7 @@ def subject_mask(cfg, id_, grid_shape, faces):
 
 def photo_features(cfg, con):
     sharp_rows = {r["id"]: r for r in con.execute("SELECT id, vec, shape, data FROM signal WHERE kind='sharp'")}
-    iqa, expo, kind, depth = (get_data(con, k) for k in ("iqa", "exposure", "kind", "depth"))
+    iqa, expo, kind, depth, expr = (get_data(con, k) for k in ("iqa", "exposure", "kind", "depth", "expression"))
     faces = {}
     for f in con.execute("SELECT * FROM face"):
         faces.setdefault(f["id"], []).append(f)
@@ -101,6 +103,7 @@ def photo_features(cfg, con):
                      for f in fs if f["size"] >= 0.08 and (f["eye_l"] is not None or f["eye_r"] is not None)],
             "purpose": kind.get(id_, {}).get("purpose"), "memory_p": kind.get(id_, {}).get("value"),
             "depth_std": depth.get(id_, {}).get("std"),
+            "smile": expr.get(id_, {}).get("value"), "smiling": expr.get(id_, {}).get("smiling"),
             "camera": f"{meta[id_]['make']} {meta[id_]['model']}", "day": (meta[id_]["taken_local"] or "")[:10],
         }
     return feats
@@ -112,6 +115,8 @@ def burst_scores(members, feats):
     best_q = max(x["quality"] for x in f)
     best_a = max(x["aesthetics"] for x in f)
     max_faces = max(x["faces"] for x in f)
+    smiles = [x["smile"] for x in f if x.get("smile") is not None]
+    best_smile = max(smiles) if smiles else None
     out = {}
     for i, x in zip(members, f):
         rel_sharp = x["sharp"] - best_sharp
@@ -119,6 +124,8 @@ def burst_scores(members, feats):
             + W_AESTH * max((x["aesthetics"] - best_a) / 0.15, -1)
         if max_faces:
             s += W_FACE * ((x["faces"] - max_faces) / max_faces)
+        if best_smile is not None and x.get("smile") is not None:
+            s += W_SMILE * max((x["smile"] - best_smile) / SMILE_SPAN, -1)
         if x["clip_hi"] is not None:
             s -= max(0.0, x["clip_hi"] - 0.05) * 2 + max(0.0, x["clip_lo"] - 0.10) * 2
         reasons = []
@@ -128,6 +135,8 @@ def burst_scores(members, feats):
             reasons.append("motion blur")
         if max_faces and x["faces"] < max_faces:
             reasons.append(f"{max_faces - x['faces']} face(s) fewer than the best frame")
+        if best_smile is not None and x.get("smile") is not None and best_smile - x["smile"] >= SMILE_SPAN / 2:
+            reasons.append(f"smiles less than the best frame ({x['smile']:.0%} vs {best_smile:.0%})")
         out[i] = {"score": s, "rel_sharp": rel_sharp, "reasons": reasons, "hard": rel_sharp <= HARD_SHARP}
     return out
 
@@ -155,7 +164,8 @@ def suspect(x) -> str | None:
 def extra_vec(i, best, pos, n, sc, feats, dino):
     f, fb = feats[i], feats[best]
     return [float(dino[i] @ dino[best]), sc[i]["rel_sharp"], (f["quality"] or 0) - (fb["quality"] or 0),
-            (f["aesthetics"] or 0) - (fb["aesthetics"] or 0), sc[i]["score"] - sc[best]["score"], f["faces"], n, pos]
+            (f["aesthetics"] or 0) - (fb["aesthetics"] or 0), sc[i]["score"] - sc[best]["score"], f["faces"], n, pos,
+            (f["smile"] or 0) - (fb["smile"] or 0) if f.get("smile") is not None and fb.get("smile") is not None else 0.0]
 
 
 class ExtraModel:

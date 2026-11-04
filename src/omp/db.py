@@ -66,6 +66,17 @@ CREATE TABLE IF NOT EXISTS face (
 );
 CREATE INDEX IF NOT EXISTS face_photo ON face(id);
 
+CREATE TABLE IF NOT EXISTS face_expr (   -- facial expression of a face (P50), redone when its photo's faces are
+  fid INTEGER PRIMARY KEY,               -- face.fid
+  id TEXT NOT NULL,
+  model TEXT NOT NULL,
+  happy REAL,                      -- P(happiness), 0..1: how much the face smiles
+  valence REAL, arousal REAL,      -- -1..1
+  top TEXT,                        -- the most likely of the 8 expressions
+  probs TEXT                       -- JSON {expression: P}
+);
+CREATE INDEX IF NOT EXISTS face_expr_photo ON face_expr(id);
+
 CREATE TABLE IF NOT EXISTS grp (
   gid INTEGER PRIMARY KEY,
   run TEXT NOT NULL,

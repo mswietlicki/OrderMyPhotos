@@ -134,7 +134,7 @@ def run(cfg: Config, con, run_id: str, out: str | None):
             "verdict": d["verdict"], "tier": d["tier"], "rank": d["rank"], "score": round(d["score"], 3),
             "reasons": json.loads(d["reasons"]), "floor": json.loads(d["floor"]) if d["floor"] else None,
             "protected": d["protected"],
-            "f": {k: feats.get(k) for k in ("sharp", "rel_sharp", "quality", "aesthetics", "motion", "faces", "purpose",
+            "f": {k: feats.get(k) for k in ("sharp", "rel_sharp", "quality", "aesthetics", "motion", "faces", "smile", "purpose",
                                            "memory_p", "bt", "p_keep", "clip_hi", "maybe", "p_extra", "rotate", "place",
                                            "text_page", "docset", "ocr_needed")},
             "ocr": tx["text"] if tx and tx["mostly_text"] and tx["text"] else None,
