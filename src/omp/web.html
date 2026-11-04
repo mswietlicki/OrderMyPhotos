@@ -170,12 +170,13 @@ function actionHtml(s) {
   if (s.state === "finished" || !ph) return `<p><b>Finished.</b> ${s.final ? "Decision saved " + fmtTime(s.final.at) + "." : ""}</p>`;
   if (ph.kind === "review") {
     const [href, label] = PAGES[ph.key];
-    const rv = s.review, blocked = ph.key === "review" && rv && rv.unconfirmed;
+    const rv = s.review, left = ph.key === "review" && rv ? rv.unconfirmed : 0;
     const note = ph.key === "review" && rv ? `<p class="muted">${num(rv.units)} albums and folders · ${num(rv.unconfirmed)} still to confirm`
       + (rv.to_sort ? ` · ${num(rv.to_sort)} photos taken out, to sort again` : "") + (s.rounds ? ` · round ${s.rounds + 1}` : "") + `</p>` : "";
     return `<p><span class="who you">Your turn</span> <b>${esc(ph.title)}</b>: ${esc(ph.about)}</p>${note}
       <div class="row"><a class="button primary" href="${href}" target="_blank">${label}</a>
-      <button onclick="done('${ph.key}')" ${blocked ? "disabled title='confirm every album first'" : ""}>Done, go on</button></div>`;
+      ${ph.key === "final" ? `<button onclick="done('final')">Decide</button>`
+        : `<button onclick="finish('${ph.key}', ${left})" title="${left ? "accept the rest as it is, and go on" : "go on"}">Finished, go on</button>`}</div>`;
   }
   const st = s.step, running = s.state === "running" || s.state === "stopping";
   let h = `<p><span class="who">Server</span> <b>${esc(ph.title)}</b>: ${esc(ph.about)}</p>`;
@@ -268,6 +269,10 @@ async function done(key) {
   if (key === "final") return location.assign("/review#final");
   if (!confirm(key === "names" ? "Names saved on the People page? The run goes on with them." : "Go on?")) return;
   act(`/api/phase/${key}/done`, body);
+}
+async function finish(key, left) {
+  if (!confirm(left ? `Accept the ${left} albums and folders not confirmed yet, as they are now, and go on?` : "Finished here? The run goes on.")) return;
+  act(`/api/phase/${key}/finish`);
 }
 async function redo(key) { if (confirm("Run again from this phase? Later phases are redone as they come.")) act(`/api/phase/${key}/goto`); }
 

@@ -115,6 +115,7 @@
   <div class="tabs" id="tabs"><button data-f="open" class="on">To review</button><button data-f="confirmed">Confirmed</button><button data-f="all">All</button></div>
   <span class="muted" id="counts"></span>
   <span style="flex:1"></span>
+  <button class="primary" id="finished" title="Accept everything not confirmed yet as it is, and go on">Finished</button>
   <label class="muted">size <input type="range" id="size" min="90" max="280" value="150" style="vertical-align: middle; padding: 0"></label>
 </header>
 <div class="layout" id="layout">
@@ -413,6 +414,13 @@ function fitBig() {
 window.addEventListener("resize", () => { if ($("big").open) fitBig(); });
 $("search").oninput = drawUnits;
 $("size").oninput = e => document.documentElement.style.setProperty("--size", e.target.value + "px");
+// Finished: everything not confirmed yet is accepted as it is, and the run goes on (to sorting the photos taken
+// out, or to the plan); the wizard shows it.
+$("finished").onclick = async () => {
+  const left = units.filter(u => u.state === "open").length;
+  if (!confirm(left ? `Accept the ${left} albums and folders not confirmed yet, as they are now, and go on?` : "Go on with the run?")) return;
+  try { await api("/api/phase/review/finish", {}); location.assign("/"); } catch (e) { alert(e.message); }
+};
 for (const b of $("tabs").children) b.onclick = () => { filter = b.dataset.f; for (const x of $("tabs").children) x.classList.toggle("on", x === b); drawUnits(); };
 
 // --- the final decision ---

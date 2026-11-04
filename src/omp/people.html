@@ -98,6 +98,7 @@
   <span class="muted" id="sub"></span>
   <span style="flex:1"></span>
   <span id="saved" class="muted"></span>
+  <button class="primary" id="finished" title="Done naming: the run goes on with these names">Finished</button>
   <span style="display:flex; gap:6px"><input type="text" id="mergeids" placeholder="Merge: P1 P7 … or A1 A4" autocomplete="off" style="width: 190px">
   <button id="mergego">Merge</button></span>
 </header>
@@ -157,17 +158,20 @@ function names() {  // per face (or animal box): who it is; "" = not them / not 
   }
   return out;
 }
+async function put() {
+  saveTimer = null;
+  try {
+    const r = await fetch("/api/people", {method: "PUT", headers: {"Content-Type": "application/json"},
+                                          body: JSON.stringify({state, names: names(), keys: cards.flatMap(c => c.faces.map(f => f.k))})});
+    $("saved").textContent = r.ok ? "Saved" : "Not saved: " + r.status; $("saved").className = r.ok ? "muted" : "err";
+    return r.ok;
+  } catch (e) { $("saved").textContent = "Not saved: " + e.message; $("saved").className = "err"; return false; }
+}
 function save() {
   status();
   $("saved").textContent = "Saving…"; $("saved").className = "muted";
   clearTimeout(saveTimer);
-  saveTimer = setTimeout(async () => {  // a short pause, so typing a name isn't a save per letter
-    try {
-      const r = await fetch("/api/people", {method: "PUT", headers: {"Content-Type": "application/json"},
-                                            body: JSON.stringify({state, names: names(), keys: cards.flatMap(c => c.faces.map(f => f.k))})});
-      $("saved").textContent = r.ok ? "Saved" : "Not saved: " + r.status; $("saved").className = r.ok ? "muted" : "err";
-    } catch (e) { $("saved").textContent = "Not saved: " + e.message; $("saved").className = "err"; }
-  }, 600);
+  saveTimer = setTimeout(put, 600);  // a short pause, so typing a name isn't a save per letter
 }
 
 function status() {
@@ -393,6 +397,13 @@ document.addEventListener("keydown", e => {
 
 for (const b of $("tabs").children) b.onclick = () => { filter = b.dataset.f; for (const x of $("tabs").children) x.classList.toggle("on", x === b); status(); };
 $("merge").onclick = () => merge([...selected].map(i => byId[i]));
+// Finished: what's waiting to be saved is saved now, then the run goes on with these names.
+$("finished").onclick = async () => {
+  if (!confirm("Done naming? The run goes on with these names; you can still change them later.")) return;
+  if (saveTimer) { clearTimeout(saveTimer); if (!await put()) return; }
+  const r = await fetch("/api/phase/names/finish", {method: "POST"});
+  if (r.ok) location.assign("/"); else alert((await r.json().catch(() => ({}))).detail || r.statusText);
+};
 $("clear").onclick = () => { selected.clear(); status(); };
 const mergeIds = () => {
   const ids = ($("mergeids").value.match(/[PA]\d+/gi) || []).map(i => i.toUpperCase()).filter(i => byId[i]);

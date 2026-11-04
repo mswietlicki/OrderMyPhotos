@@ -234,6 +234,12 @@ def api_confirm(key: str = Body(...), name: str | None = Body(None), verdicts: d
     """Everything in the unit as the reviewer leaves it: kept or archived, taken out or moved, the rest pinned.
     `back`: photos taken out earlier that the reviewer puts back here."""
     s = _session()
+    new_key = confirm(s, key, name, verdicts, out, moves, back)
+    return {"key": new_key, "out": len(out), "moved": len(moves), "pending": pending(s)}
+
+
+def confirm(s, key: str, name=None, verdicts=None, out=(), moves=None, back=()) -> str:
+    verdicts, moves = verdicts or {}, moves or {}
     d = placements(s)
     members = [p for p in d["photos"].values() if p["unit"] == key]
     if not members:
@@ -262,7 +268,16 @@ def api_confirm(key: str = Body(...), name: str | None = Body(None), verdicts: d
         con.execute("INSERT OR REPLACE INTO review_unit(key, status, name, round, updated) VALUES (?,?,?,?,?)",
                     (key, "confirmed", new_key if new_key != key else None, _round(s), time.time()))
     con.close()
-    return {"key": new_key, "out": len(out), "moved": len(moves), "pending": pending(s)}
+    return new_key
+
+
+def confirm_rest(s) -> int:
+    """Finished (user): every album and folder not confirmed yet is confirmed as it is now, its photos pinned
+    with the verdicts they have, renames kept. Returns how many."""
+    keys = [k for k, u in placements(s)["units"].items() if u["state"] == "open"]
+    for k in keys:
+        confirm(s, k)
+    return len(keys)
 
 
 @router.post("/api/review/photo")

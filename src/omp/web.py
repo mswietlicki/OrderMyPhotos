@@ -356,6 +356,17 @@ def api_phase_done(key: str, data: dict | None = Body(None)):
     return status()
 
 
+@app.post("/api/phase/{key}/finish")
+def api_phase_finish(key: str):
+    """Finished: in the album review, everything not confirmed yet is accepted as it is; then the run goes on,
+    as with Done."""
+    if runner.phase["key"] != key or runner.phase["kind"] != "review":
+        raise HTTPException(409, f"the current phase is {runner.phase['title']}")
+    accepted = review.confirm_rest(runner.session) if key == "review" else 0
+    runner.done(key)
+    return status() | {"accepted": accepted}
+
+
 @app.post("/api/phase/{key}/goto")
 def api_phase_goto(key: str):
     if key not in PHASE:
