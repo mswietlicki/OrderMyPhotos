@@ -7,12 +7,16 @@
 - One photo that fails is logged as an `error.<stage>` signal and skipped. Many in a row stop the stage,
   because then it's the model or the GPU, not the photos.
 - Calls to llama-swap wait out its restarts (~100 s) and model swaps instead of failing the stage.
+- In a phase that runs its stages side by side (lanes.py), each lane is a thread: the status has a part
+  per lane, every photo is committed at once (a lane holding the write lock would stall the others), and
+  a stop only raises the flag that each lane checks between photos.
 """
 
 import contextlib
 import json
 import os
 import signal
+import threading
 import time
 from collections import deque
 from concurrent.futures import ProcessPoolExecutor, ThreadPoolExecutor
@@ -30,17 +34,39 @@ REPORT_SECONDS = 3       # how often a stage loop rewrites the status file
 STATUS = Path(os.environ.get("OMP_STATUS") or Path(os.environ.get("OMP_DB", "/state/omp.db")).with_name("status.json"))
 
 _status: dict = {}
+_lock = threading.Lock()
+_local = threading.local()   # .lane: the lane this thread runs, in a phase with lanes
 
 
-def report(**fields):
-    """Update the run's status file, which `omp serve` reads for its progress page. Atomic, never fatal."""
-    _status.update(fields, pid=os.getpid(), updated=time.time())
+def set_lane(name: str | None):
+    _local.lane = name
+
+
+def _write():
+    _status.update(pid=os.getpid(), updated=time.time())
     try:
         tmp = STATUS.with_name(STATUS.name + ".tmp")
         tmp.write_text(json.dumps(_status), encoding="utf-8")
         os.replace(tmp, STATUS)
     except OSError:
         pass
+
+
+def report(**fields):
+    """Update the run's status file, which `omp serve` reads for its progress page. Atomic, never fatal.
+    From a lane's thread, the fields are that lane's (`lanes.<name>`)."""
+    with _lock:
+        lane = getattr(_local, "lane", None)
+        (_status.setdefault("lanes", {}).setdefault(lane, {}) if lane else _status).update(fields)
+        _write()
+
+
+def add_step(step: dict):
+    """A finished step, for the run's list of steps; from a lane, tagged with it."""
+    with _lock:
+        lane = getattr(_local, "lane", None)
+        _status["steps"] = (_status.get("steps", []) + [step | ({"lane": lane} if lane else {})])[-40:]
+        _write()
 
 
 class Stopped(Exception):
@@ -58,9 +84,22 @@ def _on_signal(signum, frame):
         raise Stopped(signal.Signals(signum).name)
 
 
-def install():
-    signal.signal(signal.SIGTERM, _on_signal)
-    signal.signal(signal.SIGINT, _on_signal)
+def _on_signal_lanes(signum, frame):
+    global _stop
+    _stop = True  # the lanes stop between photos; the main thread waits for them
+
+
+def install(lanes=False):
+    global COMMIT_EVERY
+    handler = _on_signal_lanes if lanes else _on_signal
+    signal.signal(signal.SIGTERM, handler)
+    signal.signal(signal.SIGINT, handler)
+    if lanes:
+        COMMIT_EVERY = 1
+
+
+def stopping() -> bool:
+    return _stop
 
 
 def worker_init():
@@ -97,9 +136,9 @@ class Progress:
     """`with Progress(con, stage, model) as prog:`, then `with prog.item(id_):` around each photo's work,
     or `prog.done(id_)` / `prog.fail(id_, error)` for results coming back from a process pool."""
 
-    def __init__(self, con, stage: str, model: str, total: int | None = None, every=COMMIT_EVERY, seconds=COMMIT_SECONDS):
+    def __init__(self, con, stage: str, model: str, total: int | None = None, every=None, seconds=None):
         self.con, self.stage, self.model, self.total = con, stage, model, total
-        self.every, self.seconds = every, seconds
+        self.every, self.seconds = every or COMMIT_EVERY, seconds or COMMIT_SECONDS
         self.ok = self.failed = self.streak = self.pending = 0
         self.last = self.reported = time.monotonic()
         self.started = time.time()
@@ -117,9 +156,9 @@ class Progress:
         _graceful -= 1
         self.con.commit()
         self._report()
-        report(steps=(_status.get("steps", []) + [{
-            "name": self.stage, "ok": self.ok, "failed": self.failed, "total": self.total,
-            "seconds": round(time.time() - self.started, 1), "stopped": exc[0] is not None}])[-40:], step=None)
+        add_step({"name": self.stage, "ok": self.ok, "failed": self.failed, "total": self.total,
+                  "seconds": round(time.time() - self.started, 1), "stopped": exc[0] is not None})
+        report(step=None)
         if self.failed:
             print(f"{self.stage}: {self.failed} photos skipped (signal error.{self.stage})")
         return False

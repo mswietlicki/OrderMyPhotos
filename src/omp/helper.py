@@ -10,8 +10,13 @@ The 4090 is borrowed only while the chat model hasn't produced a token for OMP_4
 Someone who chats gets it back: their request makes llama-swap swap the chat model in, the gate sees it
 loaded and active again, and the helper waits for the next quiet stretch. Not the other way round: the 4090's
 own work (the chat model, Q-ReAlign on CUDA kernels) never moves to the B50.
+
+This process's own chat calls (a lane asking the chat model, P51) close the gate while they run and for a
+minute after, so they and the worker don't swap the 4090 back and forth; and their tokens aren't someone
+chatting, so they don't restart the quiet stretch. One gate per process, so it survives from stage to stage.
 """
 
+import contextlib
 import os
 import queue
 import threading
@@ -25,6 +30,23 @@ IDLE = float(os.environ.get("OMP_4090_IDLE", "900"))   # seconds without a chat 
 ENABLED = os.environ.get("OMP_4090", "1") != "0"
 CHUNK = int(os.environ.get("OMP_4090_CHUNK", "24"))     # photos per request: a chat waits at most for one chunk
 COUNTERS = ("llamacpp:tokens_predicted_total", "llamacpp:prompt_tokens_total")
+OWN_GRACE = 60   # seconds after this process's own chat calls before the 4090 may be borrowed
+
+_own = {"busy": 0, "last": 0.0}
+_own_lock = threading.Lock()
+
+
+@contextlib.contextmanager
+def own_chat():
+    """Around this process's own requests to the chat model (vlm.py)."""
+    with _own_lock:
+        _own["busy"] += 1
+    try:
+        yield
+    finally:
+        with _own_lock:
+            _own["busy"] -= 1
+            _own["last"] = time.time()
 
 
 class Gate:
@@ -32,32 +54,50 @@ class Gate:
 
     def __init__(self, base: str):
         self.base, self.client = base, httpx.Client(timeout=10)
-        self.tokens, self.since = None, time.time()
+        self.tokens, self.since, self.looked = None, time.time(), 0.0
+        self.lock = threading.Lock()
 
     def users(self) -> set[str]:
         running = self.client.get(f"{self.base}/running").json().get("running", [])
         return {m["model"] for m in running if "nvidia.com/gpu" in (m.get("cmd") or "")}
 
     def allowed(self) -> bool:
-        try:
-            users = self.users()
-        except (httpx.HTTPError, ValueError):
-            return False
-        if users <= {WORKER}:  # nothing else on the 4090
-            return True
-        if users - {WORKER, CHAT}:  # something else has it (the OCR, the long-context model)
-            return False
-        try:  # the chat model has it: borrowed only once it's been quiet for IDLE
-            text = self.client.get(f"{self.base}/upstream/{CHAT}/metrics").text
-            tokens = sum(float(line.split()[-1]) for line in text.splitlines() if line.startswith(COUNTERS))
-        except (httpx.HTTPError, ValueError, IndexError):
-            return False
-        if tokens != self.tokens:
-            self.tokens, self.since = tokens, time.time()
-        return time.time() - self.since >= IDLE
+        with self.lock:
+            try:
+                users = self.users()
+            except (httpx.HTTPError, ValueError):
+                return False
+            own = _own["busy"] > 0 or time.time() - _own["last"] < OWN_GRACE
+            if users <= {WORKER}:  # nothing else on the 4090
+                return not own
+            if users - {WORKER, CHAT}:  # something else has it (the OCR, the long-context model)
+                return False
+            try:  # the chat model has it: borrowed only once it's been quiet for IDLE
+                text = self.client.get(f"{self.base}/upstream/{CHAT}/metrics").text
+                tokens = sum(float(line.split()[-1]) for line in text.splitlines() if line.startswith(COUNTERS))
+            except (httpx.HTTPError, ValueError, IndexError):
+                return False
+            if tokens != self.tokens:
+                if self.tokens is not None and not own and _own["last"] < self.looked:
+                    self.since = time.time()  # someone chatted: not this process
+                self.tokens = tokens
+            self.looked = time.time()
+            return not own and time.time() - self.since >= IDLE
 
     def backoff(self):
-        self.tokens, self.since = None, time.time()
+        with self.lock:
+            self.tokens, self.since = None, time.time()
+
+
+_gates: dict[str, Gate] = {}
+_gates_lock = threading.Lock()
+
+
+def gate(base: str) -> Gate:
+    with _gates_lock:
+        if base not in _gates:
+            _gates[base] = Gate(base)
+        return _gates[base]
 
 
 class Share:
@@ -103,12 +143,12 @@ class Share:
             self.closed = True
 
     def _helper(self):
-        gate, client = Gate(self.cfg.llm), httpx.Client(timeout=900)
+        gate_, client = gate(self.cfg.llm), httpx.Client(timeout=900)
         while not self.closed:
             with self.lock:
                 if self.hi - self.lo <= CHUNK:  # the rest is the B50's
                     return
-            if not gate.allowed():
+            if not gate_.allowed():
                 self._sleep(30)
                 continue
             with self.lock:
@@ -129,7 +169,7 @@ class Share:
                 with self.lock:
                     self.back.extend(batch)  # the B50 does them
                 print(f"4090 worker: {type(exc).__name__} {str(exc)[:120]}; the B50 goes on alone for now")
-                gate.backoff()
+                gate_.backoff()
                 self._sleep(60)
             finally:
                 with self.lock:

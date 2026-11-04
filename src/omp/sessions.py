@@ -34,7 +34,8 @@ PHASES = [
      "stages": ["inventory", "previews"]},
     {"key": "signals", "kind": "server", "title": "Look at every photo",
      "about": "Embeddings, quality, orientation, faces, people and animals, depth, text pages.",
-     "stages": ["signals", "orient", "faces", "subjects", "depth", "text"]},
+     "stages": ["signals", "orient", "faces", "subjects", "depth", "text"],
+     "lanes": True},  # side by side, one lane per device (lanes.py, P51)
     {"key": "people", "kind": "server", "title": "Find people and pets",
      "about": "Group the faces and the animals, so they can be named.", "stages": ["people"]},
     {"key": "names", "kind": "review", "title": "Name people and pets", "page": "people",

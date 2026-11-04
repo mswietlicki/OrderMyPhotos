@@ -107,6 +107,7 @@ def main(argv=None):
     ap.add_argument("--out", help="report: output directory")
     ap.add_argument("--file", help="labels: JSON exported from the report")
     ap.add_argument("--undo", action="store_true", help="apply: move the last apply's photos back")
+    ap.add_argument("--lanes", action="store_true", help="run the stages side by side, one lane per device (P51)")
     args = ap.parse_args(argv)
 
     if args.stage == ["serve"]:
@@ -118,13 +119,21 @@ def main(argv=None):
     stages = [s for a in args.stage for s in (ALL if a == "all" else [a])]
     cfg = Config()
     held = lock(cfg)  # noqa: F841 - held until the process exits
-    runtime.install()
+    runtime.install(lanes=args.lanes)
     con = connect(cfg.db)
     started = time.perf_counter()
     runtime.report(run=args.run, stages=stages, done=[], steps=[], stage=None, step=None, error=None,
                    started=time.time(), state="running")
     done = []
     try:
+        if args.lanes:
+            from . import lanes
+            t0 = time.time()
+            runtime.report(stage="lanes", stage_started=t0, step=None)
+            lanes.run(cfg, stages, args)
+            done.append({"stage": "lanes", "seconds": round(time.time() - t0, 1)})
+            runtime.report(done=done)
+            stages = []
         for stage in stages:
             t0 = time.time()
             runtime.report(stage=stage, stage_started=t0, step=None)

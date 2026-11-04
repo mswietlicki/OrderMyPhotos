@@ -505,6 +505,7 @@ Every number is shown before anything is approved.
   - The pipeline is the app's child process (`python -m omp <stages> --run <run>`), and the wanted state is kept on disk. Start, Pause (a clean stop after the photo in hand) and Resume are buttons and API calls.
   - A crash is retried with growing pauses, and a reboot or redeploy resumes the run.
   - Every stage skips what it has committed, so resuming costs at most the last 10 s of work.
+  - "Look at every photo" runs its stages side by side, one lane per device (P51): the B50's vision models, the CPU's nudity and faces, the depth service, and the chat model's orientation and text checks once SigLIP is done. `OMP_LANES=0` runs them one after the other.
 - **Phases**, server and reviewer, in order:
   1. read;
   2. look at every photo;
@@ -523,7 +524,7 @@ Every number is shown before anything is approved.
   - Confirmed photos are pinned, and the sorting never moves them again.
   - Photos taken out are sorted again, and only what's new is reviewed then.
 - **What it shows:**
-  - progress per step (done of total, speed, time left);
+  - progress per step, or per lane (done of total, speed, time left);
   - the steps finished, the photos skipped with their errors, and the stage timings;
   - the library's counts per signal;
   - the run's and the host's CPU, memory and disk I/O, and both GPUs;

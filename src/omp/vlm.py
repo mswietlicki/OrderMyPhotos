@@ -10,6 +10,7 @@ import time
 import httpx
 from PIL import Image
 
+from .helper import own_chat
 from .runtime import post
 
 MODEL = "qwen3.8-27b:instruct"   # the name results are recorded under (judge, captions, text checks)
@@ -44,7 +45,8 @@ class VLM:
 
     def _post(self, body):
         t0 = time.perf_counter()
-        r = post(self.client, self.url, json={"model": self.served, **self.extra, **body})
+        with own_chat():  # while this process asks the chat model, the 4090 isn't borrowed (helper.py)
+            r = post(self.client, self.url, json={"model": self.served, **self.extra, **body})
         d = r.json()
         self.calls += 1
         self.seconds += time.perf_counter() - t0

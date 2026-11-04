@@ -146,10 +146,11 @@ class Runner:
 
     def _spawn(self):
         stages = self.phase["stages"]
+        lanes = ["--lanes"] if self.phase.get("lanes") and os.environ.get("OMP_LANES", "1") != "0" else []
         log = open(self.log_path(), "ab")
-        log.write(f"\n=== {time.strftime('%Y-%m-%d %H:%M:%S %Z')} {self.phase['title']}: {' '.join(stages)}\n".encode())
+        log.write(f"\n=== {time.strftime('%Y-%m-%d %H:%M:%S %Z')} {self.phase['title']}: {' '.join(stages + lanes)}\n".encode())
         log.flush()
-        self.proc = subprocess.Popen([sys.executable, "-m", "omp", *stages, "--run", self.session.run_id],
+        self.proc = subprocess.Popen([sys.executable, "-m", "omp", *stages, "--run", self.session.run_id, *lanes],
                                      stdout=log, stderr=subprocess.STDOUT, env=os.environ | self.session.env(),
                                      cwd="/tmp" if os.name != "nt" else None)
         log.close()
@@ -269,6 +270,16 @@ def state() -> str:
     return c["wanted"]
 
 
+def _rated(step: dict | None) -> dict | None:
+    """A step with its speed since it started and the time left at that speed."""
+    if step:
+        elapsed = max(time.time() - step["started"], 1e-6)
+        step["rate"] = round(step["ok"] / elapsed, 2)
+        left = (step["total"] or 0) - step["ok"] - step["failed"]
+        step["eta"] = round(left / step["rate"]) if step["rate"] and step["total"] else None
+    return step
+
+
 def status() -> dict:
     s, c, alive = runner.session, runner.control, runner.alive()
     out = {"session": None, "sessions": [{"id": x.id, "name": x.name, "root": x.root} for x in sessions.all_sessions()],
@@ -277,12 +288,9 @@ def status() -> dict:
     if not s:
         return out
     st = _read_json(s.dir / "status.json", {})  # written by the running pipeline
-    step = st.get("step") if alive else None
-    if step:
-        elapsed = max(time.time() - step["started"], 1e-6)
-        step["rate"] = round(step["ok"] / elapsed, 2)
-        left = (step["total"] or 0) - step["ok"] - step["failed"]
-        step["eta"] = round(left / step["rate"]) if step["rate"] and step["total"] else None
+    step = _rated(st.get("step")) if alive else None
+    lanes = ({name: lane | {"step": _rated(lane.get("step"))} for name, lane in st.get("lanes", {}).items()}
+             if alive and st.get("run") == s.run_id else None)
     cur = c["phase"]
     phases = []
     for i, p in enumerate(PHASES):
@@ -301,7 +309,7 @@ def status() -> dict:
         "session": {"id": s.id, "name": s.name, "root": s.root, "library_index": s.library_index, "created": s.created,
                     "apply": {"possible": can_apply, "why_not": why_not}},
         "phase": runner.phase["key"] if cur < len(PHASES) else None, "phases": phases, "rounds": c["rounds"],
-        "wanted": c["wanted"], "stage": st.get("stage") if alive else None, "step": step,
+        "wanted": c["wanted"], "stage": st.get("stage") if alive else None, "step": step, "lanes": lanes,
         "steps": st.get("steps", []) if st.get("run") == s.run_id else [], "started": c.get("started"), "pid": c.get("pid"),
         "retries": c["retries"], "next_try": c["next_try"] if out["state"] == "retrying" else None,
         "last_exit": c["last_exit"], "error": st.get("error") if st.get("state") == "failed" else None,

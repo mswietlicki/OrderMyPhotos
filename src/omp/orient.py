@@ -23,6 +23,7 @@ from PIL import Image
 
 from .config import Config
 from .db import get_vecs, log_timing, put_signal
+from .runtime import check
 from .vision import SIGLIP, device, free, load_preview
 from .vlm import VLM, image_part
 
@@ -69,6 +70,7 @@ def run(cfg: Config, con, run_id: str):
     train = random.Random(13).sample(sorted(stored), min(TRAIN, len(stored)))
     X, y = [], []
     for i in train:
+        check()  # a stop ends it between photos
         try:
             img = load_preview(cfg, i, 1024)
         except (FileNotFoundError, OSError):
@@ -87,32 +89,44 @@ def run(cfg: Config, con, run_id: str):
         best = int(np.argmax(scores))
         return TURNS[best], float(scores[best] - sorted(scores)[-2])
 
-    # 2. The VLM checks what the screen flags.
+    # 2. The screen looks at every photo. What it flags waits for the VLM, so the chat model is asked in one
+    # stretch at the end, and the 4090 is free for other work while the screen runs (P51).
+    flagged = []
+    for i in todo:
+        check()
+        try:
+            img = load_preview(cfg, i, 1024)
+        except (FileNotFoundError, OSError):
+            continue
+        turn, margin = turn_of(img, stored[i])
+        data = {"screen": turn, "margin": round(margin, 2)}
+        if turn and margin >= SCREEN:
+            flagged.append((i, turn, data))
+            continue
+        put_signal(con, i, "orient", MODEL, value=0, data=data)
+        con.commit()
+    del model
+    free()
+
+    # 3. The VLM checks what the screen flagged.
     vlm = VLM(cfg.llm)
 
     def p_upright(img: Image.Image) -> float:
         ans = vlm.choice([image_part(img), {"type": "text", "text": UPRIGHT}], ["yes", "no"])
         return ans.get("yes", 0.5) if ans else 0.5
 
-    flagged = turned = 0
-    for i in todo:
-        try:
-            img = load_preview(cfg, i, 1024)
-        except (FileNotFoundError, OSError):
-            continue
-        turn, margin = turn_of(img, stored[i])
-        fix, data = 0, {"screen": turn, "margin": round(margin, 2)}
-        if turn and margin >= SCREEN:
-            flagged += 1
-            now, back = p_upright(img), p_upright(img.rotate(turn, expand=True))  # rotate(turn): undo it
-            data |= {"vlm_as_is": round(now, 3), "vlm_turned_back": round(back, 3)}
-            if back >= 0.5 > now:
-                fix = (360 - turn) % 360  # degrees clockwise that make it upright
-                turned += 1
+    turned = 0
+    for i, turn, data in flagged:
+        check()
+        img, fix = load_preview(cfg, i, 1024), 0
+        now, back = p_upright(img), p_upright(img.rotate(turn, expand=True))  # rotate(turn): undo it
+        data |= {"vlm_as_is": round(now, 3), "vlm_turned_back": round(back, 3)}
+        if back >= 0.5 > now:
+            fix = (360 - turn) % 360  # degrees clockwise that make it upright
+            turned += 1
         put_signal(con, i, "orient", MODEL, value=fix, data=data)
         con.commit()
-    del model
-    free()
+    flagged = len(flagged)
     t2 = time.perf_counter()
     log_timing(con, "orient", run_id, len(todo), t2 - t0, f"{dev} + 4090 qwen3.8-27b")
     con.commit()

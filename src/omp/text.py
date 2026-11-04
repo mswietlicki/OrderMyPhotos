@@ -21,7 +21,7 @@ from PIL import Image, ImageOps
 
 from .config import Config
 from .db import get_data, log_timing
-from .runtime import post
+from .runtime import check, post
 from .vlm import VLM, image_part
 
 MODEL = "unlimited-ocr-2"
@@ -214,12 +214,14 @@ def run(cfg: Config, con, run_id: str):
 
     n_none = n_pages = turned = 0
     for i in todo:
+        check()  # a stop ends it between photos
         img = Image.open(cfg.preview(i)).convert("RGB")
         # Asked "upright?", a photo without text gets a "no" and a rotation: so first, is there text at all?
         if p_yes(img, HAS_TEXT) < 0.4:
             n_none += 1
             con.execute("INSERT OR REPLACE INTO text(id, model, rotate, chars, mostly_text, text, blocks)"
                         " VALUES (?,?,0,0,0,'','[]')", (i, model))
+            con.commit()  # not held across the next VLM calls: other lanes write too (P51)
             continue
         mostly = p_yes(img, MOSTLY_TEXT) >= 0.5
         rotate = 0
