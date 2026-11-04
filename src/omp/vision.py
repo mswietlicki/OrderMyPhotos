@@ -1,6 +1,7 @@
 """S3 learned signals: embeddings, zero-shot kinds, IQA. One model at a time on the GPU, so the peak
 fits next to the always-on RAG models on the B50 (~8 GiB free)."""
 
+import contextlib
 import gc
 import time
 
@@ -40,6 +41,32 @@ def sync():
         torch.xpu.synchronize()
     elif dev == "cuda":
         torch.cuda.synchronize()
+
+
+@contextlib.contextmanager
+def xpu_masks(dev):
+    """torch 2.15.0+xpu gets boolean-mask ops wrong at many shapes: masked_scatter, nonzero and x[mask] return
+    garbage, nothing or an exabyte allocation (P49). Q-ReAlign merges its image features into the prompt with
+    masked_scatter, so on the B50 they landed scrambled and quality came out up to 0.33 low. Inside this,
+    masked_scatter on the XPU takes its positions from the CPU and writes by index."""
+    if dev != "xpu":
+        yield
+        return
+    orig = torch.Tensor.masked_scatter
+
+    def masked_scatter(self, mask, source):
+        if self.device.type != "xpu":
+            return orig(self, mask, source)
+        idx = mask.expand_as(self).reshape(-1).cpu().nonzero().squeeze(1).to(self.device)
+        out = self.clone().reshape(-1)
+        out[idx] = source.reshape(-1)[: idx.numel()].to(out.dtype)
+        return out.view(self.shape)
+
+    torch.Tensor.masked_scatter = masked_scatter
+    try:
+        yield
+    finally:
+        torch.Tensor.masked_scatter = orig
 
 
 def todo_ids(con, kind, model):
@@ -282,7 +309,7 @@ class Iqa:
             del batch["attention_mask"]
             batch = batch.to(self.dev)
             batch["pixel_values"] = batch["pixel_values"].to(self.dtype)
-            with torch.inference_mode():
+            with torch.inference_mode(), xpu_masks(self.dev):
                 rows.append(self.model(**batch).logits[0, -1, self.level_ids].float().cpu())
         probs = torch.stack(rows).softmax(-1)
         quality, aesthetics = (probs * self.weights).sum(-1).tolist()

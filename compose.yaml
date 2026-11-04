@@ -30,6 +30,8 @@ services:
       OMP_WORKERS: ${OMP_WORKERS:-20}
       OMP_WEB_PORT: ${OMP_WEB_PORT:-8790}
       OMP_LLM: ${OMP_LLM:-http://127.0.0.1:9292}
+      OMP_4090: ${OMP_4090:-1}                           # the 4090 helps the B50 stages in idle stretches (P49)
+      OMP_4090_IDLE: ${OMP_4090_IDLE:-900}               # seconds without a chat token before it's borrowed
       OMP_GPU_STATS: /run/mimir-gpu/stats.json           # the 4090 and the B50's VRAM, from the host (mimir-gpu-stats)
       OMP_B50_PCI: ${OMP_B50_PCI:-0000:0e:00.0}
       HF_HOME: /models/hf

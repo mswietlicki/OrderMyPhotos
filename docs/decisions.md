@@ -653,6 +653,47 @@ The user: "Test runs should be a normal run, just from a copy of some OneDrive p
   - "delete": the 241 archived photos deleted, 277 of 518 left;
   - a OneDrive root refused.
 
+## P49 — The 4090 helps the B50's vision stages while chat is idle; Q-ReAlign fixed on the B50 (2026-11-04, user, measured)
+
+The user: "If the 4090 is idle, and will be for some time, it could also do the same job as the B50. It will not be true the other way around (RAM and CUDA), but we should try to use all resources we have to speed up the process."
+
+- **One engine per model** (`vision.py`: `Dino`, `Siglip`, `Iqa`), one preview in and a JSON-able result out. The same code runs in the B50 stage and in `omp worker` (`worker.py`) on the 4090.
+- **`omp worker`** is a FastAPI service in its own image, `omp-cuda` (`docker/Dockerfile.cuda`):
+  - the same Python and library versions as the B50 image, torch for CUDA 13.2, flash-linear-attention, and gcc for Triton;
+  - the code is mounted from the clone;
+  - llama-swap starts it as `omp-vision-cuda` (mimir D27): 6000 MiB on the 4090, so it evicts the chat model, and ttl 5 min;
+  - it reads the previews read-only at the app's own path (`/cache/<session>/cache/…`) and only returns results; the stage writes them.
+- **`Share`** (`helper.py`): the B50 works through a stage's photos from the front. A thread sends chunks of 24 from the back to the worker. They meet in the middle, so no photo is done twice. A failed chunk goes back to the B50.
+- **The gate:**
+  - The 4090 is borrowed only when nothing else is on it, or when the chat model is on it and its token counters haven't moved for `OMP_4090_IDLE` (15 min).
+  - Never while another 4090 model is loaded (the OCR, the 128K model).
+  - A chat brings qwen back after the current chunk (a few seconds), and the helper waits for the next quiet stretch.
+  - `OMP_4090=0` turns it off.
+- **Measured** on the bench copy of s6 (517 photos, B50 alone → with the 4090):
+
+  | stage | B50 alone | with the 4090 | 4090's share | 4090 alone |
+  |---|---|---|---|---|
+  | DINOv2 | 14.9 s | 10.1 s | 209 | ~49 img/s |
+  | SigLIP 2 | 30.4 s | 14.9 s | 288 | ~27 img/s |
+  | Q-ReAlign | 193.6 s | 61.8 s | 366 | ~7.5 img/s |
+
+  - The first chunk of each stage includes swapping qwen out (a few seconds).
+  - Triton compiles Q-ReAlign's kernels once, ~29 s, cached in `/srv/mimir/cache/omp-triton`, so later starts take ~4 s.
+  - VRAM is 4.6 GB with all three loaded.
+- **Results match the B50 within noise:**
+  - DINOv2 cosine ≥ 0.99999 and SigLIP ≥ 0.99986;
+  - all 517 zero-shot kinds the same;
+  - Q-ReAlign within 0.007 of a CPU float32 run.
+- **Q-ReAlign on the B50 was wrong.** The first comparison put the 4090's quality +0.078 above the B50's on average, up to +0.33. A CPU float32 run agreed with the 4090, so the B50 was the one off.
+  - Why: torch 2.15.0+xpu gets boolean-mask ops wrong at many shapes. `masked_scatter` writes garbage, `nonzero` asks for an exabyte or fails, and `x[mask]` returns nothing. At 798 × 1024, for example, but not 2000 × 1024.
+  - Q-ReAlign merges its image features into the prompt with `masked_scatter`, so they landed scrambled. The vision tower itself was right. float32 on the B50 was just as wrong, so it isn't precision.
+  - The fix: `xpu_masks()` replaces `masked_scatter` during Q-ReAlign's forward on the XPU. It takes the positions from the CPU and writes by index. The B50 then matches the CPU within 0.007, at the same speed.
+  - An audit (a dispatch mode that records these ops on XPU tensors) found no others in any B50 stage: DINOv2, SigLIP 2, Q-ReAlign, the orientation screen and subjects. Subjects had already moved its post-processing to the CPU for the same bug. On the unfixed code the audit flags the `masked_scatter`.
+  - **Effect on s6:**
+    - 507 of 517 quality scores change, 125 by more than 0.1. The B50 had scored them low.
+    - Ranked again the same way (before the VLM judge), 35 verdicts change: 23 archive → keep, 12 keep → archive, in 26 groups.
+    - s6's own scores are left as they are. Its decisions went through the review, and the user decides whether to recompute them. The whole-library run uses the fixed code.
+
 ## Open — for the user
 
 1. ~~**Language** of titles, descriptions and tags.~~ Resolved by P42: both languages; S11 reads English only.

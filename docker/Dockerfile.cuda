@@ -1,13 +1,13 @@
 # omp-cuda: `omp worker` on the RTX 4090 (P49), the 4090's share of the vision stages. Started by llama-swap as
 # `omp-vision-cuda` (mimir stacks/llama-swap), with the code mounted from a clone of this repo at /code.
-#   docker build -t omp-cuda:0.1 -f docker/Dockerfile.cuda .
+#   docker build -t omp-cuda:0.2 -f docker/Dockerfile.cuda .
 # The same Python and library versions as docker/Dockerfile, so a photo comes out the same on either GPU; torch
 # is the CUDA 13.2 build (the host driver is 615, CUDA 13.4). flash-linear-attention gives Q-ReAlign its fast
-# kernels here (pure Triton), which the B50 doesn't have.
+# kernels here (pure Triton), which the B50 doesn't have; Triton builds its launcher with gcc at first use.
 FROM ubuntu:26.04
 
 RUN apt-get update \
- && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends ca-certificates \
+ && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends ca-certificates gcc libc6-dev \
  && rm -rf /var/lib/apt/lists/*
 
 COPY --from=ghcr.io/astral-sh/uv:0.13.6 /uv /usr/local/bin/uv

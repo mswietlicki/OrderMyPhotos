@@ -97,7 +97,14 @@ Run s1 (2026-11-03) did a first pass of every stage below on the B50 and the res
 - [x] When `fullrun` and the P45 sorting work are both on master (whoever merges second): albums.py's `vlm = VLM(cfg.llm)` becomes `VLM(cfg.llm, repeatable=True)` and the `:instruct` workaround wrapper under it goes (P46); the `OMP_PROMPT_LOG` wrapper stays
 - [ ] S11 answers kept across runs (by prompt hash and model), so a re-run of `albums` doesn't redo ~25k LLM calls
 - [ ] The neighbour table (top-20 look-alikes) at full scale: chunked on the GPU or with numpy
-- [ ] **Later, speed-ups (user, 2026-11-04):** use every resource the machine has. When the 4090 is idle and will stay so for a while, it does the same work as the B50 too, from the same queue of photos (a CUDA worker, the `omp-vision-cuda` image and a llama-swap entry, so chat can still take the GPU back). Not the other way round: the 4090's work needs its VRAM and CUDA
+- [x] **Speed-ups (user, 2026-11-04):** use every resource the machine has. When the 4090 is idle and will stay so for a while, it does the same work as the B50 too, from the same queue of photos. Not the other way round: the 4090's work needs its VRAM and CUDA. Done for DINOv2, SigLIP 2 and Q-ReAlign (P49):
+  - `omp worker` in `omp-cuda`, as llama-swap's `omp-vision-cuda`;
+  - the three stages take 87 s instead of 239 s on s6;
+  - on the way, Q-ReAlign on the B50 was found scoring low (a torch XPU bug) and fixed.
+- [ ] More speed-ups, by measured cost on s6 (captions 27%, Q-ReAlign 22% before P49, orient 17%, depth 10%, faces 9%, subjects 7%):
+  - stages side by side, one lane per device: the CPU (faces, nudity), the B50 (the vision stages), the depth service, the 4090 (VLM checks);
+  - parallel Qwen requests (`-np` slots) for captions, orientation checks and the judge;
+  - batching DINOv2 and SigLIP on the B50, only if the results stay the same
 - [ ] Optional: take the hashes from the OneDrive manifest (the same QuickXorHash, already checked by `mimir-onedrive verify`) instead of reading the whole terabyte again
 
 ## Phase 6 — Videos (sample)
