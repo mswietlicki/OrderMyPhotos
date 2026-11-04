@@ -1,0 +1,392 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>People · OrderMyPhotos</title>
+<style>
+  :root { --bg: #f6f7f9; --card: #fff; --fg: #1d2129; --muted: #667085; --line: #e4e7ec; --soft: #eef2f8;
+          --accent: #2f6fde; --ok: #1f8a4c; --warn: #b7791f; --bad: #c0392b; }
+  @media (prefers-color-scheme: dark) {
+    :root { --bg: #121417; --card: #1b1e23; --fg: #e6e8eb; --muted: #98a2b3; --line: #2c3038; --soft: #232831;
+            --accent: #6b9cff; --ok: #4cc38a; --warn: #e0a84a; --bad: #ef6b5b; }
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--fg); font: 14px/1.4 system-ui, -apple-system, "Segoe UI", sans-serif; }
+  header { position: sticky; top: 0; z-index: 5; display: flex; gap: 14px; align-items: center; padding: 10px 16px;
+           background: var(--card); border-bottom: 1px solid var(--line); flex-wrap: wrap; }
+  header a { color: var(--accent); text-decoration: none; }
+  .tabs button { border: 0; background: none; color: var(--muted); padding: 4px 8px; border-radius: 6px; cursor: pointer; font: inherit; }
+  .tabs button.on { background: var(--soft); color: var(--fg); font-weight: 600; }
+  button, input { font: inherit; padding: 6px 12px; border-radius: 8px; border: 1px solid var(--line); background: var(--card); color: var(--fg); }
+  input[type=text] { padding: 5px 8px; width: 100%; background: var(--bg); }
+  input[type=text]:focus { outline: 2px solid var(--accent); outline-offset: -1px; }
+  button.primary { background: var(--accent); border-color: var(--accent); color: #fff; } button:disabled { opacity: .4; }
+  main { padding: 14px 18px 80px; }
+  h2 { font-size: 13px; text-transform: uppercase; letter-spacing: .06em; color: var(--muted); margin: 22px 0 10px; font-weight: 600; }
+  .muted { color: var(--muted); } .err { color: var(--bad); }
+  .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(330px, 1fr)); gap: 12px; align-items: start; }
+  .card { background: var(--card); border: 1px solid var(--line); border-radius: 10px; padding: 10px; display: flex; flex-direction: column; gap: 8px;
+          scroll-margin: 70px 0 24px; }  /* the sticky header doesn't cover a selected card */
+  .card.focus { box-shadow: 0 0 0 3px var(--accent); }
+  .card.done { border-color: var(--ok); } .card.ignored { opacity: .55; } .card.unknown { border-style: dashed; }
+  .card.sel { background: var(--soft); }
+  .top { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+  .id { font: 600 12px ui-monospace, monospace; background: var(--soft); border-radius: 4px; padding: 1px 6px; }
+  .meta, .hint, .same, .merged { font-size: 12px; color: var(--muted); } .same { color: var(--accent); }
+  .hint button, .merged button { font-size: 12px; padding: 0 6px; }
+  .faces { display: grid; grid-template-columns: repeat(6, 1fr); gap: 4px; }
+  .faces button { padding: 0; border: 0; border-radius: 6px; overflow: hidden; position: relative; aspect-ratio: 1; background: #000; cursor: zoom-in; }
+  .faces img { width: 100%; height: 100%; object-fit: cover; display: block; }
+  .faces button.out img { opacity: .25; } .faces button.out { outline: 2px solid var(--bad); outline-offset: -2px; }
+  .faces button.out::after { content: "✕"; position: absolute; inset: 0; display: grid; place-items: center; color: #fff; font-size: 22px; text-shadow: 0 0 3px #000; }
+  .more { align-self: flex-start; font-size: 12px; padding: 2px 10px; }
+  .fields { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; }
+  .fields label { display: flex; flex-direction: column; gap: 2px; font-size: 12px; color: var(--muted); }
+  .flags { display: flex; gap: 14px; flex-wrap: wrap; font-size: 13px; color: var(--muted); }
+  .flags label { display: inline-flex; gap: 6px; align-items: center; cursor: pointer; }
+  .bar { position: fixed; bottom: 14px; left: 50%; transform: translateX(-50%); display: flex; gap: 10px; align-items: center; background: var(--card);
+         border: 1px solid var(--line); border-radius: 10px; padding: 8px 12px; box-shadow: 0 4px 16px rgba(0, 0, 0, .25); z-index: 6; }
+  .bar[hidden] { display: none; }
+  details > summary { cursor: pointer; color: var(--muted); margin: 18px 0 10px; }
+  .help { color: var(--muted); font-size: 12px; margin-top: 18px; } kbd { border: 1px solid var(--line); border-radius: 4px; padding: 0 4px; font-size: 11px; }
+  /* the large view: the face's photo full screen, the person's other faces on the right; nothing changes size */
+  dialog { border: 1px solid var(--line); border-radius: 12px; background: var(--card); color: var(--fg); }
+  #big { width: 100vw; height: 100vh; max-width: none; max-height: none; margin: 0; padding: 0; border: 0; border-radius: 0;
+         background: #000; color: #e6e8eb; overflow: hidden; }
+  #big[open] { display: flex; flex-direction: column; }
+  #bigMain { flex: 1; min-height: 0; display: flex; }
+  #bigBox { flex: 1; min-width: 0; position: relative; overflow: hidden; cursor: zoom-out; }
+  #bigImg { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: contain; }
+  #faceBox { position: absolute; border: 2px solid #6b9cff; border-radius: 4px; box-shadow: 0 0 0 9999px rgba(0, 0, 0, .35); pointer-events: none; }
+  #bigFaces { flex: none; width: 212px; overflow-x: hidden; overflow-y: auto; scrollbar-gutter: stable; padding: 10px;
+              background: #15171b; border-left: 1px solid #2c3038; display: flex; flex-direction: column; gap: 8px;
+              align-items: stretch; font-size: 12px; color: #98a2b3; }
+  #bigFaces img { width: 100%; height: auto; aspect-ratio: 1; object-fit: cover; border-radius: 6px; cursor: pointer; outline: 2px solid transparent; outline-offset: -2px; flex: none; }
+  #bigFaces img.out { opacity: .35; outline-color: #ef6b5b; } #bigFaces img.cur { outline: 3px solid #6b9cff; opacity: 1; }
+  #bigInfo { flex: none; height: 76px; overflow: auto; padding: 10px 16px; background: #15171b; border-top: 1px solid #2c3038; }
+  #bigInfo .muted { color: #98a2b3; font-size: 12px; } #bigInfo b.out { color: #ef6b5b; } #bigInfo b.in { color: #4cc38a; }
+  #big kbd { border-color: #2c3038; }
+  @media (max-width: 420px) { .faces { grid-template-columns: repeat(4, 1fr); } .fields { grid-template-columns: 1fr; } }
+</style>
+</head>
+<body>
+<header>
+  <a href="/">← OrderMyPhotos</a>
+  <b>People and pets</b>
+  <div class="tabs" id="tabs"><button data-f="all" class="on">All</button><button data-f="todo">Unnamed</button></div>
+  <span class="muted" id="sub"></span>
+  <span style="flex:1"></span>
+  <span id="saved" class="muted"></span>
+  <span style="display:flex; gap:6px"><input type="text" id="mergeids" placeholder="Merge: P1 P7 … or A1 A4" autocomplete="off" style="width: 190px">
+  <button id="mergego">Merge</button></span>
+</header>
+<main>
+  <datalist id="known"></datalist>
+  <div class="grid" id="people"><p class="muted">Loading…</p></div>
+  <h2>Animals <span class="muted" id="petsub" style="text-transform: none; letter-spacing: 0"></span></h2>
+  <div class="grid" id="pets"></div>
+  <details id="oncebox" hidden><summary id="oncesum"></summary><p class="muted">Once you name the pets above, the animals here that match
+    them join them on the next run; name one here only if it's a pet seen in a single photo.</p><div class="grid" id="once"></div></details>
+  <div class="help">Give each person a full name and a nickname: album names use the nickname, or the first name, and photo titles use the
+    names. One person split over several cards: select them and Merge; the same full name on two cards merges them too. "This is me" marks you;
+    "I don't know them" keeps a stranger out of the names.<br>
+    Click a face to see its photo · right-click a face that isn't them to take it out · <kbd>←</kbd><kbd>→</kbd><kbd>↑</kbd><kbd>↓</kbd> select a card ·
+    <kbd>Enter</kbd> type its name · <kbd>Esc</kbd> back · <kbd>Z</kbd> show its faces large · <kbd>X</kbd> select to merge · every change is saved at once</div>
+</main>
+<div class="bar" id="bar" hidden><span id="barsum"></span><button class="primary" id="merge">Merge into one</button><button id="clear">Clear</button></div>
+<dialog id="big"><div id="bigMain"><div id="bigBox"><img id="bigImg" alt=""><div id="faceBox"></div></div><div id="bigFaces"></div></div><div id="bigInfo"></div></dialog>
+
+<script>
+// The People page in the web app (P47): the cards come from the session's DB, the state (names, merges,
+// faces taken out) is loaded from the server and saved on every change, the same from any device. The
+// naming rules are the bundle's People page's (P40), unchanged.
+const $ = id => document.getElementById(id);
+const esc = s => String(s ?? "").replace(/[&<>"]/g, ch => ({"&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;"}[ch]));
+let DATA = null, cards = [], byId = {}, state = {}, dbLabels = {}, filter = "all", focusId = null, saveTimer = null;
+let big = null;  // the large view: {card, faces, i}
+const selected = new Set();
+const topKey = c => c.faces.length ? c.faces[0].k : c.id;  // a card's state belongs to its cluster, not to its number
+const st = c => state[c.id] || (state[c.id] = {top: topKey(c), name: "", nick: "", me: false, ignore: false, out: []});
+const who = s => (s.name || "").trim() || (s.nick || "").trim();
+const root = c => { let r = c; for (let n = 0; n < 99 && st(r).into && byId[st(r).into] && byId[st(r).into] !== r; n++) r = byId[st(r).into]; return r; };
+const members = r => cards.filter(c => root(c) === r);
+const facesOf = r => members(r).flatMap(c => c.faces);
+const photosOf = fs => new Set(fs.map(f => f.k.split(":")[1])).size;
+
+function seed() {
+  for (const c of cards) {
+    if (state[c.id] && state[c.id].top !== topKey(c)) delete state[c.id];  // clustered differently since: start from the DB
+    if (!state[c.id] && c.source === "user")  // what the DB knows from an earlier import
+      state[c.id] = {top: topKey(c), name: c.name || "", nick: c.short || "", me: !!c.owner, ignore: false,
+                     unknown: (c.label || "").startsWith("?"), group: (c.label || "").startsWith("@") && c.label !== "@me" ? c.label : "",
+                     out: c.faces.filter(f => dbLabels[f.k] === "").map(f => f.k)};
+  }
+}
+function names() {  // per face (or animal box): who it is; "" = not them / not a person
+  const out = {};
+  for (const c of cards) {
+    const r = root(c), s = st(r);
+    // "@me": the owner without a name yet; "?P3": someone the user doesn't know (an animal not theirs), kept as
+    // one anonymous person; "@P1": cards merged but not named yet, kept together
+    const w = who(s) || (s.me && !r.pet ? "@me" : "") || (s.unknown ? "?" + r.id : "") || s.group || (members(r).length > 1 ? "@" + r.id : "");
+    for (const f of c.faces) {
+      if (s.ignore || (s.out || []).includes(f.k)) out[f.k] = {who: ""};
+      else if (w) out[f.k] = {who: w, name: (s.name || "").trim(), nick: (s.nick || "").trim(), owner: !!s.me && !r.pet};
+    }
+  }
+  return out;
+}
+function save() {
+  status();
+  $("saved").textContent = "Saving…"; $("saved").className = "muted";
+  clearTimeout(saveTimer);
+  saveTimer = setTimeout(async () => {  // a short pause, so typing a name isn't a save per letter
+    try {
+      const r = await fetch("/api/people", {method: "PUT", headers: {"Content-Type": "application/json"},
+                                            body: JSON.stringify({state, names: names(), keys: cards.flatMap(c => c.faces.map(f => f.k))})});
+      $("saved").textContent = r.ok ? "Saved" : "Not saved: " + r.status; $("saved").className = r.ok ? "muted" : "err";
+    } catch (e) { $("saved").textContent = "Not saved: " + e.message; $("saved").className = "err"; }
+  }, 600);
+}
+
+function status() {
+  const roots = cards.filter(c => root(c) === c);
+  const named = roots.filter(c => !c.pet && who(st(c))).length, pets = roots.filter(c => c.pet && who(st(c))).length;
+  const unknown = roots.filter(c => !c.pet && !who(st(c)) && st(c).unknown).length;
+  $("sub").textContent = `${roots.filter(c => !c.pet).length} people, ${named} named` + (unknown ? `, ${unknown} not known` : "")
+    + (DATA.unclustered ? ` · ${DATA.unclustered} more faces (small, unsure, or seen only once or twice) aren't shown` : "");
+  $("petsub").textContent = DATA.pets.length ? `${roots.filter(c => c.pet).length} found, ${pets} named` : "none found";
+  const seen = {};
+  for (const c of roots) { const w = who(st(c)).toLowerCase(); if (w) (seen[w] = seen[w] || []).push(c.id); }
+  $("known").innerHTML = [...new Set(roots.map(c => (st(c).name || "").trim()).filter(Boolean))].map(n => `<option value="${esc(n)}">`).join("");
+  for (const c of roots) {
+    const el = $("c-" + c.id), s = st(c), w = who(s).toLowerCase();
+    if (!el) continue;
+    el.classList.toggle("done", !!w && !s.ignore);
+    el.classList.toggle("ignored", !!s.ignore);
+    el.classList.toggle("unknown", !w && !!s.unknown && !s.ignore);
+    el.classList.toggle("sel", selected.has(c.id));
+    el.querySelector(".pick").checked = selected.has(c.id);
+    const others = w ? seen[w].filter(i => i !== c.id) : [];
+    el.querySelector(".same").textContent = others.length ? `the same person as ${others.join(", ")}` : "";
+    el.hidden = filter === "todo" && (!!w || !!s.ignore || !!s.unknown);
+  }
+  const n = selected.size, kinds = new Set([...selected].map(i => byId[i].pet));
+  $("bar").hidden = !n;
+  $("barsum").textContent = kinds.size > 1 ? "people and animals can't be merged together" : `${n} selected: ${[...selected].join(", ")}`;
+  $("merge").disabled = n < 2 || kinds.size > 1;
+}
+
+function merge(list) {
+  const rs = [...new Set(list.map(root))];
+  if (rs.length < 2 || new Set(rs.map(r => r.pet)).size > 1) return;
+  const into = rs.reduce((a, b) => facesOf(b).length > facesOf(a).length ? b : a), t = st(into);
+  for (const r of rs) {
+    if (r === into) continue;
+    const s = st(r);
+    for (const f of ["name", "nick"]) if (!(t[f] || "").trim() && (s[f] || "").trim()) t[f] = s[f];
+    t.me = t.me || s.me;
+    t.unknown = t.unknown && s.unknown;  // one known card makes the merged person known
+    t.group = t.group || s.group;
+    t.out = [...new Set([...(t.out || []), ...(s.out || [])])];
+    s.into = into.id;
+  }
+  selected.clear();
+  focusId = into.id;
+  save(); render();
+}
+
+function toggleOut(c, k) {
+  const s = st(root(c));
+  s.out = (s.out || []).includes(k) ? s.out.filter(x => x !== k) : [...(s.out || []), k];
+  for (const b of document.querySelectorAll(`.faces button[data-k="${CSS.escape(k)}"]`)) b.classList.toggle("out", s.out.includes(k));
+  if (big) bigInfo();
+  save();
+}
+
+function card(c) {
+  const s = st(c), el = document.createElement("div"), fs = facesOf(c), parts = members(c).filter(m => m !== c);
+  el.className = "card"; el.id = "c-" + c.id; el.dataset.id = c.id;
+  const sug = parts.concat([c]).find(m => m.name && m.source !== "user") || {}, owner = parts.concat([c]).some(m => m.owner);
+  const hint = !who(s) && s.unknown ? "" : !who(s) && sug.name ? `<span class="hint">suggested: ${esc(sug.name)} (${sug.source === "album-names" ? "from album names"
+    : sug.source === "people-folder" ? "from a People folder" : esc(sug.source || "")}) <button data-use>use</button></span>` :
+    !who(s) && !s.me && owner ? `<span class="hint">probably you (from the front camera) <button data-me>yes, me</button></span>` : "";
+  el.innerHTML = `<div class="top"><input type="checkbox" class="pick" title="select to merge (X)">
+    <span class="id">${c.id}</span><span class="meta">${fs.length} ${c.pet ? esc(c.kind || "animal") + (fs.length > 1 ? "s" : "") : "faces"} in ${photosOf(fs)} photos</span>
+    <span class="same"></span></div>${hint}
+    ${parts.length ? `<div class="merged">merged: ${parts.map(m => `<button data-un="${m.id}" title="take ${m.id} out again">${m.id} ✕</button>`).join("")}</div>` : ""}
+    <div class="faces"></div>${fs.length > DATA.shown ? `<button class="more">show all ${fs.length}</button>` : ""}
+    <div class="fields"><label>${c.pet ? "Name" : "Full name"}<input type="text" data-f="name" list="known" autocomplete="off" placeholder="${c.pet ? "Filemon" : "Anna Kowalska"}"></label>
+    <label>Nickname<input type="text" data-f="nick" autocomplete="off" placeholder="${c.pet ? "Filuś" : "Ania"}"></label></div>
+    <div class="flags">${c.pet ? `<label><input type="checkbox" data-f="unknown"> Not an animal of ours</label>` :
+      `<label><input type="checkbox" data-f="me"> This is me</label><label><input type="checkbox" data-f="unknown"> I don't know them</label>
+       <label><input type="checkbox" data-f="ignore"> Not a person</label>`}</div>`;
+  const faces = el.querySelector(".faces");
+  const draw = all => {
+    faces.innerHTML = "";
+    for (const f of all ? fs : fs.slice(0, DATA.shown)) {
+      const b = document.createElement("button");
+      b.dataset.k = f.k; b.title = "click: see the photo · right-click: not them";
+      b.className = (s.out || []).includes(f.k) ? "out" : "";
+      b.innerHTML = `<img src="${f.src}" alt="" loading="lazy">`;
+      b.onclick = e => { e.stopPropagation(); setFocus(c.id); openBig(c, fs.indexOf(f)); };
+      b.oncontextmenu = e => { e.preventDefault(); setFocus(c.id); toggleOut(c, f.k); };
+      faces.append(b);
+    }
+  };
+  draw(false);
+  const more = el.querySelector(".more");
+  if (more) more.onclick = () => { const all = more.dataset.all !== "1"; draw(all); more.dataset.all = all ? "1" : ""; more.textContent = all ? "show fewer" : `show all ${fs.length}`; };
+  el.querySelector(".pick").onchange = e => { e.target.checked ? selected.add(c.id) : selected.delete(c.id); status(); };
+  for (const b of el.querySelectorAll("[data-un]")) b.onclick = () => { delete st(byId[b.dataset.un]).into; save(); render(); };
+  for (const i of el.querySelectorAll("input[data-f]")) {
+    const f = i.dataset.f;
+    if (i.type === "checkbox") {
+      i.checked = !!s[f];
+      i.onchange = () => {
+        if (f === "me" && i.checked) for (const o of cards) if (o !== c && st(o).me) { st(o).me = false; const x = document.querySelector(`#c-${o.id} [data-f=me]`); if (x) x.checked = false; }
+        for (const [a, b] of [["me", "unknown"], ["unknown", "me"], ["unknown", "ignore"], ["ignore", "unknown"]])
+          if (f === a && i.checked && s[b]) { s[b] = false; const x = el.querySelector(`[data-f=${b}]`); if (x) x.checked = false; }
+        s[f] = i.checked; save();
+      };
+    } else {
+      i.value = s[f] || "";
+      i.oninput = () => { s[f] = i.value; save(); };
+      i.onfocus = () => setFocus(c.id, false);
+    }
+  }
+  const use = el.querySelector("[data-use]");
+  if (use) use.onclick = () => { s.nick = sug.short || sug.name; el.querySelector("[data-f=nick]").value = s.nick; use.parentElement.remove(); save(); };
+  const me = el.querySelector("[data-me]");
+  if (me) me.onclick = () => { s.me = true; el.querySelector("[data-f=me]").checked = true; me.parentElement.remove(); save(); };
+  el.onclick = e => { if (!["INPUT", "BUTTON", "LABEL"].includes(e.target.tagName)) setFocus(c.id); };
+  return el;
+}
+
+function render() {
+  const P = $("people"), A = $("pets"), O = $("once");
+  P.innerHTML = A.innerHTML = O.innerHTML = "";
+  const roots = cards.filter(c => root(c) === c);
+  for (const c of roots) (!c.pet ? P : facesOf(c).length > 1 ? A : O).append(card(c));
+  const once = roots.filter(c => c.pet && facesOf(c).length === 1).length;
+  $("oncebox").hidden = !once;
+  $("oncesum").textContent = `${once} more animals, each seen in one photo`;
+  if (!DATA.people.length) P.innerHTML = `<p class="muted">No faces seen three times or more yet.</p>`;
+  status();
+  setFocus(focusId && $("c-" + focusId) ? focusId : (shownCards()[0] || {}).dataset?.id, false);
+}
+
+// --- the selection: a card, moved with the arrows the way the cards are laid out ---
+const shownCards = () => [...document.querySelectorAll(".card")].filter(el => el.offsetParent !== null && !el.hidden);
+function setFocus(id, scroll = true) {
+  focusId = id;
+  for (const el of document.querySelectorAll(".card.focus")) el.classList.remove("focus");
+  const el = id && $("c-" + id);
+  if (el) { el.classList.add("focus"); if (scroll) el.scrollIntoView({block: "nearest"}); }
+}
+function step(dir) {
+  const tiles = shownCards();
+  if (!tiles.length) return;
+  let k = tiles.findIndex(el => el.dataset.id === focusId);
+  if (k < 0) return setFocus(tiles[0].dataset.id);
+  if (dir === "left" || dir === "right") k = Math.max(0, Math.min(tiles.length - 1, k + (dir === "right" ? 1 : -1)));
+  else {
+    const box = el => el.getBoundingClientRect(), r0 = box(tiles[k]), cx = r0.left + r0.width / 2;
+    const ahead = tiles.filter(el => dir === "down" ? box(el).top > r0.top + 10 : box(el).top < r0.top - 10);
+    if (!ahead.length) return;
+    const y = dir === "down" ? Math.min(...ahead.map(el => box(el).top)) : Math.max(...ahead.map(el => box(el).top));
+    const row = ahead.filter(el => Math.abs(box(el).top - y) < 10);
+    const across = el => Math.abs(box(el).left + box(el).width / 2 - cx);
+    k = tiles.indexOf(row.reduce((a, b) => across(b) < across(a) ? b : a));
+  }
+  setFocus(tiles[k].dataset.id);
+}
+
+// --- the large view: the face's photo, the face outlined, the person's other faces on the right ---
+function openBig(c, i) {
+  big = {card: c, faces: facesOf(c), i: Math.max(0, i)};
+  if (!$("big").open) $("big").showModal();
+  showFace();
+}
+function showFace() {
+  const f = big.faces[big.i], [, id, box] = f.k.match(/^\w+:([0-9a-f]+):(.*)$/);
+  const img = $("bigImg");
+  img.onload = () => placeBox(JSON.parse(box));
+  $("faceBox").style.display = "none";
+  img.src = `/api/photo/${id}/preview`;
+  if (img.complete && img.naturalWidth) placeBox(JSON.parse(box));
+  const panel = $("bigFaces"), s = st(root(big.card));
+  panel.innerHTML = `<span>${big.faces.length} ${big.card.pet ? "photos" : "faces"}</span>` + big.faces.map((g, j) => `<img src="${g.src}" data-j="${j}" alt=""
+    class="${(s.out || []).includes(g.k) ? "out" : ""} ${j === big.i ? "cur" : ""}">`).join("");
+  for (const el of panel.querySelectorAll("img")) {
+    el.onclick = () => { big.i = +el.dataset.j; showFace(); };
+    el.oncontextmenu = e => { e.preventDefault(); toggleOut(big.card, big.faces[+el.dataset.j].k); };
+  }
+  const cur = panel.querySelector("img.cur");
+  if (cur) cur.scrollIntoView({block: "nearest"});
+  bigInfo();
+}
+function placeBox(b) {  // the face's box over the photo as it's fitted to the frame
+  const img = $("bigImg"), W = img.clientWidth, H = img.clientHeight, k = Math.min(W / img.naturalWidth, H / img.naturalHeight);
+  const w = img.naturalWidth * k, h = img.naturalHeight * k, x = (W - w) / 2, y = (H - h) / 2, fb = $("faceBox");
+  Object.assign(fb.style, {display: "block", left: x + b[0] * w + "px", top: y + b[1] * h + "px", width: (b[2] - b[0]) * w + "px", height: (b[3] - b[1]) * h + "px"});
+}
+function bigInfo() {
+  if (!big) return;
+  const c = root(big.card), s = st(c), f = big.faces[big.i], out = (s.out || []).includes(f.k);
+  $("bigInfo").innerHTML = `<b class="${out ? "out" : "in"}">${out ? "Not them" : "Them"}</b> · <b>${esc(who(s) || (s.me ? "you" : "no name yet"))}</b>
+    <span class="muted">· ${c.id} · ${c.pet ? "animal" : "face"} ${big.i + 1} of ${big.faces.length}</span>
+    <div class="muted"><kbd>←</kbd><kbd>→</kbd> previous, next · right-click or <kbd>Space</kbd> not them · <kbd>Enter</kbd> or <kbd>Esc</kbd> back</div>`;
+}
+$("bigBox").onclick = () => $("big").close();
+$("bigBox").oncontextmenu = e => { e.preventDefault(); if (big) toggleOut(big.card, big.faces[big.i].k); };
+$("big").onclose = () => { big = null; render(); };
+window.addEventListener("resize", () => { if (big) showFace(); });
+
+document.addEventListener("keydown", e => {
+  if (big) {
+    const d = {ArrowRight: 1, ArrowDown: 1, ArrowLeft: -1, ArrowUp: -1}[e.key];
+    if (d) { e.preventDefault(); big.i = Math.max(0, Math.min(big.faces.length - 1, big.i + d)); showFace(); }
+    else if (e.key === " " || e.key === "o") { e.preventDefault(); toggleOut(big.card, big.faces[big.i].k); }
+    else if (e.key === "Enter" || e.key === "z") { e.preventDefault(); $("big").close(); }
+    return;
+  }
+  if (e.target.tagName === "INPUT") {
+    if (e.key === "Escape" || (e.key === "Enter" && e.target.dataset.f)) { e.preventDefault(); e.target.blur(); if (e.key === "Enter") step("right"); }
+    return;
+  }
+  const c = focusId && byId[focusId];
+  const arrow = {ArrowRight: "right", ArrowLeft: "left", ArrowDown: "down", ArrowUp: "up"}[e.key];
+  if (arrow) { e.preventDefault(); step(arrow); }
+  else if (!c) return;
+  else if (e.key === "Enter") { e.preventDefault(); $("c-" + c.id).querySelector("[data-f=name]").focus(); }
+  else if (e.key === "z") openBig(c, 0);
+  else if (e.key === "x") { selected.has(c.id) ? selected.delete(c.id) : selected.add(c.id); status(); }
+});
+
+for (const b of $("tabs").children) b.onclick = () => { filter = b.dataset.f; for (const x of $("tabs").children) x.classList.toggle("on", x === b); status(); };
+$("merge").onclick = () => merge([...selected].map(i => byId[i]));
+$("clear").onclick = () => { selected.clear(); status(); };
+const mergeIds = () => {
+  const ids = ($("mergeids").value.match(/[PA]\d+/gi) || []).map(i => i.toUpperCase()).filter(i => byId[i]);
+  if (ids.length >= 2) { merge(ids.map(i => byId[i])); $("mergeids").value = ""; }
+};
+$("mergego").onclick = mergeIds;
+$("mergeids").onkeydown = e => { if (e.key === "Enter") mergeIds(); };
+
+(async () => {
+  try {
+    const [d, saved] = await Promise.all([fetch("/api/people/cards").then(r => r.ok ? r.json() : r.json().then(x => Promise.reject(new Error(x.detail || r.status)))),
+                                          fetch("/api/people").then(r => r.json())]);
+    DATA = d; state = saved.state || {}; dbLabels = saved.labels || {};
+    cards = [...DATA.people.map(c => ({...c, pet: false})), ...DATA.pets.map(c => ({...c, pet: true}))];
+    byId = Object.fromEntries(cards.map(c => [c.id, c]));
+    seed();
+    render();
+    $("saved").textContent = "Saved";
+  } catch (e) { $("people").innerHTML = `<p class="err">${esc(e.message)}</p>`; }
+})();
+</script>
+</body>
+</html>

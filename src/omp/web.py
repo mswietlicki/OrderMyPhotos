@@ -328,6 +328,11 @@ def review_page():
     return (Path(__file__).parent / "review.html").read_text(encoding="utf-8")
 
 
+@app.get("/people", response_class=HTMLResponse)
+def people_page():
+    return (Path(__file__).parent / "people.html").read_text(encoding="utf-8")
+
+
 @app.get("/api/status")
 def api_status():
     return status()

@@ -303,6 +303,26 @@ def api_rename(key: str = Body(...), name: str = Body(...)):
     return {"key": key, "name": new_key}
 
 
+@router.get("/api/people/cards")
+def api_people_cards():
+    """The People page's cards (people and animals with their faces), made from the session's DB."""
+    from .naming import page_data  # noqa: PLC0415
+
+    s = _session()
+    cfg = s.config()
+    con = connect(s)
+    try:
+        if not _has(con, "person"):
+            raise HTTPException(409, "no people yet: the phase that finds them hasn't run")
+        data = page_data(cfg, con, s.run_id, cfg.bundle)
+    finally:
+        con.close()
+    for c in data["people"] + data["pets"]:  # the crops, served from the bundle
+        for f in c["faces"]:
+            f["src"] = "/library/OrderMyPhotos/" + f["src"]
+    return data
+
+
 @router.get("/api/people")
 def api_people_get():
     """The People page's state (names, nicknames, merges, faces taken out) as the page last saved it, and the

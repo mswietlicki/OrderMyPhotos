@@ -38,8 +38,9 @@ def crop(cfg: Config, id_: str, box: list, out: Path, margin: float) -> str:
     return f"f/{name}"
 
 
-def write_page(cfg: Config, con, run_id: str, out: Path | None = None) -> str:
-    bundle = Path(out) if out else cfg.bundle
+def page_data(cfg: Config, con, run_id: str, bundle: Path) -> dict:
+    """The cards: every person (face cluster) and animal of the run, with their faces cropped into `bundle/f/`.
+    The web app's People page (P47) reads it through the API; the bundle's page has it inside."""
     (bundle / "f").mkdir(parents=True, exist_ok=True)
     try:
         said = {r[0]: r[1] for r in con.execute("SELECT key, who FROM name_label")}
@@ -73,7 +74,13 @@ def write_page(cfg: Config, con, run_id: str, out: Path | None = None) -> str:
     except Exception:  # noqa: BLE001 - no pets yet
         pass
     unclustered = con.execute("SELECT COUNT(*) FROM face WHERE person IS NULL AND emb IS NOT NULL").fetchone()[0]
-    data = {"run": run_id, "people": people, "pets": pets, "unclustered": unclustered, "shown": SHOWN}
+    return {"run": run_id, "people": people, "pets": pets, "unclustered": unclustered, "shown": SHOWN}
+
+
+def write_page(cfg: Config, con, run_id: str, out: Path | None = None) -> str:
+    bundle = Path(out) if out else cfg.bundle
+    data = page_data(cfg, con, run_id, bundle)
+    people, pets = data["people"], data["pets"]
     page = PAGE.replace("__DATA__", json.dumps(data, ensure_ascii=False).replace("</", "<\\/"))
     (bundle / "people.html").write_text(page, encoding="utf-8")
     return f"{len(people)} people and {len(pets)} animals -> {bundle}/people.html"

@@ -146,7 +146,7 @@ const fmtTime = t => t ? new Date(typeof t === "number" ? t * 1000 : t.replace("
 const num = n => n == null ? "—" : Number(n).toLocaleString();
 const gib = b => b == null ? "—" : b >= 2 ** 30 ? `${(b / 2 ** 30).toFixed(1)} GiB` : `${Math.round(b / 2 ** 20)} MiB`;
 const mbs = b => b == null ? "—" : `${(b / 1e6).toFixed(1)} MB/s`;
-const PAGES = {people: ["/library/OrderMyPhotos/people.html", "Open the People page"], review: ["/review", "Open the album review"], final: ["/review#final", "Open the plan"]};
+const PAGES = {people: ["/people", "Open the People page"], review: ["/review", "Open the album review"], final: ["/review#final", "Open the plan"]};
 let last = null;
 
 async function api(path, body) {

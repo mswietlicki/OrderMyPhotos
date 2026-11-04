@@ -69,15 +69,17 @@
   #bigMain { flex: 1; min-height: 0; display: flex; }
   #bigBox { flex: 1; min-width: 0; position: relative; overflow: hidden; cursor: zoom-out; }
   /* the burst, on the right: always there and as wide, so the photo keeps its size from photo to photo */
-  #bigBurst { flex: none; width: 132px; overflow-y: auto; padding: 10px; background: #15171b; border-left: 1px solid #2c3038;
-              display: flex; flex-direction: column; gap: 8px; align-items: center; font-size: 12px; color: #98a2b3; }
+  /* the scrollbar's room is kept, so many frames never make it scroll sideways or change its width */
+  #bigBurst { flex: none; width: 212px; overflow-x: hidden; overflow-y: auto; scrollbar-gutter: stable; padding: 10px;
+              background: #15171b; border-left: 1px solid #2c3038; display: flex; flex-direction: column; gap: 8px;
+              align-items: stretch; font-size: 12px; color: #98a2b3; }
   #bigImg { position: absolute; top: 50%; left: 50%; object-fit: contain; }
   #big .info { flex: none; height: 112px; overflow: auto; padding: 10px 16px; background: #15171b; border-top: 1px solid #2c3038; }
   #big .info .muted { color: #98a2b3; font-size: 12px; } #big a { color: #6b9cff; }
   .muted { color: var(--muted); }
   .err { color: var(--bad); } #bigInfo b.keep { color: var(--ok); } #bigInfo b.archive { color: var(--bad); }
   #big kbd { border: 1px solid var(--line); border-radius: 4px; padding: 0 4px; font-size: 11px; }
-  #bigBurst img { height: 104px; width: 104px; object-fit: cover; border-radius: 6px; cursor: pointer; outline: 2px solid transparent; outline-offset: -2px; flex: none; }
+  #bigBurst img { width: 100%; height: auto; aspect-ratio: 1; object-fit: cover; border-radius: 6px; cursor: pointer; outline: 2px solid transparent; outline-offset: -2px; flex: none; }
   #bigBurst img.archive, #bigBurst img.out { opacity: .4; outline-color: var(--bad); } #bigBurst img.cur { outline: 3px solid var(--accent); opacity: 1; }
   #final .card { background: var(--card); border: 1px solid var(--line); border-radius: 10px; padding: 16px; margin-bottom: 14px; max-width: 760px; }
   table { border-collapse: collapse; width: 100%; } td { padding: 4px 6px 4px 0; border-bottom: 1px solid var(--line); } td.n { text-align: right; }
