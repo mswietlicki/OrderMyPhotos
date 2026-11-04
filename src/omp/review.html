@@ -174,14 +174,14 @@ function drawUnits() {
     <div class="t"><span class="dot ${u.state}"></span>${esc(u.name)}</div>
     <div class="s">${u.kind}${u.new ? " · new" : ""} · ${u.n} photos${u.open && u.state === "open" ? ` · ${u.open} to check` : ""}${u.unsure ? ` · ${u.unsure} unsure` : ""}${u.out ? ` · ${u.out} out` : ""}</div></div>`).join("")
     || `<p class="muted" style="padding: 0 12px">${filter === "open" ? "Nothing left to review here." : "None."}</p>`;
-  for (const el of $("units").children) if (el.dataset.k) el.onclick = () => openUnit(el.dataset.k);
+  for (const el of $("units").children) if (el.dataset.k) el.onclick = () => openUnit(el.dataset.k, true);
 }
 
 // --- one unit ---
-async function openUnit(key) {
+async function openUnit(key, step = false) {  // step: an album picked from the list is a step Back returns from
   const d = await api("/api/review/unit?key=" + encodeURIComponent(key));
   cur = d.unit; photos = d.photos; focusIdx = -1;
-  OMP.replace("#/review/" + encodeURIComponent(key));
+  (step ? OMP.push : OMP.replace)("#/review/" + encodeURIComponent(key));
   window.scrollTo(0, 0);
   drawUnits(); drawUnit();
 }
@@ -462,7 +462,12 @@ async function finish() {
 window.__v = {confirmUnit, reopen, dismantle, doMove, finish, closeMove: () => $("moveDlg").close()};
 if (OMP.route.final) showFinal();
 else loadUnits().then(() => {
-  const key = OMP.route.unit || (units.find(u => u.state === "open") || {}).key;
+  if (!OMP.route.unit && !units.some(u => u.state === "open") && units.length) {  // all confirmed: show them all
+    filter = "all";
+    for (const x of $("tabs").children) x.classList.toggle("on", x.dataset.f === "all");
+    drawUnits();
+  }
+  const key = OMP.route.unit || (units.find(u => u.state === "open") || units[0] || {}).key;
   if (key) openUnit(key);
 }).catch(e => { $("main").innerHTML = `<p>${esc(e.message)}</p>`; });
 </script>

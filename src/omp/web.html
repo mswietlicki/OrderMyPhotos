@@ -376,7 +376,7 @@ async function showRoute() {
   };
   const vwin = {addEventListener: listen(window), removeEventListener() {}, scrollTo: (...a) => window.scrollTo(...a),
                 set __v(x) { window.__v = x; }};  // what a view's inline buttons call
-  const omp = {route: r, go: h => { location.hash = h; }, replace: h => history.replaceState(null, "", h)};
+  const omp = {route: r, go: h => { location.hash = h; }, replace: h => history.replaceState(null, "", h), push: h => history.pushState(null, "", h)};
   view = {listeners};
   try { new Function("document", "window", "OMP", code)(vdoc, vwin, omp); }
   catch (e) { root.innerHTML += `<p style="color:#ef6b5b; padding:16px">${esc(e.message)}</p>`; }
