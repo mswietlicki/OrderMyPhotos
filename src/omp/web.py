@@ -318,19 +318,24 @@ app.include_router(review.router)
 review.current = lambda: runner.session
 
 
+def _page(name: str) -> HTMLResponse:
+    """A page of the app, never kept by the browser: a deploy shows at the next load."""
+    return HTMLResponse((Path(__file__).parent / name).read_text(encoding="utf-8"), headers={"Cache-Control": "no-cache"})
+
+
 @app.get("/", response_class=HTMLResponse)
 def page():
-    return (Path(__file__).parent / "web.html").read_text(encoding="utf-8")
+    return _page("web.html")
 
 
 @app.get("/review", response_class=HTMLResponse)
 def review_page():
-    return (Path(__file__).parent / "review.html").read_text(encoding="utf-8")
+    return _page("review.html")
 
 
 @app.get("/people", response_class=HTMLResponse)
 def people_page():
-    return (Path(__file__).parent / "people.html").read_text(encoding="utf-8")
+    return _page("people.html")
 
 
 @app.get("/api/status")
