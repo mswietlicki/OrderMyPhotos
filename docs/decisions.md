@@ -635,6 +635,24 @@ The static bundle (`omp report`) is still there for a library someone reviews of
 - **Round 2:** came back from the resort with only the units that received photos open.
 - Then the plan and the final decision; the results are in sample-runs.md.
 
+## P48 — A test run is a normal run on a copy: its plan is applied there, deletes included (2026-11-04, user)
+
+The user: "Test runs should be a normal run, just from a copy of some OneDrive photos. So accepting the plan for deletion should delete those archived test copies, but leave OneDrive as is, as it has nothing to do with this session." This replaces "all moves and deletes happen only in the production OneDrive run, never in testing" (P29–P33).
+
+- **The Apply phase** follows the final decision. `omp apply` (`apply.py`) works on the session's root:
+  - every move of `plan.json` is a rename in place, after a QuickXorHash check against the DB;
+  - a destination that already exists gets `_1`, `_2`, …, never overwritten;
+  - the turns are written as the EXIF Orientation (lossless);
+  - with "delete", the photos it moved into `Archive/OrderMyPhotos/` are deleted, and nothing else;
+  - folders left empty are removed;
+  - every step goes to `<session>/apply.jsonl`. `omp apply --undo` moves the photos back and puts the turns back; deleted photos can't come back.
+- **Only copies:** roots in `OMP_APPLY_ROOTS` (`/srv/mimir/cache/photos/tests`) are changed. A root under `/srv/mimir/onedrive` is refused, and the container mounts it read-only. For the OneDrive library the Apply phase is skipped: its plan goes to OneDrive through `mimir-onedrive apply` (S9, still to build). A test set's photos are reflinked copies, so deleting them doesn't touch the mirror or OneDrive.
+- **Tested** on a scratch copy of s6:
+  - "keep": 459 photos moved, 241 into the archive, 6 turned with the orientation composed (e.g. 6 + 270° → 1);
+  - undo: everything back, the turns too;
+  - "delete": the 241 archived photos deleted, 277 of 518 left;
+  - a OneDrive root refused.
+
 ## Open — for the user
 
 1. ~~**Language** of titles, descriptions and tags.~~ Resolved by P42: both languages; S11 reads English only.
