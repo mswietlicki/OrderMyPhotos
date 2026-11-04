@@ -124,15 +124,15 @@ function drawUnits() {
 async function openUnit(key) {
   if (edits && dirty() && !confirm("Leave without confirming? Your changes here are lost.")) return;
   const d = await api("/api/review/unit?key=" + encodeURIComponent(key));
-  cur = d.unit; photos = d.photos; edits = {verdicts: {}, out: new Set(), moves: {}}; focusIdx = 0;
+  cur = d.unit; photos = d.photos; edits = {verdicts: {}, out: new Set(), moves: {}, back: new Set()}; focusIdx = 0;
   location.hash = "u=" + encodeURIComponent(key);
   drawUnits(); drawUnit();
 }
-const dirty = () => edits && (Object.keys(edits.verdicts).length || edits.out.size || Object.keys(edits.moves).length);
+const dirty = () => edits && (Object.keys(edits.verdicts).length || edits.out.size || edits.back.size || Object.keys(edits.moves).length);
 const verdictOf = p => edits.verdicts[p.id] || p.verdict;
 
 function tile(p, i) {
-  const v = verdictOf(p), out = edits.out.has(p.id) || p.state === "out", to = edits.moves[p.id];
+  const v = verdictOf(p), out = edits.out.has(p.id) || (p.state === "out" && !edits.back.has(p.id)), to = edits.moves[p.id];
   const badges = [p.state === "open" && p.incoming ? `<span class="new">new</span>` : "", p.unsure ? `<span class="uns" title="${esc(p.unsure)}">unsure</span>` : "",
                   p.best ? "<span>★</span>" : "", p.sub ? `<span>${esc(p.sub.trim().replace("/", ""))}</span>` : ""].join("");
   return `<div class="ph ${v} ${out ? "out" : ""} ${to ? "moved" : ""} ${i === focusIdx ? "focus" : ""}" data-i="${i}" data-to="${esc(to || "")}" title="${esc(p.name)}">
@@ -171,7 +171,7 @@ function drawUnit() {
     <div class="summary">${photos.length} photos · ${keep} kept · ${photos.length - keep} archived or leaving${fresh.length && done.length ? ` · ${fresh.length} to check` : ""}</div>
     ${fresh.length ? section(fresh) : `<p class="muted">Everything here is confirmed.</p>`}
     ${done.length ? `<details class="done" ${fresh.length ? "" : "open"}><summary>Already confirmed (${done.length})</summary>${section(done)}</details>` : ""}
-    <div class="help">Click a photo to keep or archive it · <kbd>O</kbd> take out · <kbd>M</kbd> move · <kbd>Z</kbd> show · <kbd>←</kbd><kbd>→</kbd> next photo · <kbd>Enter</kbd> confirm</div>`;
+    <div class="help">Click a photo to keep or archive it · <kbd>O</kbd> take out or put back · <kbd>M</kbd> move · <kbd>Z</kbd> show · <kbd>←</kbd><kbd>→</kbd> next photo · <kbd>Enter</kbd> confirm</div>`;
   for (const el of $("main").querySelectorAll(".ph")) {
     el.onclick = e => {
       const i = +el.dataset.i, a = e.target.dataset.a;
@@ -185,7 +185,12 @@ function drawUnit() {
   }
 }
 function toggleVerdict(p) { const v = verdictOf(p) === "keep" ? "archive" : "keep"; if (v === p.verdict) delete edits.verdicts[p.id]; else edits.verdicts[p.id] = v; drawUnit(); }
-function toggleOut(p) { if (edits.out.has(p.id)) edits.out.delete(p.id); else { edits.out.add(p.id); delete edits.moves[p.id]; } drawUnit(); }
+function toggleOut(p) {
+  if (p.state === "out") { if (edits.back.has(p.id)) edits.back.delete(p.id); else edits.back.add(p.id); }  // taken out earlier: put back
+  else if (edits.out.has(p.id)) edits.out.delete(p.id);
+  else { edits.out.add(p.id); delete edits.moves[p.id]; }
+  drawUnit();
+}
 function askMove(p) { moving = p; $("moveTo").value = ""; $("moveDlg").showModal(); $("moveTo").focus(); }
 function doMove() {
   let t = $("moveTo").value.trim(); if (!t) return;
@@ -207,7 +212,7 @@ function showBig(p) {
 async function confirmUnit() {
   const name = $("uname").value.trim();
   try {
-    await api("/api/review/unit/confirm", {key: cur.key, name, verdicts: edits.verdicts, out: [...edits.out], moves: edits.moves});
+    await api("/api/review/unit/confirm", {key: cur.key, name, verdicts: edits.verdicts, out: [...edits.out], moves: edits.moves, back: [...edits.back]});
     edits = null; await loadUnits();
     const next = units.find(u => u.state === "open");
     if (next) openUnit(next.key); else { cur = null; $("main").innerHTML = `<p><b>All albums and folders are confirmed.</b> Go back to <a href="/">OrderMyPhotos</a> and press <i>Done, go on</i>.</p>`; drawUnits(); }

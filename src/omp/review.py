@@ -228,8 +228,9 @@ def _renamed(key: str, name: str | None) -> str:
 
 @router.post("/api/review/unit/confirm")
 def api_confirm(key: str = Body(...), name: str | None = Body(None), verdicts: dict = Body({}),
-                out: list = Body([]), moves: dict = Body({})):
-    """Everything in the unit as the reviewer leaves it: kept or archived, taken out or moved, the rest pinned."""
+                out: list = Body([]), moves: dict = Body({}), back: list = Body([])):
+    """Everything in the unit as the reviewer leaves it: kept or archived, taken out or moved, the rest pinned.
+    `back`: photos taken out earlier that the reviewer puts back here."""
     s = _session()
     d = placements(s)
     members = [p for p in d["photos"].values() if p["unit"] == key]
@@ -248,7 +249,7 @@ def api_confirm(key: str = Body(...), name: str | None = Body(None), verdicts: d
             rows.append((i, "move", moves[i]))
         elif i in out:
             rows.append((i, "out", key))
-        elif p["state"] != "out":
+        elif p["state"] != "out" or i in back:
             rows.append((i, "place", new_key + p["sub"]))
     con = connect(s, write=True)
     with con:

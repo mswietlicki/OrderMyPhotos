@@ -124,6 +124,9 @@ class Runner:
                 pending = review.pending(self.session)
                 if pending["unconfirmed"]:
                     raise HTTPException(409, f"{pending['unconfirmed']} albums aren't confirmed yet")
+                if pending["to_sort"] and pending["to_sort"] == self.control.get("last_to_sort"):
+                    raise HTTPException(409, f"{pending['to_sort']} photos found no other place in the last sort: "
+                                             "move them by hand (M), or put them back where they were (O)")
                 nxt = "resort" if pending["to_sort"] else "plan"
             elif key == "final":
                 _write_json(self.session.dir / "final.json", (data or {}) | {"at": time.time()})
@@ -155,7 +158,8 @@ class Runner:
         if code == 0:
             key = self.phase["key"]
             if key == "resort":  # back to the review, for what was just sorted
-                c.update(phase=PHASE["review"], rounds=c["rounds"] + 1)
+                c.update(phase=PHASE["review"], rounds=c["rounds"] + 1,
+                         last_to_sort=review.pending(self.session)["to_sort"])
             else:
                 c["phase"] += 1
             if c["phase"] >= len(PHASES):

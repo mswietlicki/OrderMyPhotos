@@ -1594,9 +1594,11 @@ def run(cfg: Config, con, run_id: str, place_only: bool = False):
     # Every event, and every messenger photo with a caption (P32: always to a folder), is decided first;
     # one without a caption goes by its look.
     decisions = []  # [photos, away, banned, messenger, d0, kind, target, name, why, alternatives]
+    # Photos from an album the reviewer dismantled: "not an album", so they don't make a new one either (P47)
+    from_dismantled = {i for i, t in taken_out.items() if unit_of(t) in dismantled}
     for e in events:
         away, banned = is_away(e, base), banned_of(e)
-        decisions.append([e, away, banned, False, *decide(e, away, banned)])
+        decisions.append([e, away, banned, False, *decide(e, away, banned, no_album=any(r["id"] in from_dismantled for r in e))])
     # Messenger photos that arrived the same day and look alike are one group, decided like an event (user,
     # s5: the railway-bridge photos someone sent are an event); a single one is decided on its own, to a folder.
     by_day = defaultdict(list)
@@ -1653,6 +1655,9 @@ def run(cfg: Config, con, run_id: str, place_only: bool = False):
     pet_in_album(decisions)
     print(f"  sent together: {sent_together(decisions)} messenger photos join the new album of their day")
     for rs, away, banned, messenger, d0, kind, target, name, why, alts in decisions:
+        # Whatever step made it a new album: never one the reviewer dismantled or took these photos out of
+        if kind == "new_album" and (unit_of(target) in banned or any(r["id"] in from_dismantled for r in rs)):
+            kind, target, why = "folder", other_of(rs[0]["taken_ts"]), "the album they were in was dismantled in review"
         counts[kind] += 1
         if messenger or kind in ("folder", "new_folder"):
             target = other_of(rs[0]["taken_ts"]) if messenger and kind in ("album", "new_album") else target
