@@ -12,7 +12,11 @@ from PIL import Image
 
 from .runtime import post
 
-MODEL = "qwen3.8-27b:instruct"
+MODEL = "qwen3.8-27b:instruct"   # the name results are recorded under (judge, captions, text checks)
+# What is asked for: the same loaded model, but without llama-swap's ":instruct" filter, which overrides
+# every request's temperature (0.7), top_p (0.8) and presence_penalty (1.5), so "temperature 0" calls
+# weren't (P46). Thinking stays off through the chat template. The yes/no logprobs are the same either way.
+SERVED = {"qwen3.8-27b:instruct": "qwen3.8-27b"}
 IMAGE_PX = 1152  # long side; ~1 MP at 4:3, about 1,000 image tokens for Qwen3.x
 
 
@@ -28,15 +32,19 @@ def image_part(path, long_side=IMAGE_PX) -> dict:
 
 
 class VLM:
-    def __init__(self, base_url: str, model: str = MODEL):
+    def __init__(self, base_url: str, model: str = MODEL, repeatable: bool = False):
+        """`repeatable`: the same question gets the same answer, at the cost of recomputing the whole prompt
+        each call. The server's reuse of a cached prompt prefix makes long answers drift (S11, P45)."""
         self.url = f"{base_url}/v1/chat/completions"
         self.model = model
+        self.served = SERVED.get(model, model)
+        self.extra = {"chat_template_kwargs": {"enable_thinking": False}} | ({"cache_prompt": False} if repeatable else {})
         self.client = httpx.Client(timeout=600)
         self.calls, self.seconds, self.prompt_tokens, self.output_tokens = 0, 0.0, 0, 0
 
     def _post(self, body):
         t0 = time.perf_counter()
-        r = post(self.client, self.url, json={"model": self.model, **body})
+        r = post(self.client, self.url, json={"model": self.served, **self.extra, **body})
         d = r.json()
         self.calls += 1
         self.seconds += time.perf_counter() - t0

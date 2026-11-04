@@ -524,6 +524,13 @@ The user, before the whole-library run: "resilience to breaks and restarts. This
 - The code is mounted from the clone, so `git pull` and a restart deploy a change.
 - It's tailnet-only, through Tailscale Serve (mimir D25).
 
+## P46 — LLM calls ask for the model by its plain name, so their temperature holds (2026-11-04, measured)
+
+The S11 session found that llama-swap's `qwen3.8-27b:instruct` alias has a `setParamsByID` filter (mimir `stacks/llama-swap/config.yaml`). It sets temperature 0.7, top_p 0.8 and presence_penalty 1.5 on **every** request. So every "temperature 0, repeatable" JSON call in the pipeline was really sampled at 0.7, and so was every caption at 0.2. Two s6 runs moved 11 photos between them.
+- `vlm.py` now asks for `qwen3.8-27b`: the same loaded model, without the filter. Thinking is off through `chat_template_kwargs`, and the caller's temperature holds.
+- Results stay recorded under `qwen3.8-27b:instruct`, so nothing done is redone silently. The yes/no logprobs (judge, floor, orientation checks) are identical through either name (measured: the same top-5 to 4 decimals). Captions written before this were sampled at 0.7. Whether to redo them is a captions decision.
+- `VLM(..., repeatable=True)` also turns off the server's prompt-prefix cache, which made long answers drift (P45). The same question then gets the same answer (measured twice at temperature 0). It costs a full prompt recompute per call, so captions don't use it; S11 does.
+
 ## Open — for the user
 
 1. ~~**Language** of titles, descriptions and tags.~~ Resolved by P42: both languages; S11 reads English only.
