@@ -12,6 +12,7 @@
             --accent: #6b9cff; --ok: #4cc38a; --warn: #e0a84a; --bad: #ef6b5b; }
   }
   * { box-sizing: border-box; }
+  [hidden] { display: none !important; }  /* `hidden` wins over a display set here */
   body { margin: 0; background: var(--bg); color: var(--fg); font: 14px/1.4 system-ui, -apple-system, "Segoe UI", sans-serif; }
   header { position: sticky; top: 0; z-index: 5; display: flex; gap: 14px; align-items: center; padding: 10px 16px;
            background: var(--card); border-bottom: 1px solid var(--line); flex-wrap: wrap; }

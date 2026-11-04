@@ -12,6 +12,7 @@
             --accent: #6b9cff; --ok: #4cc38a; --warn: #e0a84a; --bad: #ef6b5b; }
   }
   * { box-sizing: border-box; }
+  [hidden] { display: none !important; }  /* `hidden` wins over a display set here (the album list is a grid) */
   body { margin: 0; background: var(--bg); color: var(--fg); font: 14px/1.4 system-ui, -apple-system, "Segoe UI", sans-serif; }
   header { position: sticky; top: 0; z-index: 5; display: flex; gap: 14px; align-items: center; padding: 10px 16px;
            background: var(--card); border-bottom: 1px solid var(--line); flex-wrap: wrap; }
@@ -103,7 +104,10 @@
   #bigBurst img { border: 3px solid transparent; }
   #bigBurst img.archive, #bigBurst img.out { opacity: .45; filter: grayscale(.6); border-color: #ef6b5b; }
   #bigBurst img.cur { outline: 3px solid #6b9cff; outline-offset: 2px; } #bigBurst img.cur.archive, #bigBurst img.cur.out { opacity: .75; }
-  #final .card { background: var(--card); border: 1px solid var(--line); border-radius: 10px; padding: 16px; margin-bottom: 14px; max-width: 760px; }
+  #final { max-width: 820px; margin: 0 auto; padding: 20px 16px 60px; }
+  #final .card { background: var(--card); border: 1px solid var(--line); border-radius: 10px; padding: 16px; margin-bottom: 14px; }
+  #final h2 { font-size: 13px; text-transform: uppercase; letter-spacing: .06em; color: var(--muted); margin: 0 0 10px; font-weight: 600; }
+  #final details summary { cursor: pointer; }
   table { border-collapse: collapse; width: 100%; } td { padding: 4px 6px 4px 0; border-bottom: 1px solid var(--line); } td.n { text-align: right; }
   label.opt { display: block; padding: 8px 10px; border: 1px solid var(--line); border-radius: 8px; margin: 6px 0; cursor: pointer; }
 </style>
@@ -425,17 +429,22 @@ for (const b of $("tabs").children) b.onclick = () => { filter = b.dataset.f; fo
 
 // --- the final decision ---
 async function showFinal() {
-  $("layout").hidden = true; $("tabs").hidden = true; $("final").hidden = false;
+  // the final decision is a page of its own: none of the review's controls
+  for (const id of ["layout", "tabs", "counts", "finished"]) $(id).hidden = true;
+  $("size").parentElement.hidden = true;
+  $("final").hidden = false;
+  document.querySelector("header b").textContent = "Final decision";
+  document.title = "Final decision · OrderMyPhotos";
   let plan;
   try { plan = await api("/api/review/plan"); } catch (e) { $("final").innerHTML = `<p>${esc(e.message)}</p>`; return; }
   const c = plan.counts, gb = b => (b / 2 ** 30).toFixed(1) + " GiB";
-  $("final").innerHTML = `<div class="card"><h2 style="margin-top:0">The plan</h2>
+  $("final").innerHTML = `<div class="card"><h2>The plan</h2>
       <table><tr><td>Photos moved to albums and folders</td><td class="n">${(c.create || 0) + (c.add || 0) + (c.theme || 0) + (c.place || 0)}</td></tr>
       <tr><td>Photos that stay where they are</td><td class="n">${c.stays || 0}</td></tr>
       <tr><td>Photos archived</td><td class="n">${plan.archive.n} (${gb(plan.archive.bytes)})</td></tr>
       <tr><td>Photos turned upright</td><td class="n">${plan.rotations}</td></tr></table>
       <details style="margin-top:10px"><summary class="muted">Where they go</summary><table>${plan.targets.map(([t, n]) => `<tr><td>${esc(t)}</td><td class="n">${n}</td></tr>`).join("")}</table></details></div>
-    <div class="card"><h2 style="margin-top:0">The archived photos</h2>
+    <div class="card"><h2>The archived photos</h2>
       <label class="opt"><input type="radio" name="arch" value="keep" checked> Keep them in <code>Archive/OrderMyPhotos/</code>, where they can be restored</label>
       <label class="opt"><input type="radio" name="arch" value="delete"> Delete them once the plan is applied</label>
       <p class="muted">Applying the plan to the library is a separate step (not built yet); this records your decision.</p>
