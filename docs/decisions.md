@@ -599,6 +599,12 @@ Start runs the server phases one after another and stops at the next review. "Do
   - O takes it out, M moves it to a chosen album or folder or a new album name, Z shows it large;
   - the unit can be renamed (an album keeps its date) or dismantled: all its photos go back to sorting, and nothing is sorted into it again;
   - **Confirm** pins every photo in the unit: a `place` label for its place, and a `verdict` label for keep or archive.
+- **Saved at once** (user: "all picks and decisions should be saved at once and remembered between devices and browsers"):
+  - keep/archive, out, put back and move are each written as a label the moment they're made;
+  - a rename is kept on the server until Confirm;
+  - nothing lives in the page, so there's no leave-page warning;
+  - the People page in the app loads its state from the session and saves it on every change. Only the faces it shows change in the DB, and a first open starts from the DB's names (faces taken out included).
+- **The large view:** ←/→ go on to the previous or next photo, Space and O work there too, and the burst is shown as a strip under the photo. On the page, the selection scrolls into view, and ↑/↓ move by row.
 - **What Done does:** Done needs every unit confirmed. Photos taken out (or from dismantled units) go to the `resort` phase. After the resort, only units that received photos are open again, and their new photos come first. What was confirmed is folded away as "Already confirmed" and isn't asked again.
 - **The final decision:** the plan's counts, archived photos with their size, and where photos go; then "keep the archived photos in `Archive/OrderMyPhotos/`" or "delete them once the plan is applied". Applying the plan to OneDrive (S9) is still to build.
 
