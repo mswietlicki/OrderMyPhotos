@@ -1,9 +1,8 @@
-# OrderMyPhotos on one host: the web app (`omp serve`), which runs the pipeline as its child process and
-# resumes it on its own after a restart (docs/design.md S13, decisions P43-P44). From a clone of this repo:
-#   docker compose -p omp --env-file deploy/mimir.env up -d --build      # the whole library
-#   docker compose -p omp-test --env-file deploy/test.env up -d           # a test set next to it
-# The code is mounted from ./src, so `git pull` and `docker compose ... restart` deploy a change; a rebuild
-# is only needed when docker/Dockerfile or docker/requirements.txt change.
+# OrderMyPhotos on one host: the web app (`omp serve`), a wizard that runs one session at a time over a
+# root directory and pauses for the reviewer (docs/design.md S13, decisions P43, P44, P47). From a clone:
+#   docker compose -p omp --env-file deploy/mimir.env up -d --build
+# The code is mounted from ./src, so `git pull` and `docker compose ... up -d` deploy a change; a rebuild is
+# only needed when docker/Dockerfile or docker/requirements.txt change.
 # Host network: it calls llama-swap on 127.0.0.1:9292 and listens on 127.0.0.1:$OMP_WEB_PORT only.
 services:
   omp:
@@ -21,30 +20,25 @@ services:
     devices:  # the B50 only: the NVIDIA CDI device breaks Level Zero; models on the 4090 run under llama-swap
       - ${OMP_B50:-/dev/dri/b50-render}:/dev/dri/renderD128
     environment:
-      OMP_ROOT: /library
-      OMP_BUNDLE: /bundle
-      OMP_DB: /state/omp.db
-      OMP_CACHE: /cache
+      OMP_STATE_DIR: /state                              # sessions: DB, status, review state, log
+      OMP_SESSIONS_CACHE: /cache                         # sessions: previews and the review bundle
+      OMP_ROOTS: ${OMP_ROOTS:?}                          # where a session's root may be, as host paths
       OMP_MODELS: /models
       OMP_MANIFESTS: /manifests
       OMP_WORKERS: ${OMP_WORKERS:-20}
-      OMP_RUN: ${OMP_RUN:-full}
       OMP_WEB_PORT: ${OMP_WEB_PORT:-8790}
       OMP_LLM: ${OMP_LLM:-http://127.0.0.1:9292}
-      OMP_LIBRARY_INDEX: ${OMP_LIBRARY_INDEX:-manifest}   # manifest (OneDrive) | self (the library's own DB)
-      OMP_POLICY_EXTRA: ${OMP_POLICY_EXTRA:-}
-      OMP_GPU_STATS: /run/mimir-gpu/stats.json          # the 4090 and the B50's VRAM, from the host (mimir-gpu-stats)
+      OMP_GPU_STATS: /run/mimir-gpu/stats.json           # the 4090 and the B50's VRAM, from the host (mimir-gpu-stats)
       OMP_B50_PCI: ${OMP_B50_PCI:-0000:0e:00.0}
       HF_HOME: /models/hf
       PYTHONPATH: /code
     volumes:
-      - ${OMP_LIBRARY:?}:/library:ro
-      # The review bundle belongs at the library root (design.md S6), but the library may be a read-only
-      # snapshot with no room for a mount point. The web app serves it at /library/OrderMyPhotos/ all the same.
-      - ${OMP_BUNDLE_DIR:?}:/bundle
       - ${OMP_STATE:?}:/state
-      - ${OMP_CACHE_DIR:?}:/cache
+      - ${OMP_SESSIONS_CACHE_DIR:?}:/cache
       - ${OMP_MODELS_DIR:?}:/models
       - ${OMP_MANIFESTS_DIR:?}:/manifests:ro
       - ./src:/code:ro
       - /run/mimir-gpu:/run/mimir-gpu:ro
+      # The libraries, read-only at the same paths as on the host: a session's root is picked by its host path.
+      - ${OMP_LIBRARIES_A:?}:${OMP_LIBRARIES_A}:ro
+      - ${OMP_LIBRARIES_B:?}:${OMP_LIBRARIES_B}:ro

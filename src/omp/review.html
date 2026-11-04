@@ -1,0 +1,275 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Review · OrderMyPhotos</title>
+<style>
+  :root { --bg: #f6f7f9; --card: #fff; --fg: #1d2129; --muted: #667085; --line: #e4e7ec; --soft: #eef2f8;
+          --accent: #2f6fde; --ok: #1f8a4c; --warn: #b7791f; --bad: #c0392b; }
+  @media (prefers-color-scheme: dark) {
+    :root { --bg: #121417; --card: #1b1e23; --fg: #e6e8eb; --muted: #98a2b3; --line: #2c3038; --soft: #232831;
+            --accent: #6b9cff; --ok: #4cc38a; --warn: #e0a84a; --bad: #ef6b5b; }
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--fg); font: 14px/1.4 system-ui, -apple-system, "Segoe UI", sans-serif; }
+  header { position: sticky; top: 0; z-index: 5; display: flex; gap: 14px; align-items: center; padding: 10px 16px;
+           background: var(--card); border-bottom: 1px solid var(--line); flex-wrap: wrap; }
+  header a { color: var(--accent); text-decoration: none; }
+  .tabs button { border: 0; background: none; color: var(--muted); padding: 4px 8px; border-radius: 6px; cursor: pointer; font: inherit; }
+  .tabs button.on { background: var(--soft); color: var(--fg); font-weight: 600; }
+  .layout { display: grid; grid-template-columns: 300px 1fr; min-height: calc(100vh - 52px); }
+  @media (max-width: 800px) { .layout { grid-template-columns: 1fr; } aside { max-height: 40vh; } }
+  aside { border-right: 1px solid var(--line); overflow: auto; background: var(--card); }
+  aside input { margin: 10px; width: calc(100% - 20px); }
+  .unit { padding: 8px 12px; border-bottom: 1px solid var(--line); cursor: pointer; }
+  .unit:hover { background: var(--soft); } .unit.sel { background: var(--soft); box-shadow: inset 3px 0 var(--accent); }
+  .unit .t { font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .unit .s { color: var(--muted); font-size: 12px; }
+  .dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; margin-right: 6px; vertical-align: middle; }
+  .dot.open { background: var(--warn); } .dot.confirmed { background: var(--ok); } .dot.dismantled { background: var(--muted); }
+  section.main { padding: 14px 18px 60px; min-width: 0; }
+  .head { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
+  .head input.name { font-size: 18px; font-weight: 650; border: 1px solid transparent; background: none; color: var(--fg); padding: 4px 6px; border-radius: 6px; min-width: 240px; }
+  .head input.name:hover, .head input.name:focus { border-color: var(--line); background: var(--card); }
+  .path { color: var(--muted); font-size: 12px; margin: 2px 6px 10px; }
+  .tag { font-size: 11px; padding: 1px 7px; border-radius: 999px; background: var(--soft); color: var(--muted); }
+  button, input, select { font: inherit; padding: 6px 12px; border-radius: 8px; border: 1px solid var(--line); background: var(--card); color: var(--fg); }
+  button.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
+  button.danger { color: var(--bad); } button:disabled { opacity: .4; }
+  .summary { color: var(--muted); margin: 6px 0 12px; }
+  .grid { display: flex; flex-wrap: wrap; gap: 8px; }
+  .burst { display: flex; flex-wrap: wrap; gap: 6px; padding: 6px; border: 1px dashed var(--line); border-radius: 10px; }
+  .burst > .lbl { width: 100%; font-size: 11px; color: var(--muted); margin: -2px 2px 0; }
+  .ph { position: relative; width: var(--size, 150px); height: var(--size, 150px); border-radius: 8px; overflow: hidden; cursor: pointer;
+        outline: 3px solid transparent; outline-offset: -3px; background: var(--soft); }
+  .ph img { width: 100%; height: 100%; object-fit: cover; display: block; transition: opacity .15s; }
+  .ph.archive img { opacity: .35; filter: grayscale(.6); }
+  .ph.archive { outline-color: var(--bad); }
+  .ph.out img { opacity: .2; } .ph.out::after { content: "out"; position: absolute; inset: 0; display: grid; place-items: center; font-weight: 700; color: var(--bad); }
+  .ph.moved::after { content: "→ " attr(data-to); position: absolute; left: 0; right: 0; bottom: 0; padding: 2px 4px; font-size: 11px; background: rgba(0,0,0,.6); color: #fff; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+  .ph.focus { box-shadow: 0 0 0 3px var(--accent); }
+  .ph .b { position: absolute; top: 4px; left: 4px; display: flex; gap: 3px; }
+  .ph .b span { font-size: 10px; padding: 1px 5px; border-radius: 999px; background: rgba(0,0,0,.6); color: #fff; }
+  .ph .b .new { background: var(--accent); } .ph .b .uns { background: var(--warn); }
+  .ph .tools { position: absolute; top: 4px; right: 4px; display: none; gap: 3px; }
+  .ph:hover .tools { display: flex; } .ph .tools button { padding: 1px 6px; font-size: 12px; background: rgba(0,0,0,.65); color: #fff; border: 0; }
+  details.done { margin-top: 18px; } details.done summary { cursor: pointer; color: var(--muted); margin-bottom: 8px; }
+  .help { color: var(--muted); font-size: 12px; margin-top: 18px; } kbd { border: 1px solid var(--line); border-radius: 4px; padding: 0 4px; font-size: 11px; }
+  dialog { border: 1px solid var(--line); border-radius: 12px; background: var(--card); color: var(--fg); }
+  dialog::backdrop { background: rgba(0,0,0,.6); }
+  #big { max-width: min(1200px, 96vw); padding: 0; } #big img { max-width: 100%; max-height: 78vh; display: block; margin: 0 auto; }
+  #big .info { padding: 10px 14px; } #big .info .muted { color: var(--muted); font-size: 12px; }
+  .muted { color: var(--muted); }
+  #final .card { background: var(--card); border: 1px solid var(--line); border-radius: 10px; padding: 16px; margin-bottom: 14px; max-width: 760px; }
+  table { border-collapse: collapse; width: 100%; } td { padding: 4px 6px 4px 0; border-bottom: 1px solid var(--line); } td.n { text-align: right; }
+  label.opt { display: block; padding: 8px 10px; border: 1px solid var(--line); border-radius: 8px; margin: 6px 0; cursor: pointer; }
+</style>
+</head>
+<body>
+<header>
+  <a href="/">← OrderMyPhotos</a>
+  <b>Review</b>
+  <div class="tabs" id="tabs"><button data-f="open" class="on">To review</button><button data-f="confirmed">Confirmed</button><button data-f="all">All</button></div>
+  <span class="muted" id="counts"></span>
+  <span style="flex:1"></span>
+  <label class="muted">size <input type="range" id="size" min="90" max="280" value="150" style="vertical-align: middle; padding: 0"></label>
+</header>
+<div class="layout" id="layout">
+  <aside><input id="search" placeholder="Find an album or folder"><div id="units"></div></aside>
+  <section class="main" id="main"><p class="muted">Pick an album or folder.</p></section>
+</div>
+<section class="main" id="final" hidden></section>
+
+<dialog id="big"><img id="bigImg" alt=""><div class="info" id="bigInfo"></div></dialog>
+<dialog id="moveDlg">
+  <b>Move to</b>
+  <p class="muted" style="margin: 4px 0 8px">An album or folder, or type a new album name.</p>
+  <input id="moveTo" list="targets" style="width: 420px; max-width: 80vw" autocomplete="off"><datalist id="targets"></datalist>
+  <div style="margin-top: 10px; text-align: right"><button onclick="moveDlg.close()">Cancel</button> <button class="primary" onclick="doMove()">Move</button></div>
+</dialog>
+
+<script>
+const $ = id => document.getElementById(id);
+const esc = s => String(s ?? "").replace(/[&<>"]/g, c => ({"&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;"}[c]));
+let units = [], targets = [], filter = "open", cur = null, photos = [], edits = null, focusIdx = 0, moving = null;
+
+async function api(path, body) {
+  const r = await fetch(path, body === undefined ? {} : {method: "POST", headers: {"Content-Type": "application/json"}, body: JSON.stringify(body)});
+  if (!r.ok) throw new Error((await r.json().catch(() => ({}))).detail || r.statusText);
+  return r.json();
+}
+
+// --- the list of albums and folders ---
+async function loadUnits() {
+  const d = await api("/api/review/units");
+  units = d.units; targets = d.targets;
+  const p = d.pending;
+  $("counts").textContent = `${p.unconfirmed} to review · ${p.units - p.unconfirmed} confirmed` + (p.to_sort ? ` · ${p.to_sort} photos to sort again` : "");
+  $("targets").innerHTML = targets.map(t => `<option value="${esc(t)}">`).join("");
+  drawUnits();
+}
+function drawUnits() {
+  const q = $("search").value.toLowerCase();
+  const shown = units.filter(u => (filter === "all" || u.state === filter || (filter === "confirmed" && u.state === "dismantled"))
+                                  && (!q || u.key.toLowerCase().includes(q)));
+  $("units").innerHTML = shown.map(u => `<div class="unit ${cur && cur.key === u.key ? "sel" : ""}" data-k="${esc(u.key)}">
+    <div class="t"><span class="dot ${u.state}"></span>${esc(u.name)}</div>
+    <div class="s">${u.kind}${u.new ? " · new" : ""} · ${u.n} photos${u.open && u.state === "open" ? ` · ${u.open} to check` : ""}${u.unsure ? ` · ${u.unsure} unsure` : ""}${u.out ? ` · ${u.out} out` : ""}</div></div>`).join("")
+    || `<p class="muted" style="padding: 0 12px">${filter === "open" ? "Nothing left to review here." : "None."}</p>`;
+  for (const el of $("units").children) if (el.dataset.k) el.onclick = () => openUnit(el.dataset.k);
+}
+
+// --- one unit ---
+async function openUnit(key) {
+  if (edits && dirty() && !confirm("Leave without confirming? Your changes here are lost.")) return;
+  const d = await api("/api/review/unit?key=" + encodeURIComponent(key));
+  cur = d.unit; photos = d.photos; edits = {verdicts: {}, out: new Set(), moves: {}}; focusIdx = 0;
+  location.hash = "u=" + encodeURIComponent(key);
+  drawUnits(); drawUnit();
+}
+const dirty = () => edits && (Object.keys(edits.verdicts).length || edits.out.size || Object.keys(edits.moves).length);
+const verdictOf = p => edits.verdicts[p.id] || p.verdict;
+
+function tile(p, i) {
+  const v = verdictOf(p), out = edits.out.has(p.id) || p.state === "out", to = edits.moves[p.id];
+  const badges = [p.state === "open" && p.incoming ? `<span class="new">new</span>` : "", p.unsure ? `<span class="uns" title="${esc(p.unsure)}">unsure</span>` : "",
+                  p.best ? "<span>★</span>" : "", p.sub ? `<span>${esc(p.sub.trim().replace("/", ""))}</span>` : ""].join("");
+  return `<div class="ph ${v} ${out ? "out" : ""} ${to ? "moved" : ""} ${i === focusIdx ? "focus" : ""}" data-i="${i}" data-to="${esc(to || "")}" title="${esc(p.name)}">
+    <img loading="lazy" src="/api/photo/${p.id}/thumb" style="${p.rotate ? `transform: rotate(${p.rotate}deg)` : ""}" alt="">
+    <div class="b">${badges}</div>
+    <div class="tools"><button data-a="big" title="Show (Z)">⤢</button><button data-a="move" title="Move to… (M)">→</button><button data-a="out" title="Take out (O)">✕</button></div></div>`;
+}
+
+function section(list) {
+  const out = []; let i = 0;
+  while (i < list.length) {
+    const p = list[i];
+    if (p.gid != null) {
+      const j0 = i; while (i < list.length && list[i].gid === p.gid) i++;
+      if (i - j0 > 1) { out.push(`<div class="burst"><div class="lbl">burst of ${i - j0}</div>${list.slice(j0, i).map(q => tile(q, photos.indexOf(q))).join("")}</div>`); continue; }
+      i = j0;
+    }
+    out.push(tile(p, photos.indexOf(p))); i++;
+  }
+  return `<div class="grid">${out.join("")}</div>`;
+}
+
+function drawUnit() {
+  const u = cur, fresh = photos.filter(p => p.state !== "confirmed"), done = photos.filter(p => p.state === "confirmed");
+  const keep = photos.filter(p => verdictOf(p) === "keep" && !edits.out.has(p.id) && !edits.moves[p.id]).length;
+  const nameOnly = u.kind === "album" && /^\d{4}-\d{2}-\d{2} /.test(u.name) ? u.name.slice(11) : u.name;
+  $("main").innerHTML = `<div class="head">
+      <input class="name" id="uname" value="${esc(nameOnly)}" title="Rename" ${u.state === "dismantled" ? "disabled" : ""}>
+      <span class="tag">${u.kind}${u.new ? ", new" : ""}</span>
+      ${u.state === "dismantled" ? `<span class="tag">dismantled</span>` : ""}
+      <span style="flex:1"></span>
+      ${u.state === "open" ? `<button class="primary" onclick="confirmUnit()" title="Enter">Confirm</button>` : `<button onclick="reopen()">Review again</button>`}
+      ${u.state !== "dismantled" ? `<button class="danger" onclick="dismantle()" title="Sort all its photos again">Dismantle</button>` : ""}
+    </div>
+    <div class="path">${esc(u.key)}</div>
+    <div class="summary">${photos.length} photos · ${keep} kept · ${photos.length - keep} archived or leaving${fresh.length && done.length ? ` · ${fresh.length} to check` : ""}</div>
+    ${fresh.length ? section(fresh) : `<p class="muted">Everything here is confirmed.</p>`}
+    ${done.length ? `<details class="done" ${fresh.length ? "" : "open"}><summary>Already confirmed (${done.length})</summary>${section(done)}</details>` : ""}
+    <div class="help">Click a photo to keep or archive it · <kbd>O</kbd> take out · <kbd>M</kbd> move · <kbd>Z</kbd> show · <kbd>←</kbd><kbd>→</kbd> next photo · <kbd>Enter</kbd> confirm</div>`;
+  for (const el of $("main").querySelectorAll(".ph")) {
+    el.onclick = e => {
+      const i = +el.dataset.i, a = e.target.dataset.a;
+      focusIdx = i;
+      if (a === "big") return showBig(photos[i]);
+      if (a === "move") return askMove(photos[i]);
+      if (a === "out") return toggleOut(photos[i]);
+      toggleVerdict(photos[i]);
+    };
+    el.ondblclick = () => showBig(photos[+el.dataset.i]);
+  }
+}
+function toggleVerdict(p) { const v = verdictOf(p) === "keep" ? "archive" : "keep"; if (v === p.verdict) delete edits.verdicts[p.id]; else edits.verdicts[p.id] = v; drawUnit(); }
+function toggleOut(p) { if (edits.out.has(p.id)) edits.out.delete(p.id); else { edits.out.add(p.id); delete edits.moves[p.id]; } drawUnit(); }
+function askMove(p) { moving = p; $("moveTo").value = ""; $("moveDlg").showModal(); $("moveTo").focus(); }
+function doMove() {
+  let t = $("moveTo").value.trim(); if (!t) return;
+  if (!targets.includes(t) && !t.includes("/")) t = "new:" + t;  // a new album, dated by its photos
+  edits.moves[moving.id] = t; edits.out.delete(moving.id); $("moveDlg").close(); drawUnit();
+}
+function showBig(p) {
+  $("bigImg").src = `/api/photo/${p.id}/preview`;
+  $("bigImg").style.transform = p.rotate ? `rotate(${p.rotate}deg)` : "";
+  const c = p.caption || {};
+  $("bigInfo").innerHTML = `<b>${esc(c.title_en || p.name)}</b>${c.title_pl ? ` <span class="muted">· ${esc(c.title_pl)}</span>` : ""}
+    <div>${esc(c.description_en || "")}</div>
+    <div class="muted">${esc(p.taken || "")} · ${esc(p.from)}/${esc(p.name)}${p.why ? " · " + esc(p.why) : ""}${p.unsure ? " · unsure: " + esc(p.unsure) : ""}
+    ${p.pipeline && p.pipeline !== verdictOf(p) ? ` · the pipeline said ${p.pipeline}` : ""}${p.rotate ? ` · turned ${p.rotate}°` : ""}
+    · <a href="/library/${p.path.split("/").map(encodeURIComponent).join("/")}" target="_blank">original</a></div>`;
+  $("big").showModal();
+}
+
+async function confirmUnit() {
+  const name = $("uname").value.trim();
+  try {
+    await api("/api/review/unit/confirm", {key: cur.key, name, verdicts: edits.verdicts, out: [...edits.out], moves: edits.moves});
+    edits = null; await loadUnits();
+    const next = units.find(u => u.state === "open");
+    if (next) openUnit(next.key); else { cur = null; $("main").innerHTML = `<p><b>All albums and folders are confirmed.</b> Go back to <a href="/">OrderMyPhotos</a> and press <i>Done, go on</i>.</p>`; drawUnits(); }
+  } catch (e) { alert(e.message); }
+}
+async function dismantle() {
+  if (!confirm(`Dismantle "${cur.name}"? All ${photos.length} photos are sorted again, and nothing goes here any more.`)) return;
+  try { await api("/api/review/unit/dismantle", {key: cur.key}); edits = null; await loadUnits(); openUnit(cur.key).catch(() => {}); } catch (e) { alert(e.message); }
+}
+async function reopen() { try { await api("/api/review/unit/reopen", {key: cur.key}); edits = null; await loadUnits(); openUnit(cur.key); } catch (e) { alert(e.message); } }
+
+document.addEventListener("keydown", e => {
+  if (!cur || e.target.tagName === "INPUT" || document.querySelector("dialog[open]")) {
+    if (e.key === "Enter" && e.target.id === "moveTo") doMove();
+    return;
+  }
+  const p = photos[focusIdx];
+  if (e.key === "ArrowRight") { focusIdx = Math.min(photos.length - 1, focusIdx + 1); drawUnit(); }
+  else if (e.key === "ArrowLeft") { focusIdx = Math.max(0, focusIdx - 1); drawUnit(); }
+  else if (!p) return;
+  else if (e.key === "k" || e.key === "a" || e.key === " ") { e.preventDefault(); toggleVerdict(p); }
+  else if (e.key === "o") toggleOut(p);
+  else if (e.key === "m") { e.preventDefault(); askMove(p); }
+  else if (e.key === "z") showBig(p);
+  else if (e.key === "Enter" && cur.state === "open") confirmUnit();
+});
+$("big").onclick = () => $("big").close();
+$("search").oninput = drawUnits;
+$("size").oninput = e => document.documentElement.style.setProperty("--size", e.target.value + "px");
+for (const b of $("tabs").children) b.onclick = () => { filter = b.dataset.f; for (const x of $("tabs").children) x.classList.toggle("on", x === b); drawUnits(); };
+window.onbeforeunload = () => dirty() ? "unsaved" : undefined;
+
+// --- the final decision ---
+async function showFinal() {
+  $("layout").hidden = true; $("tabs").hidden = true; $("final").hidden = false;
+  let plan;
+  try { plan = await api("/api/review/plan"); } catch (e) { $("final").innerHTML = `<p>${esc(e.message)}</p>`; return; }
+  const c = plan.counts, gb = b => (b / 2 ** 30).toFixed(1) + " GiB";
+  $("final").innerHTML = `<div class="card"><h2 style="margin-top:0">The plan</h2>
+      <table><tr><td>Photos moved to albums and folders</td><td class="n">${(c.create || 0) + (c.add || 0) + (c.theme || 0) + (c.place || 0)}</td></tr>
+      <tr><td>Photos that stay where they are</td><td class="n">${c.stays || 0}</td></tr>
+      <tr><td>Photos archived</td><td class="n">${plan.archive.n} (${gb(plan.archive.bytes)})</td></tr>
+      <tr><td>Photos turned upright</td><td class="n">${plan.rotations}</td></tr></table>
+      <details style="margin-top:10px"><summary class="muted">Where they go</summary><table>${plan.targets.map(([t, n]) => `<tr><td>${esc(t)}</td><td class="n">${n}</td></tr>`).join("")}</table></details></div>
+    <div class="card"><h2 style="margin-top:0">The archived photos</h2>
+      <label class="opt"><input type="radio" name="arch" value="keep" checked> Keep them in <code>Archive/OrderMyPhotos/</code>, where they can be restored</label>
+      <label class="opt"><input type="radio" name="arch" value="delete"> Delete them once the plan is applied</label>
+      <p class="muted">Applying the plan to the library is a separate step (not built yet); this records your decision.</p>
+      <button class="primary" onclick="finish()">Save the decision</button> <a href="/" style="margin-left:10px">Back</a></div>`;
+}
+async function finish() {
+  const arch = document.querySelector("input[name=arch]:checked").value;
+  if (arch === "delete" && !confirm("Delete the archived photos once the plan is applied?")) return;
+  try { await api("/api/phase/final/done", {archived: arch}); location.assign("/"); } catch (e) { alert(e.message); }
+}
+
+if (location.hash === "#final") showFinal();
+else loadUnits().then(() => {
+  const m = location.hash.match(/^#u=(.+)$/);
+  const key = m ? decodeURIComponent(m[1]) : (units.find(u => u.state === "open") || {}).key;
+  if (key) openUnit(key);
+}).catch(e => { $("main").innerHTML = `<p>${esc(e.message)}</p>`; });
+</script>
+</body>
+</html>

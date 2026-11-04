@@ -400,23 +400,41 @@ def run(cfg: Config, con, run_id: str, place_only: bool = False):
     rows = [dict(r) for r in con.execute(
         "SELECT p.id, p.taken_ts, p.taken_local, p.lat, p.lon, MIN(f.path) AS path FROM photo p JOIN file f ON f.id=p.id"
         " WHERE f.policy='unsorted' GROUP BY p.id ORDER BY p.taken_ts")]
-    # Photos the reviewer took out of an album or a proposal (`o` in the bundle): they skip every rule that
-    # would put them in an album and go to a thematic folder, never back where they came from.
-    taken_out = {}
-    for r in con.execute("SELECT id, value FROM label WHERE kind='out' ORDER BY lid"):
-        taken_out[r[0]] = r[1]  # the latest label wins; "" means undone
-    taken_out = {i: page_target(v) for i, v in taken_out.items() if v}
-    # Photos the reviewer moved (`m`): to an album or a folder they chose, or to a new album they named.
-    moved = {}
-    for r in con.execute("SELECT id, value FROM label WHERE kind='move' ORDER BY lid"):
-        moved[r[0]] = r[1]
-    moved = {i: v for i, v in moved.items() if v}
+    # The reviewer's word on a photo, the latest one winning (P47):
+    # - out: taken out of an album or folder (or the album was dismantled). It skips every rule that would
+    #   put it in an album and is sorted again, never back where it came from.
+    # - move: moved by hand to an album or folder, or to a new album they named.
+    # - place: confirmed where it is. A photo confirmed in its own album stays and isn't sorted again; one
+    #   confirmed anywhere else goes exactly there. Re-sorting never changes either.
+    from .text import DOCS_FOLDER
+
+    taken_out, moved, stays, placed = {}, {}, set(), set()
+    own = {r[0]: r[1] for r in con.execute("SELECT id, MIN(album) FROM file WHERE policy IN ('cull', 'describe') GROUP BY id")}
+    latest = {}
+    for r in con.execute("SELECT id, kind, value FROM label WHERE kind IN ('out', 'move', 'place') ORDER BY lid"):
+        latest[r[0]] = (r[1], r[2])  # "" means undone
+    for i, (kind, v) in latest.items():
+        if not v:
+            continue
+        if kind == "out":
+            taken_out[i] = page_target(v)
+        elif kind == "place" and own.get(i) is not None and v.removesuffix(" PRIV").removesuffix(f"/{DOCS_FOLDER}") == own[i]:
+            stays.add(i)
+        else:
+            moved[i] = v
+            if kind == "place":
+                placed.add(i)
+    # Albums and folders the reviewer dismantled: no photo goes there any more.
+    try:
+        dismantled = {r[0] for r in con.execute("SELECT key FROM review_unit WHERE status='dismantled'")}
+    except Exception:  # noqa: BLE001 - no review yet
+        dismantled = set()
     cull = [dict(r) for r in con.execute(
         "SELECT p.id, p.taken_ts, p.taken_local, p.lat, p.lon, MIN(f.path) AS path FROM photo p JOIN file f ON f.id=p.id"
         " WHERE f.policy='cull' GROUP BY p.id ORDER BY p.taken_ts") if r["id"] in taken_out or r["id"] in moved]
     moved_rows = [r for r in rows + cull if r["id"] in moved]
     out_rows = [r for r in rows + cull if r["id"] in taken_out and r["id"] not in moved]  # an album's own ones too
-    rows = [r for r in rows if r["id"] not in taken_out and r["id"] not in moved]
+    rows = [r for r in rows if r["id"] not in taken_out and r["id"] not in moved and r["id"] not in stays]
     dec = {r["id"]: dict(r) for r in con.execute("SELECT id, verdict, features FROM decision WHERE run=?", (run_id,))}
     caps = {r["id"]: json.loads(r["data"]) for r in con.execute("SELECT id, data FROM caption")}
     sample_albums = {r[0] for r in con.execute("SELECT DISTINCT album FROM file WHERE policy='cull'")}
@@ -452,16 +470,22 @@ def run(cfg: Config, con, run_id: str, place_only: bool = False):
     # 0. The reviewer's moves: exactly where they said.
     by_move = defaultdict(list)
     for r in moved_rows:
-        by_move[moved[r["id"]]].append(r)
-    for target, members in by_move.items():
+        by_move[moved[r["id"]], r["id"] in placed].append(r)
+    known = set(lib.albums) if lib else set(sample_albums)
+    for (target, confirmed), members in by_move.items():
         if target.startswith("new:"):
             name = target[4:].strip()
             d0 = datetime.fromtimestamp(min(r["taken_ts"] for r in members), tz)
             add("create", f"Pictures/Albums/{d0:%Y}/{d0:%Y-%m-%d} {name}", name, members,
                 {"n": len(members), "why": "a new album you named in review", "moved": True})
-        else:
-            add("add" if re.match(r"^Pictures/Albums/\d{4}/", target) else "theme", target, None, members,
-                {"n": len(members), "why": "moved here in review", "moved": True})
+        else:  # a target path: a confirmed place is taken as given, its PRIV or Dokumenty part too; a photo
+            # moved by hand still goes to the album's private part when it shows full nudity (P26)
+            album = re.match(r"^Pictures/Albums/\d{4}/", target)
+            new = album and target.removesuffix(" PRIV").removesuffix(f"/{DOCS_FOLDER}") not in known
+            (_add if confirmed else add)("create" if new else "add" if album else "theme", target,
+                                        target.rsplit("/", 1)[-1][11:] if new else None, members,
+                                        {"n": len(members), "why": "confirmed in review" if confirmed else "moved here in review",
+                                         "moved": True})
 
     # 1. Already in an album: the same bytes anywhere in the library's albums, or in an album of the sample.
     rest, copies = [], defaultdict(list)
@@ -615,7 +639,7 @@ def run(cfg: Config, con, run_id: str, place_only: bool = False):
         return (t or "").removesuffix(" PRIV").removesuffix(f"/{DOCS_FOLDER}")
 
     def banned_of(rs):
-        return {base(taken_out[r["id"]]) for r in rs if r["id"] in taken_out}
+        return {base(taken_out[r["id"]]) for r in rs if r["id"] in taken_out} | dismantled
 
     sessions = sessions_of(rest, burst_of)
     try:  # face clusters (S8) other than the owner's, and the names album names use
@@ -1676,7 +1700,7 @@ def run(cfg: Config, con, run_id: str, place_only: bool = False):
     where, action_of = {}, {}
     for r in con.execute("SELECT p.pid, p.action, p.target, m.id FROM proposal p JOIN proposal_member m ON m.pid=p.pid"
                          " WHERE p.run=? AND p.action IN ('add', 'create', 'theme')", (run_id,)):
-        if not r["target"].endswith(" PRIV"):
+        if not r["target"].endswith(" PRIV") and r["id"] not in moved:
             where[r["id"]], action_of[r["pid"]] = r["pid"], r["action"]
     burst_ids = defaultdict(list)
     for i, gid in burst_of.items():

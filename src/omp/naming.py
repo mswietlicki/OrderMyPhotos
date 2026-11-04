@@ -328,8 +328,19 @@ const mergeIds = () => {
 };
 document.getElementById("mergego").onclick = mergeIds;
 document.getElementById("mergeids").onkeydown = e => { if (e.key === "Enter") mergeIds(); };
-document.getElementById("exp").onclick = () => {
-  const blob = new Blob([JSON.stringify({run: DATA.run, exported: new Date().toISOString(), names: names()}, null, 1)], {type: "application/json"});
+// Opened from the web app (P47), the names are saved on the server; opened as a file, they're downloaded.
+const inApp = location.pathname.startsWith("/library/");
+if (inApp) document.getElementById("exp").textContent = "Save names";
+document.getElementById("exp").onclick = async () => {
+  const spec = {run: DATA.run, exported: new Date().toISOString(), names: names()};
+  if (inApp) {
+    const btn = document.getElementById("exp");
+    const r = await fetch("/api/labels", {method: "POST", headers: {"Content-Type": "application/json"}, body: JSON.stringify(spec)});
+    btn.textContent = r.ok ? "Saved ✓" : "Not saved: " + r.status;
+    setTimeout(() => { btn.textContent = "Save names"; }, 2500);
+    return;
+  }
+  const blob = new Blob([JSON.stringify(spec, null, 1)], {type: "application/json"});
   const l = document.createElement("a"); l.href = URL.createObjectURL(blob); l.download = `names-${DATA.run}.json`; l.click();
 };
 render();

@@ -127,9 +127,10 @@ def _memory():
 
 
 class Sampler:
-    """Background sampling. `pid()` returns the pipeline's process, or None while nothing runs."""
+    """Background sampling. `pid()` returns the pipeline's process, or None while nothing runs; `disks()`
+    the folders whose free space is shown, by name."""
 
-    def __init__(self, pid, disks: dict[str, str]):
+    def __init__(self, pid, disks):
         self.pid, self.disks = pid, disks
         self.history = deque(maxlen=HISTORY)
         self.latest: dict = {}
@@ -174,7 +175,7 @@ class Sampler:
         s["load"] = os.getloadavg() if hasattr(os, "getloadavg") else None
         s["gpu4090"], s["b50_vram_total_used"] = _host_gpus()
         s["disks"] = {}
-        for name, path in self.disks.items():
+        for name, path in self.disks().items():
             try:
                 u = shutil.disk_usage(path)
                 s["disks"][name] = {"free": u.free, "total": u.total}

@@ -1,11 +1,11 @@
-"""`omp serve`: the OrderMyPhotos web app (P44). A page and a JSON API to start and pause the pipeline,
-follow its progress, read its log and open the results; the review pages are served from the library, and
-their exports can be posted back instead of downloaded and imported by hand.
+"""`omp serve`: the OrderMyPhotos web app (P44, P47). A wizard that guides one session (one root directory)
+through its phases: the server's work runs on its own, and it stops where the reviewer is needed (naming
+people, reviewing the albums, the final decision), with the review pages in the app itself.
 
-The pipeline runs as a child process (`python -m omp <stages> --run <run>`), so a pause is a clean stop
-after the photo in hand (P43). The wanted state is kept on disk (`control.json` next to the DB), so after a
-crash, a redeploy or a reboot the run resumes on its own, and a failing run is retried a few times with a
-growing pause before it's marked failed.
+The pipeline runs as a child process (`python -m omp <stages> --run <session>`), so a pause is a clean stop
+after the photo in hand (P43). The wanted state is kept on disk (`control.json` in the session's folder), so
+after a crash, a redeploy or a reboot the run resumes on its own, and a failing run is retried a few times
+with a growing pause before it's marked failed.
 
 It listens on 127.0.0.1 only; on Mimir, Tailscale Serve publishes it on the tailnet. API docs: /docs.
 """
@@ -24,33 +24,17 @@ from pathlib import Path
 from fastapi import Body, FastAPI, HTTPException
 from fastapi.responses import FileResponse, HTMLResponse, PlainTextResponse
 
-from . import cli, runtime
-from .config import Config, Policy
+from . import review, sessions
+from .config import Policy
+from .sessions import PHASE, PHASES
 from .sysmon import Sampler
 
-# The library is processed in three passes, because each needs the one before and the user in between:
-# the per-photo signals; then people, bursts and picks (the user names people on the People page); then
-# captions, which use the names, and the albums, which read the captions.
-PIPELINES = {
-    "signals": {"title": "1 · Signals per photo",
-                "stages": ["inventory", "previews", "signals", "orient", "faces", "subjects", "depth", "text"]},
-    "people": {"title": "2 · People, bursts and picks",
-               "stages": ["people", "place", "group", "rank", "judge", "report"]},
-    "albums": {"title": "3 · Captions and albums", "stages": ["captions", "albums", "report", "plan"]},
-    "all": {"title": "Everything", "stages": cli.ALL},
-}
 RETRY_AFTER = [30, 120, 600, 1800]   # seconds before restarting a run that failed, by attempt
 MAX_RETRIES = 5
 STOP_WAIT = 75                       # seconds a stopping run gets before it's killed (compose: 90 s)
 HEALTHY = 600                        # seconds of running after which the retry count starts again
-
-cfg = Config()
-STATE = cfg.db.parent
-CONTROL = STATE / "control.json"
-LOGS = STATE / "logs"
-LABELS = STATE / "labels"
-RUN_ID = os.environ.get("OMP_RUN", "full")
 BUNDLE_URL = "OrderMyPhotos"         # the bundle's name at a library root, which its links assume
+FRESH = {"phase": 0, "wanted": "idle", "retries": 0, "next_try": 0, "last_exit": None, "rounds": 0, "history": []}
 
 
 def _read_json(path: Path, default):
@@ -67,67 +51,123 @@ def _write_json(path: Path, data):
 
 
 class Runner:
-    """Keeps the pipeline child process matching the wanted state: running, paused, finished or failed."""
+    """Moves the active session through its phases. `wanted` is what the reviewer asked for: running,
+    paused, review (waiting for the reviewer), finished or failed; the child process follows it."""
 
     def __init__(self):
-        LOGS.mkdir(parents=True, exist_ok=True)
         self.proc: subprocess.Popen | None = None
         self.lock = threading.RLock()
-        self.control = {"wanted": "idle", "pipeline": "signals", "run": RUN_ID, "retries": 0, "next_try": 0,
-                        "last_exit": None, "history": []} | _read_json(CONTROL, {})
+        self.session: sessions.Session | None = None
+        self.control: dict = dict(FRESH)
+        self.bind(sessions.active())
+
+    def bind(self, session: sessions.Session | None):
+        with self.lock:
+            if self.alive():
+                raise HTTPException(409, "pause the running session first")
+            self.session = session
+            self.control = FRESH | _read_json(session.dir / "control.json", {}) if session else dict(FRESH)
+            self.policy = Policy(session.config().policy_file) if session else None
 
     def save(self):
-        _write_json(CONTROL, self.control)
+        if self.session:
+            _write_json(self.session.dir / "control.json", self.control)
 
     def alive(self) -> bool:
         return self.proc is not None and self.proc.poll() is None
 
     @property
-    def stages(self) -> list[str]:
-        return PIPELINES[self.control["pipeline"]]["stages"]
+    def phase(self) -> dict:
+        return PHASES[min(self.control["phase"], len(PHASES) - 1)]
 
-    def log_path(self) -> Path:
-        return LOGS / f"{self.control['run']}.log"
+    def log_path(self) -> Path | None:
+        return self.session.dir / "log.txt" if self.session else None
 
-    def start(self, pipeline: str):
+    def start(self):
         with self.lock:
+            if not self.session:
+                raise HTTPException(400, "make a session first")
             if self.alive():
-                raise HTTPException(409, "a run is going on; pause it first")
-            self.control.update(wanted="running", pipeline=pipeline, retries=0, next_try=0)
+                raise HTTPException(409, "already running")
+            if self.phase["kind"] == "review":
+                raise HTTPException(409, f"waiting for you: {self.phase['title']}")
+            if self.control["wanted"] == "finished":
+                raise HTTPException(409, "this session is finished")
+            self.control.update(wanted="running", retries=0, next_try=0)
             self.save()
             self._spawn()
 
     def pause(self):
         with self.lock:
-            self.control["wanted"] = "paused"
-            self.save()
+            if self.control["wanted"] in ("running", "failed"):
+                self.control["wanted"] = "paused"
+                self.save()
             if self.alive():
                 self.proc.send_signal(signal.SIGTERM)  # the stage stops after the photo in hand
 
+    def goto(self, key: str):
+        """Run again from a phase (tests, or after a fix): everything after it is redone as needed."""
+        with self.lock:
+            if self.alive():
+                raise HTTPException(409, "pause it first")
+            self.control.update(phase=PHASE[key], wanted="paused", retries=0, next_try=0)
+            if PHASES[PHASE[key]]["kind"] == "review":
+                self.control["wanted"] = "review"
+            self.save()
+
+    def done(self, key: str, data: dict | None = None):
+        """The reviewer finished a review phase: go on, or back to sorting what they took out."""
+        with self.lock:
+            if self.phase["key"] != key or self.phase["kind"] != "review":
+                raise HTTPException(409, f"the current phase is {self.phase['title']}")
+            if key == "review":
+                pending = review.pending(self.session)
+                if pending["unconfirmed"]:
+                    raise HTTPException(409, f"{pending['unconfirmed']} albums aren't confirmed yet")
+                nxt = "resort" if pending["to_sort"] else "plan"
+            elif key == "final":
+                _write_json(self.session.dir / "final.json", (data or {}) | {"at": time.time()})
+                self.control.update(phase=len(PHASES), wanted="finished")
+                self.save()
+                return
+            else:
+                nxt = PHASES[self.control["phase"] + 1]["key"]
+            self.control.update(phase=PHASE[nxt], wanted="running", retries=0, next_try=0)
+            self.save()
+
     def _spawn(self):
+        stages = self.phase["stages"]
         log = open(self.log_path(), "ab")
-        log.write(f"\n=== {time.strftime('%Y-%m-%d %H:%M:%S %Z')} start {' '.join(self.stages)}\n".encode())
+        log.write(f"\n=== {time.strftime('%Y-%m-%d %H:%M:%S %Z')} {self.phase['title']}: {' '.join(stages)}\n".encode())
         log.flush()
-        self.proc = subprocess.Popen([sys.executable, "-m", "omp", *self.stages, "--run", self.control["run"]],
-                                     stdout=log, stderr=subprocess.STDOUT, cwd="/tmp" if os.name != "nt" else None)
+        self.proc = subprocess.Popen([sys.executable, "-m", "omp", *stages, "--run", self.session.id],
+                                     stdout=log, stderr=subprocess.STDOUT, env=os.environ | self.session.env(),
+                                     cwd="/tmp" if os.name != "nt" else None)
         log.close()
         self.control.update(started=time.time(), pid=self.proc.pid)
         self.save()
 
     def _ended(self, code: int):
-        wanted = self.control["wanted"]
-        entry = {"pipeline": self.control["pipeline"], "started": self.control.get("started"), "ended": time.time(),
-                 "exit": code}
-        self.control["history"] = (self.control["history"] + [entry])[-30:]
-        self.control.update(last_exit=code, pid=None)
+        c = self.control
+        c["history"] = (c["history"] + [{"phase": self.phase["key"], "started": c.get("started"), "ended": time.time(),
+                                          "exit": code}])[-50:]
+        c.update(last_exit=code, pid=None)
         if code == 0:
-            self.control["wanted"] = "finished"
-        elif wanted == "running":  # it crashed, or was stopped from outside: try again later
-            n = self.control["retries"] = self.control["retries"] + 1
-            if n > MAX_RETRIES:
-                self.control["wanted"] = "failed"
+            key = self.phase["key"]
+            if key == "resort":  # back to the review, for what was just sorted
+                c.update(phase=PHASE["review"], rounds=c["rounds"] + 1)
             else:
-                self.control["next_try"] = time.time() + RETRY_AFTER[min(n - 1, len(RETRY_AFTER) - 1)]
+                c["phase"] += 1
+            if c["phase"] >= len(PHASES):
+                c["wanted"] = "finished"
+            elif self.phase["kind"] == "review":
+                c["wanted"] = "review"
+        elif c["wanted"] == "running":  # it crashed, or was stopped from outside: try again later
+            n = c["retries"] = c["retries"] + 1
+            if n > MAX_RETRIES:
+                c["wanted"] = "failed"
+            else:
+                c["next_try"] = time.time() + RETRY_AFTER[min(n - 1, len(RETRY_AFTER) - 1)]
         self.save()
 
     def supervise(self):
@@ -136,10 +176,12 @@ class Runner:
                 if self.proc is not None and self.proc.poll() is not None:
                     code, self.proc = self.proc.returncode, None
                     self._ended(code)
-                if self.control["wanted"] == "running" and not self.alive() and time.time() >= self.control["next_try"]:
+                c = self.control
+                if (self.session and c["wanted"] == "running" and self.phase["kind"] == "server" and not self.alive()
+                        and time.time() >= c["next_try"]):
                     self._spawn()
-                if self.alive() and self.control["retries"] and time.time() - self.control["started"] > HEALTHY:
-                    self.control["retries"] = 0  # it got going again: the next failure starts the count afresh
+                if self.alive() and c["retries"] and time.time() - c["started"] > HEALTHY:
+                    c["retries"] = 0  # it got going again: the next failure starts the count afresh
                     self.save()
             time.sleep(2)
 
@@ -157,16 +199,17 @@ class Runner:
 
 
 runner = Runner()
-_counts: dict = {"at": 0}
+_counts: dict = {"at": 0, "db": None}
 
 
-def library_counts() -> dict:
-    """What the DB holds, read-only and at most once a minute: it's a scan of the signal table."""
-    if time.time() - _counts["at"] < 60:
+def library_counts(s: sessions.Session) -> dict:
+    """What the session's DB holds, read-only and at most once a minute: it's a scan of the signal table."""
+    db = s.config().db
+    if time.time() - _counts["at"] < 60 and _counts["db"] == db:
         return _counts["data"]
     data = {}
     try:
-        con = sqlite3.connect(f"file:{cfg.db}?mode=ro", uri=True, timeout=5)
+        con = sqlite3.connect(f"file:{db}?mode=ro", uri=True, timeout=5)
         data["files"] = con.execute("SELECT count(*) FROM file").fetchone()[0]
         data["photos"] = con.execute("SELECT count(*) FROM photo").fetchone()[0]
         data["by_policy"] = dict(con.execute("SELECT policy, count(*) FROM file GROUP BY policy ORDER BY 2 DESC").fetchall())
@@ -175,11 +218,11 @@ def library_counts() -> dict:
             "SELECT kind, id, data, created FROM signal WHERE kind LIKE 'error.%' ORDER BY created DESC LIMIT 20")]
         data["timing"] = [dict(zip(("stage", "run", "items", "seconds", "device", "created"), r)) for r in con.execute(
             "SELECT stage, run, items, round(seconds, 1), device, created FROM timing ORDER BY rowid DESC LIMIT 25")]
-        data["db_bytes"] = cfg.db.stat().st_size
+        data["db_bytes"] = db.stat().st_size
         con.close()
     except (sqlite3.Error, OSError) as exc:
-        data["error"] = str(exc)
-    _counts.update(at=time.time(), data=data)
+        data["error"] = "no data yet" if "unable to open" in str(exc) else str(exc)
+    _counts.update(at=time.time(), db=db, data=data)
     return data
 
 
@@ -188,57 +231,74 @@ def gpu_models() -> list:
     import httpx
 
     try:
-        running = httpx.get(f"{cfg.llm}/running", timeout=2).json().get("running", [])
+        running = httpx.get(f"{os.environ.get('OMP_LLM', 'http://127.0.0.1:9292')}/running", timeout=2).json().get("running", [])
     except (httpx.HTTPError, ValueError):
         return []
     return [{k: m.get(k) for k in ("model", "state", "name")} for m in running]
 
 
-def tail(path: Path, lines: int) -> str:
+def tail(path: Path | None, lines: int) -> str:
     try:
         with open(path, "rb") as f:
             f.seek(0, os.SEEK_END)
             f.seek(max(0, f.tell() - 200 * lines))
             return b"\n".join(f.read().splitlines()[-lines:]).decode("utf-8", "replace")
-    except OSError:
+    except (OSError, TypeError):
         return ""
 
 
-def status() -> dict:
-    c = runner.control
-    alive = runner.alive()
-    st = _read_json(runtime.STATUS, {})  # written by the running pipeline
+def state() -> str:
+    c, alive = runner.control, runner.alive()
     if alive:
-        state = "running" if c["wanted"] == "running" else "stopping"
-    elif c["wanted"] == "running":
-        state = "retrying"
-    else:
-        state = c["wanted"]
+        return "running" if c["wanted"] == "running" else "stopping"
+    if c["wanted"] == "running":
+        return "retrying"
+    return c["wanted"]
+
+
+def status() -> dict:
+    s, c, alive = runner.session, runner.control, runner.alive()
+    out = {"session": None, "sessions": [{"id": x.id, "name": x.name, "root": x.root} for x in sessions.all_sessions()],
+           "roots": [str(r) for r in sessions.ROOTS], "state": state(), "gpu": gpu_models(), "system": sampler.latest,
+           "now": time.time()}
+    if not s:
+        return out
+    st = _read_json(s.dir / "status.json", {})  # written by the running pipeline
     step = st.get("step") if alive else None
     if step:
         elapsed = max(time.time() - step["started"], 1e-6)
         step["rate"] = round(step["ok"] / elapsed, 2)
         left = (step["total"] or 0) - step["ok"] - step["failed"]
         step["eta"] = round(left / step["rate"]) if step["rate"] and step["total"] else None
-    done = {d["stage"]: d["seconds"] for d in st.get("done", [])} if st.get("run") == c["run"] else {}
-    stages = [{"stage": s, "state": "done" if s in done and not (alive and st.get("stage") == s) else
-               "running" if alive and st.get("stage") == s else "pending", "seconds": done.get(s)}
-              for s in runner.stages]
-    results = sorted(p.name for p in cfg.bundle.glob("*.html")) if cfg.bundle.exists() else []
-    steps = st.get("steps", []) if st.get("run") == c["run"] else []
-    return {
-        "state": state, "wanted": c["wanted"], "pipeline": c["pipeline"], "run": c["run"],
-        "pipelines": {k: v for k, v in PIPELINES.items()}, "stages": stages, "stage": st.get("stage") if alive else None,
-        "step": step, "started": c.get("started"), "pid": c.get("pid"), "retries": c["retries"],
-        "next_try": c["next_try"] if state == "retrying" else None, "last_exit": c["last_exit"],
-        "error": st.get("error") if st.get("state") == "failed" else None, "history": c["history"][-10:],
-        "steps": steps, "results": [f"/library/{BUNDLE_URL}/{n}" for n in results], "library": library_counts(),
-        "gpu": gpu_models(), "system": sampler.latest, "now": time.time(),
-    }
+    cur = c["phase"]
+    phases = []
+    for i, p in enumerate(PHASES):
+        ran = [h for h in c["history"] if h["phase"] == p["key"] and h["exit"] == 0]
+        phases.append({k: p[k] for k in ("key", "kind", "title", "about")} | {
+            "state": "done" if i < cur else "current" if i == cur else "pending",
+            "seconds": round(sum(h["ended"] - h["started"] for h in ran if h.get("started"))) if ran else None,
+            "stages": p.get("stages")})
+    if c["phase"] > PHASE["resort"] and not any(h["phase"] == "resort" for h in c["history"]):
+        phases[PHASE["resort"]]["state"] = "skipped"
+    pending = review.pending(s) if runner.phase["key"] in ("review", "resort", "plan", "final") else None
+    out.update({
+        "session": {"id": s.id, "name": s.name, "root": s.root, "library_index": s.library_index, "created": s.created},
+        "phase": runner.phase["key"] if cur < len(PHASES) else None, "phases": phases, "rounds": c["rounds"],
+        "wanted": c["wanted"], "stage": st.get("stage") if alive else None, "step": step,
+        "steps": st.get("steps", []) if st.get("run") == s.id else [], "started": c.get("started"), "pid": c.get("pid"),
+        "retries": c["retries"], "next_try": c["next_try"] if out["state"] == "retrying" else None,
+        "last_exit": c["last_exit"], "error": st.get("error") if st.get("state") == "failed" else None,
+        "history": c["history"][-12:], "review": pending, "library": library_counts(s),
+        "final": _read_json(s.dir / "final.json", None)})
+    return out
 
 
-sampler = Sampler(lambda: runner.proc.pid if runner.alive() else None,
-                  {"library": str(cfg.root), "state": str(STATE), "cache": str(cfg.cache)})
+def _disks():
+    s = runner.session
+    return {"library": s.root, "state": str(s.dir), "cache": str(s.cache_dir)} if s else {}
+
+
+sampler = Sampler(lambda: runner.proc.pid if runner.alive() else None, _disks)
 
 
 @contextlib.asynccontextmanager
@@ -250,7 +310,8 @@ async def lifespan(app):
 
 
 app = FastAPI(title="OrderMyPhotos", lifespan=lifespan)
-policy = Policy(cfg.policy_file)
+app.include_router(review.router)
+review.current = lambda: runner.session
 
 
 @app.get("/", response_class=HTMLResponse)
@@ -258,22 +319,19 @@ def page():
     return (Path(__file__).parent / "web.html").read_text(encoding="utf-8")
 
 
+@app.get("/review", response_class=HTMLResponse)
+def review_page():
+    return (Path(__file__).parent / "review.html").read_text(encoding="utf-8")
+
+
 @app.get("/api/status")
 def api_status():
     return status()
 
 
-@app.get("/api/history")
-def api_history():
-    """The last 10 minutes of resource samples, for the charts."""
-    return list(sampler.history)
-
-
 @app.post("/api/run/start")
-def api_start(pipeline: str = Body("signals", embed=True)):
-    if pipeline not in PIPELINES:
-        raise HTTPException(400, f"pipeline must be one of {', '.join(PIPELINES)}")
-    runner.start(pipeline)
+def api_start():
+    runner.start()
     return status()
 
 
@@ -283,37 +341,75 @@ def api_pause():
     return status()
 
 
+@app.post("/api/phase/{key}/done")
+def api_phase_done(key: str, data: dict | None = Body(None)):
+    runner.done(key, data)
+    return status()
+
+
+@app.post("/api/phase/{key}/goto")
+def api_phase_goto(key: str):
+    if key not in PHASE:
+        raise HTTPException(404)
+    runner.goto(key)
+    return status()
+
+
+@app.get("/api/sessions/browse")
+def api_browse(path: str | None = None):
+    try:
+        return sessions.browse(path)
+    except ValueError as exc:
+        raise HTTPException(400, str(exc))
+
+
+@app.post("/api/sessions")
+def api_new_session(name: str = Body(...), root: str = Body(...), library_index: str | None = Body(None)):
+    """A new session on a root directory; it becomes the active one."""
+    if runner.alive():
+        raise HTTPException(409, "pause the running session first")
+    try:
+        s = sessions.create(name, root, library_index)
+    except ValueError as exc:
+        raise HTTPException(400, str(exc))
+    sessions.set_active(s.id)
+    runner.bind(s)
+    return status()
+
+
+@app.post("/api/sessions/{id_}/activate")
+def api_activate(id_: str):
+    s = sessions.load(id_)
+    if not s:
+        raise HTTPException(404)
+    runner.bind(s)
+    sessions.set_active(s.id)
+    return status()
+
+
+@app.get("/api/history")
+def api_history():
+    """The last 10 minutes of resource samples, for the charts."""
+    return list(sampler.history)
+
+
 @app.get("/api/log", response_class=PlainTextResponse)
 def api_log(lines: int = 200):
     return tail(runner.log_path(), min(lines, 5000))
 
 
-@app.post("/api/labels")
-def api_labels(spec: dict = Body(...)):
-    """A review page's export (album decisions, or the People page's names), imported at once."""
-    from .db import connect
-    from .report import import_labels
-
-    LABELS.mkdir(parents=True, exist_ok=True)
-    kind = "names" if spec.get("names") else "decisions"
-    path = LABELS / f"{time.strftime('%Y%m%d-%H%M%S')}-{kind}.json"
-    path.write_text(json.dumps(spec, ensure_ascii=False), encoding="utf-8")
-    con = connect(cfg.db)
-    try:
-        import_labels(cfg, con, str(path))
-    finally:
-        con.close()
-    return {"saved": path.name}
-
-
 @app.get("/library/{rel:path}")
 def library_file(rel: str):
-    """The review bundle and the originals it links to, read-only; folders left as they are stay hidden. The
-    bundle is served as if it sat at the library root, wherever it's mounted: its pages link to the originals
-    by relative paths from there (`../../<path>`)."""
+    """The session's photos and review bundle, read-only; folders left as they are stay hidden. The bundle is
+    served as if it sat at the library root, wherever it's kept: its pages link to the originals by relative
+    paths from there (`../../<path>`)."""
+    s = runner.session
+    if not s:
+        raise HTTPException(404)
+    cfg = s.config()
     base, sub = (cfg.bundle, rel[len(BUNDLE_URL) + 1:]) if rel.startswith(BUNDLE_URL + "/") else (cfg.root, rel)
     full = (base / sub).resolve()
-    if not full.is_relative_to(base.resolve()) or not full.is_file() or (base == cfg.root and policy(rel) == "leave"):
+    if not full.is_relative_to(base.resolve()) or not full.is_file() or (base == cfg.root and runner.policy(rel) == "leave"):
         raise HTTPException(404)
     return FileResponse(full)
 

@@ -6,16 +6,16 @@
 <title>OrderMyPhotos</title>
 <style>
   :root {
-    --bg: #f6f7f9; --card: #fff; --fg: #1d2129; --muted: #667085; --line: #e4e7ec;
+    --bg: #f6f7f9; --card: #fff; --fg: #1d2129; --muted: #667085; --line: #e4e7ec; --soft: #f0f3f8;
     --accent: #2f6fde; --ok: #1f8a4c; --warn: #b7791f; --bad: #c0392b; --bar: #e8eefc; --c2: #8a5cd6; --c3: #d9822b;
   }
   @media (prefers-color-scheme: dark) {
-    :root { --bg: #14161a; --card: #1c1f24; --fg: #e6e8eb; --muted: #98a2b3; --line: #2c3038;
+    :root { --bg: #14161a; --card: #1c1f24; --fg: #e6e8eb; --muted: #98a2b3; --line: #2c3038; --soft: #23272e;
             --accent: #6b9cff; --ok: #4cc38a; --warn: #e0a84a; --bad: #ef6b5b; --bar: #26324a; --c2: #b18cf2; --c3: #f0a35e; }
   }
   * { box-sizing: border-box; }
   body { margin: 0; background: var(--bg); color: var(--fg); font: 15px/1.45 system-ui, -apple-system, "Segoe UI", sans-serif; }
-  main { max-width: 1180px; margin: 0 auto; padding: 20px 16px 48px; }
+  main { max-width: 1100px; margin: 0 auto; padding: 20px 16px 48px; }
   header { display: flex; flex-wrap: wrap; gap: 12px; align-items: center; justify-content: space-between; margin-bottom: 16px; }
   h1 { font-size: 22px; margin: 0; }
   h2 { font-size: 13px; text-transform: uppercase; letter-spacing: .06em; color: var(--muted); margin: 0 0 10px; font-weight: 600; }
@@ -24,25 +24,34 @@
   .row { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; }
   .badge { display: inline-block; padding: 2px 10px; border-radius: 999px; font-weight: 600; font-size: 13px; background: var(--line); }
   .badge.running { background: var(--accent); color: #fff; }
-  .badge.stopping, .badge.retrying { background: var(--warn); color: #fff; }
+  .badge.stopping, .badge.retrying, .badge.review { background: var(--warn); color: #fff; }
   .badge.finished { background: var(--ok); color: #fff; }
   .badge.failed { background: var(--bad); color: #fff; }
-  button, select { font: inherit; padding: 7px 14px; border-radius: 8px; border: 1px solid var(--line); background: var(--card); color: var(--fg); }
-  button.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
+  button, select, input { font: inherit; padding: 7px 14px; border-radius: 8px; border: 1px solid var(--line); background: var(--card); color: var(--fg); }
+  input { padding: 7px 10px; }
+  button.primary, a.button.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
+  a.button { display: inline-block; padding: 7px 14px; border-radius: 8px; border: 1px solid var(--line); text-decoration: none; color: var(--fg); }
   button:disabled { opacity: .45; }
+  button.link { border: 0; background: none; color: var(--accent); padding: 0; cursor: pointer; }
   .bar { height: 10px; background: var(--bar); border-radius: 999px; overflow: hidden; margin: 6px 0; }
   .bar > div { height: 100%; background: var(--accent); width: 0; transition: width .6s; }
-  .bar.small { height: 6px; margin: 3px 0 8px; }
   .muted { color: var(--muted); }
-  .big { font-size: 26px; font-weight: 650; font-variant-numeric: tabular-nums; }
+  .big { font-size: 24px; font-weight: 650; font-variant-numeric: tabular-nums; }
   .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 14px; }
-  .kpis { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 12px; margin-top: 10px; }
+  .kpis { display: grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); gap: 12px; margin-top: 10px; }
   .kpi .label { font-size: 12px; color: var(--muted); text-transform: uppercase; letter-spacing: .04em; }
-  ol.stages { list-style: none; padding: 0; margin: 0; }
-  ol.stages li { display: flex; justify-content: space-between; padding: 5px 0; border-bottom: 1px solid var(--line); }
-  ol.stages li:last-child { border-bottom: 0; }
-  .dot { display: inline-block; width: 9px; height: 9px; border-radius: 50%; margin-right: 8px; background: var(--line); }
-  .dot.done { background: var(--ok); } .dot.running { background: var(--accent); }
+  /* the wizard */
+  ol.phases { list-style: none; padding: 0; margin: 0; }
+  ol.phases li { display: grid; grid-template-columns: 28px 1fr auto; gap: 10px; align-items: start; padding: 9px 4px; border-bottom: 1px solid var(--line); }
+  ol.phases li:last-child { border-bottom: 0; }
+  ol.phases li.current { background: var(--soft); border-radius: 8px; }
+  .num { width: 24px; height: 24px; border-radius: 50%; display: grid; place-items: center; font-size: 12px; font-weight: 700; background: var(--line); color: var(--muted); }
+  li.done .num { background: var(--ok); color: #fff; } li.current .num { background: var(--accent); color: #fff; }
+  li.current.review .num { background: var(--warn); }
+  li.skipped .num { background: transparent; border: 1px dashed var(--line); }
+  .who { font-size: 11px; text-transform: uppercase; letter-spacing: .05em; color: var(--muted); margin-left: 6px; }
+  .who.you { color: var(--warn); font-weight: 700; }
+  ol.phases .about { font-size: 13px; color: var(--muted); }
   table { border-collapse: collapse; width: 100%; font-size: 14px; }
   th { text-align: left; font-weight: 600; color: var(--muted); font-size: 12px; padding: 4px 6px 4px 0; border-bottom: 1px solid var(--line); }
   td { padding: 4px 6px 4px 0; border-bottom: 1px solid var(--line); vertical-align: top; }
@@ -55,7 +64,12 @@
   .error { color: var(--bad); white-space: pre-wrap; word-break: break-word; }
   .chart { display: block; width: 100%; height: 56px; }
   .legend span { margin-right: 12px; font-size: 12px; } .legend i { display: inline-block; width: 10px; height: 3px; vertical-align: middle; margin-right: 4px; }
-  details > summary { cursor: pointer; color: var(--muted); }
+  details.more > summary { cursor: pointer; color: var(--muted); margin: 18px 0 10px; font-weight: 600; }
+  dialog { border: 1px solid var(--line); border-radius: 12px; background: var(--card); color: var(--fg); max-width: 640px; width: calc(100% - 32px); }
+  dialog::backdrop { background: rgba(0,0,0,.4); }
+  .dirs { max-height: 260px; overflow: auto; border: 1px solid var(--line); border-radius: 8px; margin: 8px 0; }
+  .dirs div { padding: 5px 10px; cursor: pointer; border-bottom: 1px solid var(--line); } .dirs div:hover { background: var(--soft); }
+  .field { display: grid; gap: 4px; margin: 10px 0; } .field input { width: 100%; }
 </style>
 </head>
 <body>
@@ -63,50 +77,66 @@
   <header>
     <h1>OrderMyPhotos</h1>
     <div class="row">
-      <span id="state" class="badge">…</span>
-      <select id="pipeline" aria-label="Pipeline"></select>
-      <button id="start" class="primary">Start</button>
-      <button id="pause">Pause</button>
+      <span class="muted">Session</span>
+      <select id="session" aria-label="Session"></select>
+      <button id="newSession">New session</button>
     </div>
   </header>
 
-  <section class="card">
-    <h2>Now</h2>
-    <div id="nowText">Loading…</div>
-    <div class="bar"><div id="bar"></div></div>
-    <div id="nowNumbers" class="muted"></div>
-    <div class="kpis">
-      <div class="kpi"><div class="label">Photos done in this step</div><div class="big" id="kDone">—</div></div>
-      <div class="kpi"><div class="label">Speed, last minute</div><div class="big" id="kRate">—</div></div>
-      <div class="kpi"><div class="label">Left in this step</div><div class="big" id="kEta">—</div></div>
-      <div class="kpi"><div class="label">Skipped</div><div class="big" id="kFailed">—</div></div>
-    </div>
-    <div id="error" class="error"></div>
-    <div id="stepErrors"></div>
+  <section class="card" id="noSession" hidden>
+    <h2>Start here</h2>
+    <p>A session is one pass over one folder: the whole library, or a test set. Pick its root folder to begin.</p>
+    <button class="primary" onclick="openNew()">New session</button>
   </section>
 
-  <div class="grid">
-    <section class="card"><h2>Stages</h2><ol class="stages" id="stages"></ol>
-      <h3>Steps finished in this run</h3><div class="scroll"><table id="steps"></table></div></section>
-    <section class="card"><h2>Machine</h2>
-      <div class="legend"><span><i style="background:var(--accent)"></i>host CPU %</span><span><i style="background:var(--c2)"></i>4090 %</span><span><i style="background:var(--c3)"></i>B50 %</span></div>
-      <svg class="chart" id="chartLoad" viewBox="0 0 200 56" preserveAspectRatio="none"></svg>
-      <div class="legend"><span><i style="background:var(--accent)"></i>read MB/s</span><span><i style="background:var(--c2)"></i>write MB/s</span></div>
-      <svg class="chart" id="chartIo" viewBox="0 0 200 56" preserveAspectRatio="none"></svg>
-      <table id="machine"></table></section>
-    <section class="card"><h2>Results</h2><div id="results" class="muted">None yet</div>
-      <h3>GPU models loaded (llama-swap)</h3><div id="gpu" class="muted">—</div>
-      <h3>Library</h3><table id="library"></table></section>
-  </div>
+  <div id="wizard" hidden>
+    <section class="card">
+      <div class="row" style="justify-content: space-between">
+        <div><b id="sessionName"></b> <span class="muted" id="sessionRoot"></span></div>
+        <span id="state" class="badge">…</span>
+      </div>
+      <div id="action" style="margin-top: 14px"></div>
+    </section>
 
-  <section class="card"><h2>Skipped photos</h2><div class="scroll"><table id="errors"></table></div></section>
-  <div class="grid">
-    <section class="card"><h2>Recent runs</h2><div class="scroll"><table id="history"></table></div></section>
-    <section class="card"><h2>Stage timings</h2><div class="scroll"><table id="timing"></table></div></section>
+    <section class="card"><h2>Phases</h2><ol class="phases" id="phases"></ol></section>
+
+    <details class="more" id="detailsBox">
+      <summary>Details: steps, machine, library, log</summary>
+      <div class="grid">
+        <section class="card"><h2>Steps finished in this run</h2><div class="scroll"><table id="steps"></table></div></section>
+        <section class="card"><h2>Machine</h2>
+          <div class="legend"><span><i style="background:var(--accent)"></i>host CPU %</span><span><i style="background:var(--c2)"></i>4090 %</span><span><i style="background:var(--c3)"></i>B50 %</span></div>
+          <svg class="chart" id="chartLoad" viewBox="0 0 200 56" preserveAspectRatio="none"></svg>
+          <div class="legend"><span><i style="background:var(--accent)"></i>read MB/s</span><span><i style="background:var(--c2)"></i>write MB/s</span></div>
+          <svg class="chart" id="chartIo" viewBox="0 0 200 56" preserveAspectRatio="none"></svg>
+          <table id="machine"></table>
+          <h3>GPU models loaded (llama-swap)</h3><div id="gpu" class="muted">—</div></section>
+        <section class="card"><h2>Library</h2><table id="library"></table></section>
+      </div>
+      <section class="card"><h2>Skipped photos</h2><div class="scroll"><table id="errors"></table></div></section>
+      <div class="grid">
+        <section class="card"><h2>Recent runs</h2><div class="scroll"><table id="history"></table></div></section>
+        <section class="card"><h2>Stage timings</h2><div class="scroll"><table id="timing"></table></div></section>
+      </div>
+      <section class="card"><h2>Log</h2><pre id="log"></pre></section>
+      <p class="muted">API: <a href="/docs">/docs</a> · <a href="/api/status">/api/status</a> · <a href="/api/history">/api/history</a> · <a href="/api/log?lines=1000">/api/log</a></p>
+    </details>
   </div>
-  <section class="card"><h2>Log</h2><pre id="log"></pre></section>
-  <p class="muted">API: <a href="/docs">/docs</a> · <a href="/api/status">/api/status</a> · <a href="/api/history">/api/history</a> · <a href="/api/log?lines=1000">/api/log</a></p>
 </main>
+
+<dialog id="newDialog">
+  <h2>New session</h2>
+  <div class="field"><label for="newName">Name</label><input id="newName" placeholder="e.g. Library 2026-11 or Test s7"></div>
+  <div class="field"><label>Root folder</label><input id="newRoot" readonly placeholder="pick a folder below">
+    <div class="muted" id="browseInfo"></div>
+    <div class="dirs" id="dirs"></div></div>
+  <div class="row" style="justify-content: flex-end">
+    <button onclick="document.getElementById('newDialog').close()">Cancel</button>
+    <button class="primary" id="createBtn" onclick="createSession()">Create and select</button>
+  </div>
+  <div class="error" id="newError"></div>
+</dialog>
+
 <script>
 const $ = id => document.getElementById(id);
 const esc = s => String(s ?? "").replace(/[&<>"]/g, c => ({"&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;"}[c]));
@@ -116,13 +146,15 @@ const fmtTime = t => t ? new Date(typeof t === "number" ? t * 1000 : t.replace("
 const num = n => n == null ? "—" : Number(n).toLocaleString();
 const gib = b => b == null ? "—" : b >= 2 ** 30 ? `${(b / 2 ** 30).toFixed(1)} GiB` : `${Math.round(b / 2 ** 20)} MiB`;
 const mbs = b => b == null ? "—" : `${(b / 1e6).toFixed(1)} MB/s`;
-let pipelinesShown = false;
+const PAGES = {people: ["/library/OrderMyPhotos/people.html", "Open the People page"], review: ["/review", "Open the album review"], final: ["/review#final", "Open the plan"]};
+let last = null;
 
 async function api(path, body) {
   const r = await fetch(path, body === undefined ? {} : {method: "POST", headers: {"Content-Type": "application/json"}, body: JSON.stringify(body)});
   if (!r.ok) throw new Error((await r.json().catch(() => ({}))).detail || r.statusText);
   return r.json();
 }
+async function act(path, body) { try { render(await api(path, body ?? {})); } catch (e) { alert(e.message); } }
 
 function chart(svg, series, max) {
   const n = Math.max(...series.map(s => s.values.length), 2);
@@ -133,69 +165,86 @@ function chart(svg, series, max) {
   }).join("") + `<text x="198" y="10" text-anchor="end" font-size="9" fill="currentColor" opacity=".5">${Math.round(top)}</text>`;
 }
 
-function render(s) {
-  if (!pipelinesShown) {
-    $("pipeline").innerHTML = Object.entries(s.pipelines).map(([k, v]) => `<option value="${k}">${esc(v.title)}</option>`).join("");
-    pipelinesShown = true;
+function actionHtml(s) {
+  const ph = s.phases.find(p => p.key === s.phase);
+  if (s.state === "finished" || !ph) return `<p><b>Finished.</b> ${s.final ? "Decision saved " + fmtTime(s.final.at) + "." : ""}</p>`;
+  if (ph.kind === "review") {
+    const [href, label] = PAGES[ph.key];
+    const rv = s.review, blocked = ph.key === "review" && rv && rv.unconfirmed;
+    const note = ph.key === "review" && rv ? `<p class="muted">${num(rv.units)} albums and folders · ${num(rv.unconfirmed)} still to confirm`
+      + (rv.to_sort ? ` · ${num(rv.to_sort)} photos taken out, to sort again` : "") + (s.rounds ? ` · round ${s.rounds + 1}` : "") + `</p>` : "";
+    return `<p><span class="who you">Your turn</span> <b>${esc(ph.title)}</b>: ${esc(ph.about)}</p>${note}
+      <div class="row"><a class="button primary" href="${href}" target="_blank">${label}</a>
+      <button onclick="done('${ph.key}')" ${blocked ? "disabled title='confirm every album first'" : ""}>Done, go on</button></div>`;
   }
-  if (document.activeElement !== $("pipeline")) $("pipeline").value = s.pipeline;
-  $("state").textContent = s.state;
-  $("state").className = "badge " + s.state;
-  const busy = s.state === "running" || s.state === "stopping";
-  $("start").disabled = busy;
-  $("start").textContent = ["paused", "retrying", "failed"].includes(s.state) ? "Resume" : "Start";
-  $("pause").disabled = !(s.state === "running" || s.state === "retrying");
-  $("pipeline").disabled = busy;
-
-  const st = s.step;
+  const st = s.step, running = s.state === "running" || s.state === "stopping";
+  let h = `<p><span class="who">Server</span> <b>${esc(ph.title)}</b>: ${esc(ph.about)}</p>`;
   if (st) {
     const pct = st.total ? 100 * (st.ok + st.failed) / st.total : 0;
-    $("bar").style.width = pct.toFixed(1) + "%";
-    $("nowText").innerHTML = `Stage <b>${esc(s.stage)}</b>, step <b>${esc(st.name)}</b> · ${pct.toFixed(1)} % · started ${fmtTime(st.started)}`;
-    $("nowNumbers").textContent = `average ${st.rate}/s since the step started (pid ${s.pid})`;
-    $("kDone").textContent = `${num(st.ok)} / ${num(st.total)}`;
-    $("kRate").textContent = st.recent_rate == null ? "—" : `${st.recent_rate}/s`;
-    $("kEta").textContent = fmtDur(st.eta);
-    $("kFailed").textContent = num(st.failed);
-    $("stepErrors").innerHTML = (st.errors || []).length ? "<h3>Latest skipped in this step</h3>" + st.errors.map(e =>
-      `<div class="error">${esc(e.id.slice(0, 12))}: ${esc(e.error)}</div>`).join("") : "";
-  } else {
-    $("bar").style.width = s.state === "finished" ? "100%" : "0";
-    $("nowText").textContent = s.stage ? `Stage ${s.stage} (no per-photo progress for this stage)` :
-      s.state === "retrying" ? `Failed with exit ${s.last_exit}; retry ${s.retries} at ${fmtTime(s.next_try)}` :
-      s.state === "paused" ? "Paused. Resume continues where it stopped." :
-      s.state === "finished" ? "Finished." : s.state === "failed" ? "Failed too many times in a row. See the log." : "Not started.";
-    $("nowNumbers").textContent = s.started ? `Last started ${fmtTime(s.started)}` : "";
-    for (const k of ["kDone", "kRate", "kEta", "kFailed"]) $(k).textContent = "—";
-    $("stepErrors").innerHTML = "";
+    h += `<div>Stage <b>${esc(s.stage)}</b>, step <b>${esc(st.name)}</b> · ${pct.toFixed(1)} %</div><div class="bar"><div style="width:${pct.toFixed(1)}%"></div></div>
+      <div class="kpis"><div class="kpi"><div class="label">Photos done</div><div class="big">${num(st.ok)} / ${num(st.total)}</div></div>
+      <div class="kpi"><div class="label">Speed, last minute</div><div class="big">${st.recent_rate == null ? "—" : st.recent_rate + "/s"}</div></div>
+      <div class="kpi"><div class="label">Left in this step</div><div class="big">${fmtDur(st.eta)}</div></div>
+      <div class="kpi"><div class="label">Skipped</div><div class="big">${num(st.failed)}</div></div></div>`
+      + ((st.errors || []).length ? st.errors.map(e => `<div class="error">${esc(e.id.slice(0, 12))}: ${esc(e.error)}</div>`).join("") : "");
+  } else if (running) {
+    h += `<p class="muted">Stage ${esc(s.stage || "starting")}…</p>`;
+  } else if (s.state === "retrying") {
+    h += `<p class="error">It stopped with exit ${s.last_exit}. Retry ${s.retries} at ${fmtTime(s.next_try)}.</p>`;
+  } else if (s.state === "failed") {
+    h += `<p class="error">It failed ${s.retries} times in a row. See the log in Details. ${esc(s.error || "")}</p>`;
+  } else if (s.state === "paused") {
+    h += `<p class="muted">Paused. Start goes on where it stopped.</p>`;
   }
-  $("error").textContent = s.error || "";
+  h += `<div class="row" style="margin-top:12px"><button class="primary" onclick="act('/api/run/start')" ${running ? "disabled" : ""}>${s.state === "idle" ? "Start" : "Continue"}</button>
+        <button onclick="act('/api/run/pause')" ${!(running || s.state === "retrying") ? "disabled" : ""}>Pause</button>
+        <span class="muted">Start runs every server phase and stops when you're needed.</span></div>`;
+  return h;
+}
 
-  $("stages").innerHTML = s.stages.map(x => `<li><span><span class="dot ${x.state}"></span>${esc(x.stage)}</span>`
-    + `<span class="muted">${x.state === "done" ? fmtDur(x.seconds) : x.state === "running" ? "running" : ""}</span></li>`).join("");
+function render(s) {
+  last = s;
+  const sel = $("session");
+  if (document.activeElement !== sel) {
+    sel.innerHTML = (s.session ? "" : "<option value=''>—</option>") + s.sessions.map(x => `<option value="${x.id}">${esc(x.name)}</option>`).join("");
+    if (s.session) sel.value = s.session.id;
+  }
+  $("noSession").hidden = !!s.session;
+  $("wizard").hidden = !s.session;
+  if (!s.session) return;
+  $("sessionName").textContent = s.session.name;
+  $("sessionRoot").textContent = s.session.root;
+  $("state").textContent = s.state === "review" ? "waiting for you" : s.state;
+  $("state").className = "badge " + s.state;
+  $("action").innerHTML = actionHtml(s);
+  const busy = s.state === "running" || s.state === "stopping";
+  $("phases").innerHTML = s.phases.map((p, i) => `<li class="${p.state} ${p.kind}"><span class="num">${p.state === "done" ? "✓" : i + 1}</span>
+    <div><b>${esc(p.title)}</b><span class="who ${p.kind === "review" ? "you" : ""}">${p.kind === "review" ? "you" : "server"}</span>
+    <div class="about">${esc(p.about)}${p.state === "skipped" ? " (not needed)" : ""}</div></div>
+    <div class="muted">${p.seconds != null ? fmtDur(p.seconds) : ""}${p.state === "done" && !busy ? ` <button class="link" onclick="redo('${p.key}')">redo</button>` : ""}</div></li>`).join("");
+  renderDetails(s);
+}
+
+function renderDetails(s) {
   $("steps").innerHTML = s.steps.length ? "<tr><th>Step</th><th class='n'>Done</th><th class='n'>Skipped</th><th class='n'>Time</th><th class='n'>/s</th></tr>"
     + s.steps.slice().reverse().map(x => `<tr><td>${esc(x.name)}${x.stopped ? " <span class='muted'>(stopped)</span>" : ""}</td><td class="n">${num(x.ok)}</td>`
     + `<td class="n">${num(x.failed)}</td><td class="n">${fmtDur(x.seconds)}</td><td class="n">${x.seconds ? (x.ok / x.seconds).toFixed(1) : "—"}</td></tr>`).join("")
     : "<tr><td class='muted'>None yet</td></tr>";
-
-  const m = s.system || {}, g = m.gpu4090, rows = [];
+  const m = s.system || {}, g = m.gpu4090, load = m.b50_load || {}, rows = [];
   rows.push(["Host CPU", m.host_cpu == null ? "—" : `${m.host_cpu} % of ${m.cores} cores` + (m.load ? ` · load ${m.load.map(x => x.toFixed(1)).join(" ")}` : "")]);
   rows.push(["Host memory", m.mem_total ? `${gib(m.mem_total - m.mem_available)} of ${gib(m.mem_total)} used` : "—"]);
   rows.push(["Run: CPU", m.cpu == null ? "—" : `${(m.cpu / 100).toFixed(1)} cores · ${m.processes} processes`]);
   rows.push(["Run: memory", gib(m.rss)]);
   rows.push(["Run: disk", `read ${mbs(m.read)} · write ${mbs(m.write)}`]);
-  const load = m.b50_load || {};
   rows.push(["Arc Pro B50", (load.gt0 != null ? `${load.gt0} % compute` + (load.gt1 ? ` · ${load.gt1} % media` : "") : "—")
     + (m.b50_vram_total_used != null ? ` · ${gib(m.b50_vram_total_used)} of 16 GiB VRAM` : "")]);
   rows.push(["Run: B50", m.b50_vram ? `${gib(m.b50_vram)} VRAM` + Object.entries(m.b50_busy || {}).filter(([, v]) => v > 0).map(([e, v]) => ` · ${e} ${v} %`).join("") : "not in use"]);
   rows.push(["RTX 4090", g ? `${g.util} % · ${gib(g.vram_used)} of ${gib(g.vram_total)} · ${Math.round(g.power)} W · ${g.temp} °C` : "—"]);
   for (const [k, d] of Object.entries(m.disks || {})) rows.push([`Free on ${k}`, `${gib(d.free)} of ${gib(d.total)}`]);
   $("machine").innerHTML = rows.map(([k, v]) => `<tr><td class="muted">${k}</td><td class="n">${esc(v)}</td></tr>`).join("");
-
-  $("results").innerHTML = s.results.length ? s.results.map(u => `<div><a href="${u}" target="_blank">${esc(u.split("/").pop())}</a></div>`).join("") : "None yet";
   $("gpu").textContent = s.gpu.length ? s.gpu.map(x => x.model + (x.state && x.state !== "ready" ? ` (${x.state})` : "")).join(", ") : "none";
   const lib = s.library || {}, photos = lib.photos || 0;
-  $("library").innerHTML = lib.error ? `<tr><td class="error">${esc(lib.error)}</td></tr>` :
+  $("library").innerHTML = lib.error ? `<tr><td class="muted">${esc(lib.error)}</td></tr>` :
     `<tr><td>Files</td><td class="n">${num(lib.files)}</td></tr><tr><td>Photos (unique)</td><td class="n">${num(lib.photos)}</td></tr>`
     + `<tr><td>Database</td><td class="n">${gib(lib.db_bytes)}</td></tr>`
     + Object.entries(lib.by_policy || {}).map(([k, v]) => `<tr><td class="muted">files: ${esc(k)}</td><td class="n">${num(v)}</td></tr>`).join("")
@@ -206,16 +255,43 @@ function render(s) {
     let msg = e.data; try { msg = JSON.parse(e.data).error; } catch (x) {}
     return `<tr><td class="muted">${fmtTime(e.created)}</td><td>${esc(e.kind.slice(6))}</td><td>${esc(String(e.id).slice(0, 40))}</td><td class="error">${esc(msg)}</td></tr>`;
   }).join("") : "<tr><td class='muted'>None</td></tr>";
-  $("history").innerHTML = s.history.length ? "<tr><th>Pipeline</th><th>From → to</th><th>End</th></tr>" + s.history.slice().reverse().map(h =>
-    `<tr><td>${esc(h.pipeline)}</td><td class="muted">${fmtTime(h.started)} → ${fmtTime(h.ended)}</td>`
+  $("history").innerHTML = s.history.length ? "<tr><th>Phase</th><th>From → to</th><th>End</th></tr>" + s.history.slice().reverse().map(h =>
+    `<tr><td>${esc(h.phase)}</td><td class="muted">${fmtTime(h.started)} → ${fmtTime(h.ended)}</td>`
     + `<td>${h.exit === 0 ? "finished" : h.exit === 143 ? "paused" : "exit " + h.exit}</td></tr>`).join("") : "<tr><td class='muted'>None yet</td></tr>";
   $("timing").innerHTML = (lib.timing || []).length ? "<tr><th>Stage</th><th class='n'>Items</th><th class='n'>Time</th><th class='n'>/s</th><th>Where</th></tr>"
     + lib.timing.map(t => `<tr><td>${esc(t.stage)}</td><td class="n">${num(t.items)}</td><td class="n">${fmtDur(t.seconds)}</td>`
     + `<td class="n">${t.seconds ? (t.items / t.seconds).toFixed(1) : "—"}</td><td class="muted">${esc(t.device || "")}</td></tr>`).join("") : "<tr><td class='muted'>None yet</td></tr>";
 }
 
+async function done(key) {
+  let body = {};
+  if (key === "final") return location.assign("/review#final");
+  if (!confirm(key === "names" ? "Names saved on the People page? The run goes on with them." : "Go on?")) return;
+  act(`/api/phase/${key}/done`, body);
+}
+async function redo(key) { if (confirm("Run again from this phase? Later phases are redone as they come.")) act(`/api/phase/${key}/goto`); }
+
+async function browse(path) {
+  try {
+    const b = await api("/api/sessions/browse" + (path ? "?path=" + encodeURIComponent(path) : ""));
+    $("newRoot").value = b.path || "";
+    $("browseInfo").textContent = b.path ? `${b.dirs.length} folders here${b.photos_here ? `, ${b.photos_here} photos` : ""}` : "Pick where the library or test set is:";
+    $("dirs").innerHTML = (b.parent ? `<div data-p="${esc(b.parent)}">⬑ up</div>` : "")
+      + b.dirs.map(d => `<div data-p="${esc(b.path ? b.path + "/" + d : d)}">📁 ${esc(b.path ? d : d)}</div>`).join("");
+    for (const el of $("dirs").children) el.onclick = () => browse(el.dataset.p);
+  } catch (e) { $("newError").textContent = e.message; }
+}
+function openNew() { $("newError").textContent = ""; $("newDialog").showModal(); browse(null); }
+async function createSession() {
+  try { render(await api("/api/sessions", {name: $("newName").value || "Session", root: $("newRoot").value})); $("newDialog").close(); }
+  catch (e) { $("newError").textContent = e.message; }
+}
+$("newSession").onclick = openNew;
+$("session").onchange = e => e.target.value && act(`/api/sessions/${e.target.value}/activate`);
+
 async function refresh() {
-  try { render(await api("/api/status")); } catch (e) { $("nowText").textContent = "Can't reach the server: " + e.message; }
+  try { render(await api("/api/status")); } catch (e) { $("sessionName").textContent = "Can't reach the server: " + e.message; }
+  if (!last || !last.session || !$("detailsBox").open) return;
   try {
     const h = await api("/api/history");
     chart($("chartLoad"), [{values: h.map(x => x.host_cpu), color: "var(--accent)"}, {values: h.map(x => x.gpu), color: "var(--c2)"},
@@ -226,8 +302,6 @@ async function refresh() {
   try { const r = await fetch("/api/log?lines=120"); const pre = $("log"); const atEnd = pre.scrollTop + pre.clientHeight >= pre.scrollHeight - 20;
         pre.textContent = await r.text(); if (atEnd) pre.scrollTop = pre.scrollHeight; } catch (e) {}
 }
-$("start").onclick = async () => { try { render(await api("/api/run/start", {pipeline: $("pipeline").value})); } catch (e) { alert(e.message); } };
-$("pause").onclick = async () => { try { render(await api("/api/run/pause", {})); } catch (e) { alert(e.message); } };
 refresh();
 setInterval(refresh, 3000);
 </script>
