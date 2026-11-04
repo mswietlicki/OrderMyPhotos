@@ -19,7 +19,7 @@ import signal
 import threading
 import time
 from collections import deque
-from concurrent.futures import ProcessPoolExecutor, ThreadPoolExecutor
+from concurrent.futures import FIRST_COMPLETED, ProcessPoolExecutor, ThreadPoolExecutor, wait
 from pathlib import Path
 
 import httpx
@@ -123,6 +123,39 @@ def worker_pool(workers: int, threads=False):
 def check():
     if _stop:
         raise Stopped("stop requested")
+
+
+# Requests to the chat model at once: it serves 4 (llama-swap's qwen3.8-27b, -np 4). That pays where answers
+# are long (captions: 1.5x on s6); questions answered with one token are bound by reading the prompt, and four
+# at once took as long as one after the other (the judge on s6, P52), so those stay one at a time.
+CHAT_PARALLEL = int(os.environ.get("OMP_CHAT_PARALLEL", "4"))
+
+
+def imap(fn, items, workers: int = CHAT_PARALLEL):
+    """fn(item) for each item on `workers` threads: yields (item, result, error) as they finish, in any order.
+    At most twice `workers` are in hand, so a stop (raised here, between results) waits only for those.
+    The caller writes the results, in its own thread, on its own connection."""
+    it = iter(items)
+    with worker_pool(workers, threads=True) as pool:
+        pending = {}
+
+        def fill():
+            while len(pending) < 2 * workers:
+                try:
+                    x = next(it)
+                except StopIteration:
+                    return
+                pending[pool.submit(fn, x)] = x
+
+        fill()
+        while pending:
+            done, _ = wait(pending, return_when=FIRST_COMPLETED)
+            for f in done:
+                x = pending.pop(f)
+                exc = f.exception()
+                yield x, None if exc else f.result(), exc
+            check()
+            fill()
 
 
 def sleep(seconds: float):

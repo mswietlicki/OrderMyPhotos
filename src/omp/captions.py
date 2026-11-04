@@ -15,6 +15,7 @@ import yaml
 
 from .config import PACKAGE_DIR, Config
 from .db import get_data, get_vecs, log_timing
+from .runtime import imap
 from .text import OCR_TAG, ocr_needed
 from .vlm import VLM, image_part
 
@@ -205,31 +206,44 @@ def run(cfg: Config, con, run_id: str):
     mapper = TagMapper(cfg)
     siglip = SiglipCheck(cfg, mapper.paths, mapper.syn)
     sig = get_vecs(con, "siglip")
-    for r in todo:
-        dt = datetime.fromisoformat(r["taken_local"])
-        ctx = [ALBUM_LINE.format(album_title(r["album"]))]
-        g = None
-        if r["lat"] is not None:
-            g = geo.lookup(r["lat"], r["lon"])
-            near = "in" if g["km"] < 2 else f"about {g['km']:.0f} km from"
-            ctx.append(f"- Place: {near} {g['place']}, {g['region']}, {g['country']}")
-        ctx.append(f"- When: a {dt.strftime('%A')} in {SEASONS[dt.month]} ({dt.strftime('%B')}), {part_of_day(dt.hour)}")
-        if r["album"] in trusted:
-            ctx.append(f"- The owner's notes for this album: {trusted[r['album']][:500]}")
-        if names.get(r["id"]):
-            ctx.append(RECOGNIZED + names[r["id"]])
-        if moods.get(r["id"]):
-            ctx.append(EXPRESSIONS_LINE + moods[r["id"]])
+
+    def prepared():
+        """Each photo's context, built here (the geocoder isn't shared across threads)."""
+        for r in todo:
+            dt = datetime.fromisoformat(r["taken_local"])
+            ctx = [ALBUM_LINE.format(album_title(r["album"]))]
+            g = None
+            if r["lat"] is not None:
+                g = geo.lookup(r["lat"], r["lon"])
+                near = "in" if g["km"] < 2 else f"about {g['km']:.0f} km from"
+                ctx.append(f"- Place: {near} {g['place']}, {g['region']}, {g['country']}")
+            ctx.append(f"- When: a {dt.strftime('%A')} in {SEASONS[dt.month]} ({dt.strftime('%B')}), {part_of_day(dt.hour)}")
+            if r["album"] in trusted:
+                ctx.append(f"- The owner's notes for this album: {trusted[r['album']][:500]}")
+            if names.get(r["id"]):
+                ctx.append(RECOGNIZED + names[r["id"]])
+            if moods.get(r["id"]):
+                ctx.append(EXPRESSIONS_LINE + moods[r["id"]])
+            yield r, dt, ctx, g
+
+    def ask(item):
+        r, _, ctx, _ = item
         t1 = time.perf_counter()
-        try:
-            out = vlm.json([image_part(cfg.preview(r["id"])), {"type": "text", "text": INSTRUCTIONS.format(context="\n".join(ctx))}],
-                           SCHEMA, SYSTEM)
-        except (ValueError, KeyError) as exc:  # one bad answer skips that photo, not the stage
+        out = vlm.json([image_part(cfg.preview(r["id"])), {"type": "text", "text": INSTRUCTIONS.format(context="\n".join(ctx))}],
+                       SCHEMA, SYSTEM)
+        return out, time.perf_counter() - t1
+
+    # Several photos at once: the chat model serves 4 requests together (P52).
+    for (r, dt, ctx, g), res, exc in imap(ask, prepared()):
+        if isinstance(exc, (ValueError, KeyError)):  # one bad answer skips that photo, not the stage
             print(f"captions: skipped {r['id'][:10]}: {exc}")
             continue
+        if exc:
+            raise exc
+        out, seconds = res
         out["context"], out["geo"], out["month"], out["recognized"] = ctx, g, dt.month, names.get(r["id"], "")
         con.execute("INSERT OR REPLACE INTO caption(id, model, data, seconds) VALUES (?,?,?,?)",
-                    (r["id"], model, json.dumps(out, ensure_ascii=False), time.perf_counter() - t1))
+                    (r["id"], model, json.dumps(out, ensure_ascii=False), seconds))
         con.commit()
 
     # Tags: re-mapped for every caption on each run (cheap), so vocabulary edits apply without new VLM calls.
