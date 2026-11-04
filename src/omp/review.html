@@ -188,16 +188,20 @@ function tile(p, i) {
     <div class="tools"><button data-a="move" title="Move to… (M)">→</button><button data-a="out" title="Take out or put back (O)">✕</button></div></div>`;
 }
 
+// A burst is shown in one piece, where its first photo comes, even when other photos fall between its frames
+// in time (messenger photos have a date and no time, so they sort by name): the grid, the arrows and the large
+// view's burst column then all follow the burst.
 function section(list) {
-  const out = []; let i = 0;
-  while (i < list.length) {
-    const p = list[i];
-    if (p.gid != null) {
-      const j0 = i; while (i < list.length && list[i].gid === p.gid) i++;
-      if (i - j0 > 1) { out.push(`<div class="burst"><div class="lbl">burst of ${i - j0}</div>${list.slice(j0, i).map(q => tile(q, photos.indexOf(q))).join("")}</div>`); continue; }
-      i = j0;
-    }
-    out.push(`<div class="solo">${tile(p, photos.indexOf(p))}</div>`); i++;
+  const members = {};
+  for (const p of list) if (p.gid != null) (members[p.gid] = members[p.gid] || []).push(p);
+  const out = [], placed = new Set();
+  for (const p of list) {
+    const burst = p.gid != null ? members[p.gid] : null;
+    if (burst && burst.length > 1) {
+      if (placed.has(p.gid)) continue;
+      placed.add(p.gid);
+      out.push(`<div class="burst"><div class="lbl">burst of ${burst.length}</div>${burst.map(q => tile(q, photos.indexOf(q))).join("")}</div>`);
+    } else out.push(`<div class="solo">${tile(p, photos.indexOf(p))}</div>`);
   }
   return `<div class="grid">${out.join("")}</div>`;
 }
