@@ -59,9 +59,14 @@
   .help { color: var(--muted); font-size: 12px; margin-top: 18px; } kbd { border: 1px solid var(--line); border-radius: 4px; padding: 0 4px; font-size: 11px; }
   dialog { border: 1px solid var(--line); border-radius: 12px; background: var(--card); color: var(--fg); }
   dialog::backdrop { background: rgba(0,0,0,.6); }
-  #big { max-width: min(1200px, 96vw); padding: 0; } #big img { max-width: 100%; max-height: 78vh; display: block; margin: 0 auto; }
+  #big { max-width: min(1200px, 96vw); padding: 0; } #big > img { max-width: 100%; max-height: 70vh; display: block; margin: 0 auto; }
   #big .info { padding: 10px 14px; } #big .info .muted { color: var(--muted); font-size: 12px; }
   .muted { color: var(--muted); }
+  .err { color: var(--bad); } #bigInfo b.keep { color: var(--ok); } #bigInfo b.archive { color: var(--bad); }
+  #big kbd { border: 1px solid var(--line); border-radius: 4px; padding: 0 4px; font-size: 11px; }
+  .strip { display: flex; gap: 6px; align-items: center; overflow-x: auto; margin: 8px 0 4px; padding-bottom: 4px; }
+  .strip img { height: 70px; width: 70px; object-fit: cover; border-radius: 6px; cursor: pointer; outline: 2px solid transparent; outline-offset: -2px; flex: none; }
+  .strip img.archive, .strip img.out { opacity: .4; outline-color: var(--bad); } .strip img.cur { outline: 3px solid var(--accent); opacity: 1; }
   #final .card { background: var(--card); border: 1px solid var(--line); border-radius: 10px; padding: 16px; margin-bottom: 14px; max-width: 760px; }
   table { border-collapse: collapse; width: 100%; } td { padding: 4px 6px 4px 0; border-bottom: 1px solid var(--line); } td.n { text-align: right; }
   label.opt { display: block; padding: 8px 10px; border: 1px solid var(--line); border-radius: 8px; margin: 6px 0; cursor: pointer; }
@@ -91,14 +96,21 @@
 </dialog>
 
 <script>
+// Every change is saved on the server at once (P47): nothing is kept in the page, so leaving it loses nothing,
+// and the review is the same from any device or browser.
 const $ = id => document.getElementById(id);
 const esc = s => String(s ?? "").replace(/[&<>"]/g, c => ({"&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;"}[c]));
-let units = [], targets = [], filter = "open", cur = null, photos = [], edits = null, focusIdx = 0, moving = null;
+let units = [], targets = [], filter = "open", cur = null, photos = [], focusIdx = -1, moving = null, unitsTimer = null;
 
 async function api(path, body) {
   const r = await fetch(path, body === undefined ? {} : {method: "POST", headers: {"Content-Type": "application/json"}, body: JSON.stringify(body)});
   if (!r.ok) throw new Error((await r.json().catch(() => ({}))).detail || r.statusText);
   return r.json();
+}
+function saved(ok, msg) {
+  const el = $("saved");
+  el.textContent = ok ? "Saved" : "Not saved: " + msg;
+  el.className = ok ? "muted" : "err";
 }
 
 // --- the list of albums and folders ---
@@ -110,11 +122,12 @@ async function loadUnits() {
   $("targets").innerHTML = targets.map(t => `<option value="${esc(t)}">`).join("");
   drawUnits();
 }
+const refreshUnits = () => { clearTimeout(unitsTimer); unitsTimer = setTimeout(() => loadUnits().catch(() => {}), 1200); };
 function drawUnits() {
   const q = $("search").value.toLowerCase();
-  const shown = units.filter(u => (filter === "all" || u.state === filter || (filter === "confirmed" && u.state === "dismantled"))
-                                  && (!q || u.key.toLowerCase().includes(q)));
-  $("units").innerHTML = shown.map(u => `<div class="unit ${cur && cur.key === u.key ? "sel" : ""}" data-k="${esc(u.key)}">
+  const shownUnits = units.filter(u => (filter === "all" || u.state === filter || (filter === "confirmed" && u.state === "dismantled"))
+                                       && (!q || u.key.toLowerCase().includes(q) || u.name.toLowerCase().includes(q)));
+  $("units").innerHTML = shownUnits.map(u => `<div class="unit ${cur && cur.key === u.key ? "sel" : ""}" data-k="${esc(u.key)}">
     <div class="t"><span class="dot ${u.state}"></span>${esc(u.name)}</div>
     <div class="s">${u.kind}${u.new ? " · new" : ""} · ${u.n} photos${u.open && u.state === "open" ? ` · ${u.open} to check` : ""}${u.unsure ? ` · ${u.unsure} unsure` : ""}${u.out ? ` · ${u.out} out` : ""}</div></div>`).join("")
     || `<p class="muted" style="padding: 0 12px">${filter === "open" ? "Nothing left to review here." : "None."}</p>`;
@@ -123,24 +136,20 @@ function drawUnits() {
 
 // --- one unit ---
 async function openUnit(key) {
-  if (edits && dirty() && !confirm("Leave without confirming? Your changes here are lost.")) return;
   const d = await api("/api/review/unit?key=" + encodeURIComponent(key));
-  cur = d.unit; photos = d.photos; edits = {verdicts: {}, out: new Set(), moves: {}, back: new Set()}; focusIdx = -1;
+  cur = d.unit; photos = d.photos; focusIdx = -1;
+  history.replaceState(null, "", "#u=" + encodeURIComponent(key));
   window.scrollTo(0, 0);
-  location.hash = "u=" + encodeURIComponent(key);
   drawUnits(); drawUnit();
 }
-const dirty = () => edits && (Object.keys(edits.verdicts).length || edits.out.size || edits.back.size || Object.keys(edits.moves).length);
-const verdictOf = p => edits.verdicts[p.id] || p.verdict;
 
 function tile(p, i) {
-  const v = verdictOf(p), out = edits.out.has(p.id) || (p.state === "out" && !edits.back.has(p.id)), to = edits.moves[p.id];
   const badges = [p.state === "open" && p.incoming ? `<span class="new">new</span>` : "", p.unsure ? `<span class="uns" title="${esc(p.unsure)}">unsure</span>` : "",
                   p.best ? "<span>★</span>" : "", p.sub ? `<span>${esc(p.sub.trim().replace("/", ""))}</span>` : ""].join("");
-  return `<div class="ph ${v} ${out ? "out" : ""} ${to ? "moved" : ""} ${i === focusIdx ? "focus" : ""}" data-i="${i}" data-to="${esc(to || "")}" title="${esc(p.name)}">
+  return `<div class="ph ${p.verdict} ${p.state === "out" ? "out" : ""} ${i === focusIdx ? "focus" : ""}" data-i="${i}" title="${esc(p.name)}">
     <img loading="lazy" src="/api/photo/${p.id}/thumb" style="${p.rotate ? `transform: rotate(${p.rotate}deg)` : ""}" alt="">
     <div class="b">${badges}</div>
-    <div class="tools"><button data-a="big" title="Show (Z)">⤢</button><button data-a="move" title="Move to… (M)">→</button><button data-a="out" title="Take out (O)">✕</button></div></div>`;
+    <div class="tools"><button data-a="big" title="Show (Z)">⤢</button><button data-a="move" title="Move to… (M)">→</button><button data-a="out" title="Take out or put back (O)">✕</button></div></div>`;
 }
 
 function section(list) {
@@ -157,23 +166,30 @@ function section(list) {
   return `<div class="grid">${out.join("")}</div>`;
 }
 
+function summary() {
+  const keep = photos.filter(p => p.verdict === "keep" && p.state !== "out").length, out = photos.filter(p => p.state === "out").length;
+  const fresh = photos.filter(p => p.state === "open").length;
+  return `${photos.length} photos · ${keep} kept · ${photos.length - keep - out} archived` + (out ? ` · ${out} taken out` : "")
+    + (fresh && fresh < photos.length ? ` · ${fresh} to check` : "");
+}
+
 function drawUnit() {
   const u = cur, fresh = photos.filter(p => p.state !== "confirmed"), done = photos.filter(p => p.state === "confirmed");
-  const keep = photos.filter(p => verdictOf(p) === "keep" && !edits.out.has(p.id) && !edits.moves[p.id]).length;
   const nameOnly = u.kind === "album" && /^\d{4}-\d{2}-\d{2} /.test(u.name) ? u.name.slice(11) : u.name;
   $("main").innerHTML = `<div class="head">
       <input class="name" id="uname" value="${esc(nameOnly)}" title="Rename" ${u.state === "dismantled" ? "disabled" : ""}>
       <span class="tag">${u.kind}${u.new ? ", new" : ""}</span>
       ${u.state === "dismantled" ? `<span class="tag">dismantled</span>` : ""}
       <span style="flex:1"></span>
+      <span id="saved" class="muted"></span>
       ${u.state === "open" ? `<button class="primary" onclick="confirmUnit()" title="Enter">Confirm</button>` : `<button onclick="reopen()">Review again</button>`}
       ${u.state !== "dismantled" ? `<button class="danger" onclick="dismantle()" title="Sort all its photos again">Dismantle</button>` : ""}
     </div>
     <div class="path">${esc(u.key)}</div>
-    <div class="summary">${photos.length} photos · ${keep} kept · ${photos.length - keep} archived or leaving${fresh.length && done.length ? ` · ${fresh.length} to check` : ""}</div>
+    <div class="summary" id="summary">${summary()}</div>
     ${fresh.length ? section(fresh) : `<p class="muted">Everything here is confirmed.</p>`}
     ${done.length ? `<details class="done" ${fresh.length ? "" : "open"}><summary>Already confirmed (${done.length})</summary>${section(done)}</details>` : ""}
-    <div class="help">Click a photo to keep or archive it · <kbd>O</kbd> take out or put back · <kbd>M</kbd> move · <kbd>Z</kbd> show · <kbd>←</kbd><kbd>→</kbd><kbd>↑</kbd><kbd>↓</kbd> select · <kbd>Enter</kbd> confirm</div>`;
+    <div class="help">Click a photo to keep or archive it · <kbd>O</kbd> take out or put back · <kbd>M</kbd> move · <kbd>Z</kbd> show large · <kbd>←</kbd><kbd>→</kbd><kbd>↑</kbd><kbd>↓</kbd> select · <kbd>Enter</kbd> confirm · every change is saved at once</div>`;
   for (const el of $("main").querySelectorAll(".ph")) {
     el.onclick = e => {
       const i = +el.dataset.i, a = e.target.dataset.a;
@@ -185,8 +201,20 @@ function drawUnit() {
     };
     el.ondblclick = () => showBig(photos[+el.dataset.i]);
   }
+  const name = $("uname");
+  name.onchange = () => rename(name.value);
+  name.onkeydown = e => { if (e.key === "Enter") name.blur(); };
   const tiles = shown();
   setFocus(tiles.some(el => +el.dataset.i === focusIdx) ? focusIdx : tiles.length ? +tiles[0].dataset.i : -1);
+}
+
+// One tile drawn again after a change, so the page doesn't jump.
+function redraw(p) {
+  const i = photos.indexOf(p), el = $("main").querySelector(`.ph[data-i="${i}"]`);
+  if (!el) return drawUnit();
+  el.className = `ph ${p.verdict} ${p.state === "out" ? "out" : ""} ${i === focusIdx ? "focus" : ""}`;
+  $("summary").textContent = summary();
+  if ($("big").open && photos[focusIdx] === p) bigInfo(p);
 }
 
 // The tiles as they're shown: the new ones first, then the confirmed ones when unfolded.
@@ -220,66 +248,111 @@ function step(dir) {
   }
   setFocus(+tiles[k].dataset.i);
 }
-function toggleVerdict(p) { const v = verdictOf(p) === "keep" ? "archive" : "keep"; if (v === p.verdict) delete edits.verdicts[p.id]; else edits.verdicts[p.id] = v; drawUnit(); }
+
+// --- changes, each saved at once ---
+async function act(p, action, target, undo) {
+  try { await api("/api/review/photo", {key: cur.key, id: p.id, action, target}); saved(true); refreshUnits(); }
+  catch (e) { undo(); redraw(p); saved(false, e.message); }
+}
+function toggleVerdict(p) {
+  const was = p.verdict;
+  p.verdict = was === "keep" ? "archive" : "keep";
+  redraw(p);
+  act(p, p.verdict, null, () => { p.verdict = was; });
+}
 function toggleOut(p) {
-  if (p.state === "out") { if (edits.back.has(p.id)) edits.back.delete(p.id); else edits.back.add(p.id); }  // taken out earlier: put back
-  else if (edits.out.has(p.id)) edits.out.delete(p.id);
-  else { edits.out.add(p.id); delete edits.moves[p.id]; }
-  drawUnit();
+  const was = p.state;
+  p.state = was === "out" ? "confirmed" : "out";  // put back: pinned here; out: sorted again in the next round
+  redraw(p);
+  act(p, was === "out" ? "back" : "out", null, () => { p.state = was; });
 }
 function askMove(p) { moving = p; $("moveTo").value = ""; $("moveDlg").showModal(); $("moveTo").focus(); }
-function doMove() {
+async function doMove() {
   let t = $("moveTo").value.trim(); if (!t) return;
   if (!targets.includes(t) && !t.includes("/")) t = "new:" + t;  // a new album, dated by its photos
-  edits.moves[moving.id] = t; edits.out.delete(moving.id); $("moveDlg").close(); drawUnit();
+  $("moveDlg").close();
+  const p = moving;
+  try {
+    await api("/api/review/photo", {key: cur.key, id: p.id, action: "move", target: t});
+    const i = photos.indexOf(p);
+    photos.splice(i, 1);
+    focusIdx = Math.min(i, photos.length - 1);
+    if ($("big").open) { if (photos.length) showBig(photos[focusIdx]); else $("big").close(); }
+    drawUnit(); saved(true); refreshUnits();
+  } catch (e) { saved(false, e.message); }
 }
+async function rename(name) {
+  try { await api("/api/review/unit/rename", {key: cur.key, name: name.trim()}); saved(true); refreshUnits(); }
+  catch (e) { saved(false, e.message); }
+}
+
+// --- large view: the arrows go on to the next photo ---
 function showBig(p) {
   $("bigImg").src = `/api/photo/${p.id}/preview`;
   $("bigImg").style.transform = p.rotate ? `rotate(${p.rotate}deg)` : "";
+  bigInfo(p);
+  if (!$("big").open) $("big").showModal();
+}
+function bigInfo(p) {
   const c = p.caption || {};
-  $("bigInfo").innerHTML = `<b>${esc(c.title_en || p.name)}</b>${c.title_pl ? ` <span class="muted">· ${esc(c.title_pl)}</span>` : ""}
+  $("bigInfo").innerHTML = `<b class="${p.verdict}">${p.state === "out" ? "Taken out" : p.verdict === "keep" ? "Kept" : "Archived"}</b> ·
+    <b>${esc(c.title_en || p.name)}</b>${c.title_pl ? ` <span class="muted">· ${esc(c.title_pl)}</span>` : ""}
     <div>${esc(c.description_en || "")}</div>
     <div class="muted">${esc(p.taken || "")} · ${esc(p.from)}/${esc(p.name)}${p.why ? " · " + esc(p.why) : ""}${p.unsure ? " · unsure: " + esc(p.unsure) : ""}
-    ${p.pipeline && p.pipeline !== verdictOf(p) ? ` · the pipeline said ${p.pipeline}` : ""}${p.rotate ? ` · turned ${p.rotate}°` : ""}
-    · <a href="/library/${p.path.split("/").map(encodeURIComponent).join("/")}" target="_blank">original</a></div>`;
-  $("big").showModal();
+    ${p.pipeline && p.pipeline !== p.verdict ? ` · the pipeline said ${p.pipeline}` : ""}${p.rotate ? ` · turned ${p.rotate}°` : ""}
+    · <a href="/library/${p.path.split("/").map(encodeURIComponent).join("/")}" target="_blank">original</a></div>
+    ${strip(p)}
+    <div class="muted"><kbd>←</kbd><kbd>→</kbd> previous, next · <kbd>Space</kbd> keep or archive · <kbd>O</kbd> take out · <kbd>Esc</kbd> back</div>`;
+  for (const img of $("bigInfo").querySelectorAll(".strip img")) img.onclick = e => {
+    e.stopPropagation();
+    setFocus(+img.dataset.i);
+    showBig(photos[+img.dataset.i]);
+  };
+}
+// The rest of the photo's burst, under it: kept or archived, the one shown outlined.
+function strip(p) {
+  const burst = p.gid != null ? photos.filter(q => q.gid === p.gid) : [];
+  if (burst.length < 2) return "";
+  return `<div class="strip">${burst.map(q => `<img src="/api/photo/${q.id}/thumb" data-i="${photos.indexOf(q)}" alt=""
+    class="${q.verdict} ${q.state === "out" ? "out" : ""} ${q === p ? "cur" : ""}" title="${esc(q.name)}${q.best ? " ★" : ""}"
+    style="${q.rotate ? `transform: rotate(${q.rotate}deg)` : ""}">`).join("")}<span class="muted">burst of ${burst.length}</span></div>`;
 }
 
 async function confirmUnit() {
-  const name = $("uname").value.trim();
   try {
-    await api("/api/review/unit/confirm", {key: cur.key, name, verdicts: edits.verdicts, out: [...edits.out], moves: edits.moves, back: [...edits.back]});
-    edits = null; await loadUnits();
+    await api("/api/review/unit/confirm", {key: cur.key});
+    await loadUnits();
     const next = units.find(u => u.state === "open");
     if (next) openUnit(next.key); else { cur = null; $("main").innerHTML = `<p><b>All albums and folders are confirmed.</b> Go back to <a href="/">OrderMyPhotos</a> and press <i>Done, go on</i>.</p>`; drawUnits(); }
-  } catch (e) { alert(e.message); }
+  } catch (e) { saved(false, e.message); }
 }
 async function dismantle() {
   if (!confirm(`Dismantle "${cur.name}"? All ${photos.length} photos are sorted again, and nothing goes here any more.`)) return;
-  try { await api("/api/review/unit/dismantle", {key: cur.key}); edits = null; await loadUnits(); openUnit(cur.key).catch(() => {}); } catch (e) { alert(e.message); }
+  try { await api("/api/review/unit/dismantle", {key: cur.key}); await loadUnits(); openUnit(cur.key).catch(() => {}); } catch (e) { saved(false, e.message); }
 }
-async function reopen() { try { await api("/api/review/unit/reopen", {key: cur.key}); edits = null; await loadUnits(); openUnit(cur.key); } catch (e) { alert(e.message); } }
+async function reopen() { try { await api("/api/review/unit/reopen", {key: cur.key}); await loadUnits(); openUnit(cur.key); } catch (e) { saved(false, e.message); } }
 
 document.addEventListener("keydown", e => {
-  if (!cur || e.target.tagName === "INPUT" || document.querySelector("dialog[open]")) {
-    if (e.key === "Enter" && e.target.id === "moveTo") doMove();
-    return;
-  }
-  const p = photos[focusIdx];
+  if (e.target.id === "moveTo") { if (e.key === "Enter") doMove(); return; }
+  if (!cur || e.target.tagName === "INPUT" || $("moveDlg").open) return;
+  const big = $("big").open, p = photos[focusIdx];
   const arrow = {ArrowRight: "right", ArrowLeft: "left", ArrowDown: "down", ArrowUp: "up"}[e.key];
-  if (arrow) { e.preventDefault(); step(arrow); }
+  if (arrow) {
+    e.preventDefault();
+    step(big ? (arrow === "down" ? "right" : arrow === "up" ? "left" : arrow) : arrow);
+    if (big && photos[focusIdx]) showBig(photos[focusIdx]);
+  }
   else if (!p) return;
   else if (e.key === "k" || e.key === "a" || e.key === " ") { e.preventDefault(); toggleVerdict(p); }
   else if (e.key === "o") toggleOut(p);
   else if (e.key === "m") { e.preventDefault(); askMove(p); }
-  else if (e.key === "z") showBig(p);
-  else if (e.key === "Enter" && cur.state === "open") confirmUnit();
+  else if (e.key === "z" && !big) showBig(p);
+  else if (e.key === "Enter" && !big && cur.state === "open") confirmUnit();
 });
-$("big").onclick = () => $("big").close();
+$("bigImg").onclick = () => $("big").close();
 $("search").oninput = drawUnits;
 $("size").oninput = e => document.documentElement.style.setProperty("--size", e.target.value + "px");
 for (const b of $("tabs").children) b.onclick = () => { filter = b.dataset.f; for (const x of $("tabs").children) x.classList.toggle("on", x === b); drawUnits(); };
-window.onbeforeunload = () => dirty() ? "unsaved" : undefined;
 
 // --- the final decision ---
 async function showFinal() {

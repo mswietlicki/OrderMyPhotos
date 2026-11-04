@@ -2,7 +2,8 @@
 all treated the same. A unit shows the photos that will be in it once the plan is applied: its own photos
 that stay, and those the sorting put there.
 
-The reviewer can, per unit:
+Every change is saved on the server the moment it's made, so nothing is lost by leaving the page, and the
+review looks the same from any device or browser. The reviewer can, per unit:
 - keep or archive a photo (`verdict` labels, which the plan follows);
 - take a photo out (`out`): it's sorted again by the `resort` phase, never back into this unit;
 - move a photo to another album or folder by hand (`move`);
@@ -141,7 +142,8 @@ def placements(session) -> dict:
         st = status.get(key, {})
         # photos taken out wait here until the resort; they don't keep the unit open
         state = "dismantled" if st.get("status") == "dismantled" else "confirmed" if not c["open"] else "open"
-        out[key] = {"key": key, "name": PurePosixPath(key).name, "kind": "album" if key.startswith("Pictures/Albums/") else "folder",
+        out[key] = {"key": key, "name": PurePosixPath(st.get("name") or key).name,
+                    "kind": "album" if key.startswith("Pictures/Albums/") else "folder",
                     "new": key not in existing, "n": c["n"], "keep": c["keep"], "archive": c["archive"],
                     "open": c["open"], "confirmed": c["confirmed"], "out": c["out"], "unsure": c["unsure"], "state": state}
     for key, st in status.items():  # a dismantled unit stays listed, empty, until its photos have new places
@@ -236,7 +238,10 @@ def api_confirm(key: str = Body(...), name: str | None = Body(None), verdicts: d
     members = [p for p in d["photos"].values() if p["unit"] == key]
     if not members:
         raise HTTPException(404, "no photos in this unit")
-    new_key = _renamed(key, name)
+    con = connect(s, write=True)
+    draft = (con.execute("SELECT name FROM review_unit WHERE key=?", (key,)).fetchone() or [None])[0]
+    con.close()
+    new_key = _renamed(key, name) if name else (draft or key)
     src = f"review:{s.id}:{_round(s)}"
     rows = []
     for p in members:
@@ -258,6 +263,84 @@ def api_confirm(key: str = Body(...), name: str | None = Body(None), verdicts: d
                     (key, "confirmed", new_key if new_key != key else None, _round(s), time.time()))
     con.close()
     return {"key": new_key, "out": len(out), "moved": len(moves), "pending": pending(s)}
+
+
+@router.post("/api/review/photo")
+def api_photo_action(key: str = Body(...), id: str = Body(...), action: str = Body(...), target: str | None = Body(None)):
+    """One change to one photo, saved at once: keep, archive, out (sorted again), back (put back here), move."""
+    s = _session()
+    p = placements(s)["photos"].get(id)
+    if not p or p["unit"] != key:
+        raise HTTPException(404, "that photo isn't in this album or folder any more")
+    if action in ("keep", "archive"):
+        row = (id, "verdict", action)
+    elif action == "out":
+        row = (id, "out", key)
+    elif action == "back":
+        row = (id, "place", key + p["sub"])
+    elif action == "move" and target and base(target)[0] != key:
+        row = (id, "move", target)
+    else:
+        raise HTTPException(400, f"can't {action!r} here")
+    con = connect(s, write=True)
+    with con:
+        _labels(con, [row], f"review:{s.id}:{_round(s)}")
+    con.close()
+    return {"ok": True}
+
+
+@router.post("/api/review/unit/rename")
+def api_rename(key: str = Body(...), name: str = Body(...)):
+    """A new name, kept until the unit is confirmed (then its photos go there)."""
+    s = _session()
+    new_key = _renamed(key, name)
+    con = connect(s, write=True)
+    with con:
+        row = con.execute("SELECT status FROM review_unit WHERE key=?", (key,)).fetchone()
+        con.execute("INSERT OR REPLACE INTO review_unit(key, status, name, round, updated) VALUES (?,?,?,?,?)",
+                    (key, row[0] if row else "open", new_key if new_key != key else None, _round(s), time.time()))
+    con.close()
+    return {"key": key, "name": new_key}
+
+
+@router.get("/api/people")
+def api_people_get():
+    """The People page's state (names, nicknames, merges, faces taken out) as the page last saved it, and the
+    names per face in the DB, from which a page with no saved state starts (an earlier import)."""
+    s = _session()
+    path = s.dir / "people.json"
+    labels = {}
+    try:
+        con = connect(s)
+        if _has(con, "name_label"):
+            labels = {r["key"]: r["who"] for r in con.execute("SELECT key, who FROM name_label")}
+        con.close()
+    except HTTPException:
+        pass
+    return {"state": json.loads(path.read_text(encoding="utf-8")) if path.exists() else None, "labels": labels}
+
+
+@router.put("/api/people")
+def api_people_put(state: dict = Body(...), names: dict = Body(...), keys: list = Body(...)):
+    """Saved on every change: the page's state, and the names per face, so the next run of `people` uses them.
+    Only the faces the page shows (`keys`) change: one without a name now loses its old one, and the faces it
+    doesn't show keep theirs."""
+    from .people import SCHEMA as PEOPLE_SCHEMA  # noqa: PLC0415
+
+    s = _session()
+    tmp = s.dir / "people.json.tmp"
+    tmp.write_text(json.dumps(state, ensure_ascii=False), encoding="utf-8")
+    tmp.replace(s.dir / "people.json")
+    con = connect(s, write=True)
+    with con:
+        con.executescript(PEOPLE_SCHEMA)
+        gone = [k for k in keys if k not in names]
+        con.executemany("DELETE FROM name_label WHERE key=?", [(k,) for k in gone])
+        con.executemany("INSERT OR REPLACE INTO name_label(key, who, name, nick, owner, source) VALUES (?,?,?,?,?,?)",
+                        [(k, v.get("who") or "", v.get("name") or None, v.get("nick") or None, int(bool(v.get("owner"))),
+                          f"people-page:{s.id}") for k, v in names.items()])
+    con.close()
+    return {"saved": len(names)}
 
 
 @router.post("/api/review/unit/dismantle")

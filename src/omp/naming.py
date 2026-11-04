@@ -165,19 +165,25 @@ here that match them join them on the next run; name one here only if it's a pet
 <script>
 const DATA = __DATA__;
 const KEY = "omp-people-" + DATA.run;
-if (location.protocol !== "file:") document.getElementById("home").href = "./";
+// Opened from the web app (P47), the state lives on the server: loaded on opening, saved on every change, the
+// same from any device. Opened as a file from a bundle, it stays in the browser and the names are exported.
+const inApp = location.pathname.startsWith("/library/");
+if (inApp) document.getElementById("home").href = "/review";
+else if (location.protocol !== "file:") document.getElementById("home").href = "./";
 let state = {};
-try { state = JSON.parse(localStorage.getItem(KEY) || "{}"); } catch (e) {}
+if (!inApp) try { state = JSON.parse(localStorage.getItem(KEY) || "{}"); } catch (e) {}
 const cards = [...DATA.people.map(c => ({...c, pet: false})), ...DATA.pets.map(c => ({...c, pet: true}))];
 const byId = Object.fromEntries(cards.map(c => [c.id, c]));
 const topKey = c => c.faces.length ? c.faces[0].k : c.id;  // a card's state belongs to its cluster, not to its number
-for (const c of cards) {
+let dbLabels = {};  // per face, who the DB says it is ("" = taken out), for a page with no saved state yet
+function seed() { for (const c of cards) {
   if (state[c.id] && state[c.id].top !== topKey(c)) delete state[c.id];  // clustered differently since: start from the DB
   if (!state[c.id] && c.source === "user")  // what the DB knows from an earlier import
     state[c.id] = {top: topKey(c), name: c.name || "", nick: c.short || "", me: !!c.owner, ignore: false, out: [],
                    unknown: (c.label || "").startsWith("?"),
-                   group: (c.label || "").startsWith("@") && c.label !== "@me" ? c.label : ""};
-}
+                   group: (c.label || "").startsWith("@") && c.label !== "@me" ? c.label : "",
+                   out: c.faces.filter(f => dbLabels[f.k] === "").map(f => f.k)};
+} }
 const st = c => state[c.id] || (state[c.id] = {top: topKey(c), name: "", nick: "", me: false, ignore: false, out: []});
 const who = s => (s.name || "").trim() || (s.nick || "").trim();
 const root = c => { let r = c; for (let n = 0; n < 99 && st(r).into && byId[st(r).into] && byId[st(r).into] !== r; n++) r = byId[st(r).into]; return r; };
@@ -203,9 +209,23 @@ function names() {  // per face (or animal box): who it is, for the import; "" =
   }
   return out;
 }
+let saveTimer = null;
 function save() {
-  try { localStorage.setItem(KEY, JSON.stringify(state)); localStorage.setItem(KEY + "::names", JSON.stringify(names())); } catch (e) {}
   status();
+  if (!inApp) {
+    try { localStorage.setItem(KEY, JSON.stringify(state)); localStorage.setItem(KEY + "::names", JSON.stringify(names())); } catch (e) {}
+    return;
+  }
+  const btn = document.getElementById("exp");
+  btn.textContent = "Saving…";
+  clearTimeout(saveTimer);
+  saveTimer = setTimeout(async () => {  // a short pause, so typing a name isn't a save per letter
+    try {
+      const r = await fetch("/api/people", {method: "PUT", headers: {"Content-Type": "application/json"},
+                                            body: JSON.stringify({state, names: names(), keys: cards.flatMap(c => c.faces.map(f => f.k))})});
+      btn.textContent = r.ok ? "Saved" : "Not saved: " + r.status;
+    } catch (e) { btn.textContent = "Not saved: " + e.message; }
+  }, 600);
 }
 function status() {
   const roots = cards.filter(c => root(c) === c);
@@ -328,22 +348,27 @@ const mergeIds = () => {
 };
 document.getElementById("mergego").onclick = mergeIds;
 document.getElementById("mergeids").onkeydown = e => { if (e.key === "Enter") mergeIds(); };
-// Opened from the web app (P47), the names are saved on the server; opened as a file, they're downloaded.
-const inApp = location.pathname.startsWith("/library/");
-if (inApp) document.getElementById("exp").textContent = "Save names";
-document.getElementById("exp").onclick = async () => {
+document.getElementById("exp").onclick = () => {
+  if (inApp) return;  // in the app every change is saved already; the button only shows that
   const spec = {run: DATA.run, exported: new Date().toISOString(), names: names()};
-  if (inApp) {
-    const btn = document.getElementById("exp");
-    const r = await fetch("/api/labels", {method: "POST", headers: {"Content-Type": "application/json"}, body: JSON.stringify(spec)});
-    btn.textContent = r.ok ? "Saved ✓" : "Not saved: " + r.status;
-    setTimeout(() => { btn.textContent = "Save names"; }, 2500);
-    return;
-  }
   const blob = new Blob([JSON.stringify(spec, null, 1)], {type: "application/json"});
   const l = document.createElement("a"); l.href = URL.createObjectURL(blob); l.download = `names-${DATA.run}.json`; l.click();
 };
-render();
-save();
+(async () => {
+  if (inApp) {
+    const btn = document.getElementById("exp");
+    btn.textContent = "Loading…"; btn.disabled = true;
+    try {
+      const r = await fetch("/api/people");
+      if (r.ok) { const d = await r.json(); state = d.state || {}; dbLabels = d.labels || {}; }
+      btn.textContent = "Saved";
+    }
+    catch (e) { btn.textContent = "Not loaded: " + e.message; }
+  }
+  seed();
+  render();
+  status();
+  if (!inApp) save();
+})();
 </script></main></body></html>
 """
