@@ -606,6 +606,11 @@ Start runs the server phases one after another and stops at the next review. "Do
   - the People page in the app (`/people`, in the review's design: a click shows a face's photo full screen with the person's other faces on the right, a right-click takes a face out, the arrows move between cards) loads its state from the session and saves it on every change. Only the faces it shows change in the DB, and a first open starts from the DB's names (faces taken out included).
 - **The large view** (Enter or Z; Confirm is Ctrl+Enter, so it isn't pressed by accident) fills the screen, so nothing changes size from photo to photo: ←/→ go on to the previous or next photo, Space and O work there too, and the burst is shown in a column on the right of the photo. On the page, the selection scrolls into view, and ↑/↓ move by row.
 - **Finished** (user: "a button Finished that will accept all the rest as is and move on with the process"): on the review page, the People page and the wizard. It confirms every unit not confirmed yet as it is (verdicts and places pinned, renames kept), then goes on as Done does.
+- **One page** (user: "let's not open review and plan in a separate tab, let's make it all more single-page-app feel"):
+  - one header with the app's icon, Progress · People · Review · Plan, the state and the session;
+  - the views load under it at `#/people`, `#/review/<album>` and `#/final`, with Back and Forward;
+  - each view runs in its own shadow root, so their styles and ids stay apart;
+  - between two server phases the state is "starting": the next phase starts at once, so there's no "stopped, exit 0" moment.
 - **What Done does:** Done needs every unit confirmed. Photos taken out (or from dismantled units) go to the `resort` phase. After the resort, only units that received photos are open again, and their new photos come first. What was confirmed is folded away as "Already confirmed" and isn't asked again.
 - **The final decision:** the plan's counts, archived photos with their size, and where photos go; then "keep the archived photos in `Archive/OrderMyPhotos/`" or "delete them once the plan is applied". Applying the plan to OneDrive (S9) is still to build.
 
