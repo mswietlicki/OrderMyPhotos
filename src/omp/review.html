@@ -42,7 +42,8 @@
   .burst { display: flex; flex-wrap: wrap; gap: 6px; padding: 6px; border: 1px dashed var(--line); border-radius: 10px; }
   .burst > .lbl { width: 100%; font-size: 11px; color: var(--muted); margin: -2px 2px 0; }
   .ph { position: relative; width: var(--size, 150px); height: var(--size, 150px); border-radius: 8px; overflow: hidden; cursor: pointer;
-        outline: 3px solid transparent; outline-offset: -3px; background: var(--soft); }
+        outline: 3px solid transparent; outline-offset: -3px; background: var(--soft);
+        scroll-margin: 70px 0 24px; }  /* the sticky header doesn't cover a selected photo */
   .ph img { width: 100%; height: 100%; object-fit: cover; display: block; transition: opacity .15s; }
   .ph.archive img { opacity: .35; filter: grayscale(.6); }
   .ph.archive { outline-color: var(--bad); }
@@ -124,7 +125,8 @@ function drawUnits() {
 async function openUnit(key) {
   if (edits && dirty() && !confirm("Leave without confirming? Your changes here are lost.")) return;
   const d = await api("/api/review/unit?key=" + encodeURIComponent(key));
-  cur = d.unit; photos = d.photos; edits = {verdicts: {}, out: new Set(), moves: {}, back: new Set()}; focusIdx = 0;
+  cur = d.unit; photos = d.photos; edits = {verdicts: {}, out: new Set(), moves: {}, back: new Set()}; focusIdx = -1;
+  window.scrollTo(0, 0);
   location.hash = "u=" + encodeURIComponent(key);
   drawUnits(); drawUnit();
 }
@@ -171,11 +173,11 @@ function drawUnit() {
     <div class="summary">${photos.length} photos · ${keep} kept · ${photos.length - keep} archived or leaving${fresh.length && done.length ? ` · ${fresh.length} to check` : ""}</div>
     ${fresh.length ? section(fresh) : `<p class="muted">Everything here is confirmed.</p>`}
     ${done.length ? `<details class="done" ${fresh.length ? "" : "open"}><summary>Already confirmed (${done.length})</summary>${section(done)}</details>` : ""}
-    <div class="help">Click a photo to keep or archive it · <kbd>O</kbd> take out or put back · <kbd>M</kbd> move · <kbd>Z</kbd> show · <kbd>←</kbd><kbd>→</kbd> next photo · <kbd>Enter</kbd> confirm</div>`;
+    <div class="help">Click a photo to keep or archive it · <kbd>O</kbd> take out or put back · <kbd>M</kbd> move · <kbd>Z</kbd> show · <kbd>←</kbd><kbd>→</kbd><kbd>↑</kbd><kbd>↓</kbd> select · <kbd>Enter</kbd> confirm</div>`;
   for (const el of $("main").querySelectorAll(".ph")) {
     el.onclick = e => {
       const i = +el.dataset.i, a = e.target.dataset.a;
-      focusIdx = i;
+      setFocus(i);
       if (a === "big") return showBig(photos[i]);
       if (a === "move") return askMove(photos[i]);
       if (a === "out") return toggleOut(photos[i]);
@@ -183,6 +185,40 @@ function drawUnit() {
     };
     el.ondblclick = () => showBig(photos[+el.dataset.i]);
   }
+  const tiles = shown();
+  setFocus(tiles.some(el => +el.dataset.i === focusIdx) ? focusIdx : tiles.length ? +tiles[0].dataset.i : -1);
+}
+
+// The tiles as they're shown: the new ones first, then the confirmed ones when unfolded.
+const shown = () => [...$("main").querySelectorAll(".ph")].filter(el => el.offsetParent !== null);
+
+function setFocus(i) {
+  focusIdx = i;
+  for (const el of $("main").querySelectorAll(".ph.focus")) el.classList.remove("focus");
+  const el = $("main").querySelector(`.ph[data-i="${i}"]`);
+  if (el) { el.classList.add("focus"); el.scrollIntoView({block: "nearest", inline: "nearest"}); }
+}
+
+// Moves the selection the way the photos are laid out: left and right in reading order, up and down to the
+// photo in the next row that's closest across.
+function step(dir) {
+  const tiles = shown();
+  if (!tiles.length) return;
+  let k = tiles.findIndex(el => +el.dataset.i === focusIdx);
+  if (k < 0) return setFocus(+tiles[0].dataset.i);
+  if (dir === "left" || dir === "right") {
+    k = Math.max(0, Math.min(tiles.length - 1, k + (dir === "right" ? 1 : -1)));
+  } else {
+    const box = el => el.getBoundingClientRect();
+    const r0 = box(tiles[k]), cx = r0.left + r0.width / 2;
+    const ahead = tiles.filter(el => dir === "down" ? box(el).top > r0.top + r0.height / 2 : box(el).top < r0.top - r0.height / 2);
+    if (!ahead.length) return;
+    const y = dir === "down" ? Math.min(...ahead.map(el => box(el).top)) : Math.max(...ahead.map(el => box(el).top));
+    const row = ahead.filter(el => Math.abs(box(el).top - y) < r0.height / 2);
+    const across = el => Math.abs(box(el).left + box(el).width / 2 - cx);
+    k = tiles.indexOf(row.reduce((a, b) => across(b) < across(a) ? b : a));
+  }
+  setFocus(+tiles[k].dataset.i);
 }
 function toggleVerdict(p) { const v = verdictOf(p) === "keep" ? "archive" : "keep"; if (v === p.verdict) delete edits.verdicts[p.id]; else edits.verdicts[p.id] = v; drawUnit(); }
 function toggleOut(p) {
@@ -230,8 +266,8 @@ document.addEventListener("keydown", e => {
     return;
   }
   const p = photos[focusIdx];
-  if (e.key === "ArrowRight") { focusIdx = Math.min(photos.length - 1, focusIdx + 1); drawUnit(); }
-  else if (e.key === "ArrowLeft") { focusIdx = Math.max(0, focusIdx - 1); drawUnit(); }
+  const arrow = {ArrowRight: "right", ArrowLeft: "left", ArrowDown: "down", ArrowUp: "up"}[e.key];
+  if (arrow) { e.preventDefault(); step(arrow); }
   else if (!p) return;
   else if (e.key === "k" || e.key === "a" || e.key === " ") { e.preventDefault(); toggleVerdict(p); }
   else if (e.key === "o") toggleOut(p);
