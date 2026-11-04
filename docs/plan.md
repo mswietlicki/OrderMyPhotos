@@ -91,6 +91,7 @@ Run s1 (2026-11-03) did a first pass of every stage below on the B50 and the res
 - [x] `omp serve`: start and pause, the pipeline as a supervised child that resumes after a crash or reboot, progress, steps, skipped photos, timings, machine resources, results, a label API (P44)
 - [x] Runs from a clone of this repo on Mimir (`compose.yaml`, `deploy/`); tested on a copy of s6: redeploy, pause, `kill -9`
 - [ ] The review pages in the app: album review, the People page and the proposals, saving decisions through the API instead of a download
+- [ ] When `fullrun` and the P45 sorting work are both on master (whoever merges second): albums.py's `vlm = VLM(cfg.llm)` becomes `VLM(cfg.llm, repeatable=True)` and the `:instruct` workaround wrapper under it goes (P46); the `OMP_PROMPT_LOG` wrapper stays
 - [ ] S11 answers kept across runs (by prompt hash and model), so a re-run of `albums` doesn't redo ~25k LLM calls
 - [ ] The neighbour table (top-20 look-alikes) at full scale: chunked on the GPU or with numpy
 - [ ] **Later, speed-ups (user, 2026-11-04):** use every resource the machine has. When the 4090 is idle and will stay so for a while, it does the same work as the B50 too, from the same queue of photos (a CUDA worker, the `omp-vision-cuda` image and a llama-swap entry, so chat can still take the GPU back). Not the other way round: the 4090's work needs its VRAM and CUDA
