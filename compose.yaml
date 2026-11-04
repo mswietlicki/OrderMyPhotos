@@ -22,6 +22,7 @@ services:
       - ${OMP_B50:-/dev/dri/b50-render}:/dev/dri/renderD128
     environment:
       OMP_ROOT: /library
+      OMP_BUNDLE: /bundle
       OMP_DB: /state/omp.db
       OMP_CACHE: /cache
       OMP_MODELS: /models
@@ -38,8 +39,9 @@ services:
       PYTHONPATH: /code
     volumes:
       - ${OMP_LIBRARY:?}:/library:ro
-      # The review bundle sits at the library root (design.md S6); it's the only writable part of it.
-      - ${OMP_BUNDLE_DIR:?}:/library/OrderMyPhotos
+      # The review bundle belongs at the library root (design.md S6), but the library may be a read-only
+      # snapshot with no room for a mount point. The web app serves it at /library/OrderMyPhotos/ all the same.
+      - ${OMP_BUNDLE_DIR:?}:/bundle
       - ${OMP_STATE:?}:/state
       - ${OMP_CACHE_DIR:?}:/cache
       - ${OMP_MODELS_DIR:?}:/models

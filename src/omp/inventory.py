@@ -64,7 +64,7 @@ def walk(cfg: Config, policy: Policy | None = None):
     for dirpath, dirnames, filenames in os.walk(cfg.root):
         dirnames[:] = sorted(d for d in dirnames if not d.startswith("."))
         if Path(dirpath) == cfg.root:  # the review bundle is ours, not photos
-            dirnames[:] = [d for d in dirnames if d != cfg.bundle.name]
+            dirnames[:] = [d for d in dirnames if d not in (cfg.bundle.name, "OrderMyPhotos")]
         if policy:  # folders the user leaves as they are aren't read at all (P42)
             here = Path(dirpath).relative_to(cfg.root)
             dirnames[:] = [d for d in dirnames if policy((here / d / "_").as_posix()) != "leave"]

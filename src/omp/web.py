@@ -50,6 +50,7 @@ CONTROL = STATE / "control.json"
 LOGS = STATE / "logs"
 LABELS = STATE / "labels"
 RUN_ID = os.environ.get("OMP_RUN", "full")
+BUNDLE_URL = "OrderMyPhotos"         # the bundle's name at a library root, which its links assume
 
 
 def _read_json(path: Path, default):
@@ -231,7 +232,7 @@ def status() -> dict:
         "step": step, "started": c.get("started"), "pid": c.get("pid"), "retries": c["retries"],
         "next_try": c["next_try"] if state == "retrying" else None, "last_exit": c["last_exit"],
         "error": st.get("error") if st.get("state") == "failed" else None, "history": c["history"][-10:],
-        "steps": steps, "results": [f"/library/{cfg.bundle.name}/{n}" for n in results], "library": library_counts(),
+        "steps": steps, "results": [f"/library/{BUNDLE_URL}/{n}" for n in results], "library": library_counts(),
         "gpu": gpu_models(), "system": sampler.latest, "now": time.time(),
     }
 
@@ -307,9 +308,12 @@ def api_labels(spec: dict = Body(...)):
 
 @app.get("/library/{rel:path}")
 def library_file(rel: str):
-    """The review bundle and the originals it links to, read-only; folders left as they are stay hidden."""
-    full = (cfg.root / rel).resolve()
-    if not full.is_relative_to(cfg.root.resolve()) or not full.is_file() or policy(rel) == "leave":
+    """The review bundle and the originals it links to, read-only; folders left as they are stay hidden. The
+    bundle is served as if it sat at the library root, wherever it's mounted: its pages link to the originals
+    by relative paths from there (`../../<path>`)."""
+    base, sub = (cfg.bundle, rel[len(BUNDLE_URL) + 1:]) if rel.startswith(BUNDLE_URL + "/") else (cfg.root, rel)
+    full = (base / sub).resolve()
+    if not full.is_relative_to(base.resolve()) or not full.is_file() or (base == cfg.root and policy(rel) == "leave"):
         raise HTTPException(404)
     return FileResponse(full)
 
