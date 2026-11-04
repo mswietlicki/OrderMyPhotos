@@ -27,6 +27,7 @@ albums come from the OneDrive manifest (library.py), so a proposal can name an a
 
 import json
 import math
+import os
 import random
 import re
 import time
@@ -114,8 +115,31 @@ This event:
 
 Write the name in Polish, 2-6 words, like the examples. The owner usually names an album by the place or
 activity and the people who were there ("Gorce z Zosią", "Rowery z Bartkiem i Martą"): add "z <name>" in the right
-Polish form for the people recognized above who appear in many of the photos, and no one else. No date, no
-quotes, no emoji. Also give up to 3 alternatives and one short sentence on why."""
+Polish form for the people recognized above who appear in many of the photos, and no one else. Name a place
+only from the place line above or a name readable in the photos, never a town or country guessed from what they
+look like. No date, no quotes, no emoji. Also give up to 3 alternatives and one short sentence on why."""
+# (s6: a geyser without GPS was named "Islandia", P41)
+
+# The sure-first loop (P45; the default since the user adopted it, OMP_SORT=passes for the old pass 2): every
+# place a group could go is asked about on its own, yes or no, and only a sure answer is placed; the rest wait
+# for the next round, which knows where more photos went.
+SORT = os.environ.get("OMP_SORT", "loop")
+SURE = 0.8                 # a group is placed when its best place's P(yes) is at least this ...
+MARGIN = 0.3               # ... and this far ahead of the next one
+ROUNDS = 4                 # rounds before what's still unsure takes its best place, marked "unsure"
+NEIGHBOUR_LIKE = 0.85      # a look-alike (SigLIP 2 cosine) whose place counts as evidence for a group
+OWN_PROMPT = """A group of photos from the owner's library:
+{group}
+{evidence}
+Is this group an event of its own that deserves an album: an outing, a trip, an occasion, a visit or an
+activity at one time and place? Everyday photos, things photographed to keep the information, memes and
+screenshots, and photos of the owner's pet at home are not events. Answer with one word: yes or no."""
+FIT_PROMPT = """The owner's folder "{name}" ({path}) is for: {desc}
+
+A group of photos:
+{group}
+{evidence}
+Do these photos belong in this folder? Answer with one word: yes or no."""
 
 DECIDE_SCHEMA = {
     "type": "object", "additionalProperties": False, "required": ["kind", "target", "name", "alternatives", "why"],
@@ -414,7 +438,11 @@ def run(cfg: Config, con, run_id: str, place_only: bool = False):
                 return
         _add(action, target, name, members, data)
 
+    unsure_of = {}  # photo -> what the sure-first loop wasn't sure of (P45), shown on the review pages
+
     def _add(action, target, name, members, data):
+        if any(r["id"] in unsure_of for r in members):
+            data = {**data, "unsure": {r["id"]: unsure_of[r["id"]] for r in members if r["id"] in unsure_of}}
         ts = [r["taken_ts"] for r in members]
         cur = con.execute("INSERT INTO proposal(run, action, target, name, start, end, data) VALUES (?,?,?,?,?,?,?)",
                           (run_id, action, target, name, min(ts), max(ts), json.dumps(data, ensure_ascii=False)))
@@ -614,6 +642,22 @@ def run(cfg: Config, con, run_id: str, place_only: bool = False):
     # photos around it don't have, at a place their backgrounds say is another (user: a new place doesn't make
     # an album, but with other things, like the number of people, it may).
     vlm = VLM(cfg.llm)
+    # The ":instruct" alias has llama-swap sample at temperature 0.7 with a presence penalty (its setParams
+    # filter), whatever a request asks, so S11's "temperature 0" answers changed from run to run (P45). S11 asks
+    # the same loaded model by its own id, with thinking off, where temperature 0 holds.
+    plain = vlm._post
+    vlm._post = lambda body: plain({**body, "model": "qwen3.8-27b", "chat_template_kwargs": {"enable_thinking": False},
+                                    "cache_prompt": False})
+    if os.environ.get("OMP_PROMPT_LOG"):  # every question and answer, to find what differs between two runs (P45)
+        prompt_log, post = open(os.environ["OMP_PROMPT_LOG"], "w", encoding="utf-8"), vlm._post
+
+        def logged(body):
+            d = post(body)
+            prompt_log.write(json.dumps({"q": body.get("messages"), "a": d["choices"][0].get("message", {}).get("content"),
+                                         "lp": d["choices"][0].get("logprobs")}, ensure_ascii=False) + "\n")
+            prompt_log.flush()
+            return d
+        vlm._post = logged
 
     def backgrounds(xs, n=6):
         ss = [caps[r["id"]]["setting"] for r in sorted(xs, key=lambda r: r["taken_ts"])
@@ -739,7 +783,7 @@ def run(cfg: Config, con, run_id: str, place_only: bool = False):
         people = ", ".join(f"{p} ({n} photos)" for p, n in data["people"]) or "nobody recognized"
         out = vlm.json([{"type": "text", "text": NAME_PROMPT.format(
             examples="\n".join(f"  {n}" for n in examples), when=when, where=where, people=people, count=len(ev),
-            captions="\n".join(lines) or "  (no captions)")}], NAME_SCHEMA, max_tokens=300)
+            captions="\n".join(lines) or "  (no captions)")}], NAME_SCHEMA, max_tokens=300, temperature=0)
         return out["name"].strip().strip('"'), out
 
     # Thematic folders: the user's own (with a profile, P35), each also described by the average SigLIP 2
@@ -1129,6 +1173,38 @@ def run(cfg: Config, con, run_id: str, place_only: bool = False):
                     d[5:9] = ["album", a, None, d[8] + f" (the owner's pet during {a.split('/')[-1]}, which shows it too)"]
                     break
 
+    def is_sent(r):
+        return r["id"] not in camera and MESSENGER.search("/" + r["path"])
+
+    def sent_together(decisions):
+        """Messenger photos that arrived the same day as a new album made of messenger photos of that day join
+        it when they're part of the same occasion, though they don't look like it (user, s6: a spoon and a
+        harness from the pet shop went to folders). Bursts move as one."""
+        sent_albums = defaultdict(list)
+        for d in decisions:
+            if d[5] == "new_album" and all(is_sent(r) for r in d[0]):
+                sent_albums[d[6]] += d[0]
+        day_of = {a: {datetime.fromtimestamp(r["taken_ts"], tz).date() for r in rows} for a, rows in sent_albums.items()}
+        moved = 0
+        for d in list(decisions):
+            if d[5] not in ("folder", "new_folder") or d[6] == RANDOM:
+                continue
+            units = defaultdict(list)
+            for r in d[0]:
+                units[burst_of.get(r["id"], r["id"])].append(r)
+            for u in units.values():
+                days = {datetime.fromtimestamp(r["taken_ts"], tz).date() for r in u}
+                cands = [a for a in sent_albums if a not in d[2] and days <= day_of[a]] if all(is_sent(r) for r in u) else []
+                p_, best = max(((part_of(u, a, sent_albums[a]), a) for a in cands), default=(0.0, None))
+                if p_ < 0.5:
+                    continue
+                d[0] = [r for r in d[0] if r not in u]
+                decisions.append([u, d[1], d[2], False, d[4], "new_album", best, best.split("/")[-1][11:],
+                                  f"sent the same day as the rest of {best.split('/')[-1]} ({p_:.2f})", []])
+                moved += len(u)
+        decisions[:] = [d for d in decisions if d[0]]
+        return moved
+
     def merge_alike_folders(decisions):
         """New folders whose photos look the same are one folder, under the name of the bigger (s5: the owner's
         cat as "Czarny kot" and as "Coty")."""
@@ -1150,7 +1226,7 @@ def run(cfg: Config, con, run_id: str, place_only: bool = False):
                 if d[5] == "new_folder":
                     d[7] = d[6].split("/")[-1]
 
-    def part_of(rs, album, rows):
+    def part_of(rs, album, rows, evidence=""):
         """P(yes) that this group is part of the event of `album` (the library's or a new one), whose photos are
         `rows`. Asked with what both sides show and when, and whether a person is in both (P39: a one-line
         description of the album left the night before a trip at 0.5)."""
@@ -1184,7 +1260,8 @@ def run(cfg: Config, con, run_id: str, place_only: bool = False):
         both = mine is not None and theirs is not None and float((mine @ theirs.T).max()) >= FACE_SAME
         q = (f"An album of the owner's: \"{album.split('/')[-1]}\", photos {theirs_when}. What they show:\n"
              f"{shows(rows, 10)}\n\nA group of photos {timing}" + ("" if sent(rs) else f" ({span(s0, s1)})")
-             + f":\n{shows(rs, 12)}\n" + ("\nThe same person (not the owner) is in both.\n" if both else "") +
+             + f":\n{shows(rs, 12)}\n" + ("\nThe same person (not the owner) is in both.\n" if both else "")
+             + (f"\n{evidence}\n" if evidence else "") +
              "\nIs this group part of that album's event: the same outing, trip or occasion (before, during or after it:"
              " packing and setting off, the night before, the way back)? Shopping for a trip, or another errand before"
              " it, isn't part of the trip. Neither is a different activity at a different place the same day, like a"
@@ -1237,7 +1314,15 @@ def run(cfg: Config, con, run_id: str, place_only: bool = False):
                        if alike else ""))
             d[4:] = decide(d[0], d[1], d[2], d[3], more=grown, no_album=len(d[0]) <= SMALL_EVENT and not novel(d[0]),
                            proposed=own, refined=refined, hint=hint)
-        # The new albums' names, from what they hold now.
+        rename_new(decisions, described, proposed)
+        joined = join_new_albums(decisions)
+        moved = check_folders(decisions, grown)
+        print(f"  refine: {len(described)} destinations described, {len(proposed)} new albums offered to the rest,"
+              f" {joined} new albums part of another album's event, {moved} photos moved out of folders they didn't fit")
+
+    def rename_new(decisions, described=None, proposed=None):
+        """The new albums' names, from what they hold now."""
+        described, proposed = described or {}, proposed or {}
         held = defaultdict(list)
         for d in decisions:
             held[d[6]] += d[0]
@@ -1252,20 +1337,21 @@ def run(cfg: Config, con, run_id: str, place_only: bool = False):
                 for d in decisions:
                     if d[6] == t_:
                         d[6], d[7] = new, name
-        # A new album within a day of an album of the library, or of a bigger new album: is it part of that
-        # one's event? The best yes wins (s6: the night camping before the user's album of the trip 0.93, its
-        # morning walk 0.96, every other pair in s5 and s6 0.29 or less).
+
+    def apart(xs, ys):
+        x0, x1 = min(r["taken_ts"] for r in xs), max(r["taken_ts"] for r in xs)
+        y0, y1 = min(r["taken_ts"] for r in ys), max(r["taken_ts"] for r in ys)
+        return max(y0 - x1, x0 - y1, 0)
+
+    def join_new_albums(decisions):
+        """A new album within a day of an album of the library, or of a bigger new album: is it part of that
+        one's event? The best yes wins (s6: the night camping before the user's album of the trip 0.93, its
+        morning walk 0.96, every other pair in s5 and s6 0.29 or less)."""
         joined = 0
         new = defaultdict(list)
         for d in decisions:
             if d[5] == "new_album" and not d[3]:
                 new[d[6]] += d[0]
-
-        def apart(xs, ys):
-            x0, x1 = min(r["taken_ts"] for r in xs), max(r["taken_ts"] for r in xs)
-            y0, y1 = min(r["taken_ts"] for r in ys), max(r["taken_ts"] for r in ys)
-            return max(y0 - x1, x0 - y1, 0)
-
         for t_ in sorted(new, key=lambda t_: len(new[t_])):
             rs = new[t_]
             if not rs:
@@ -1288,7 +1374,11 @@ def run(cfg: Config, con, run_id: str, place_only: bool = False):
                 new[best] += rs
             new[t_] = []
             joined += 1
-        # Pass 3: each photo in a folder against what the folder now holds.
+        return joined
+
+    def check_folders(decisions, grown):
+        """Pass 3: each photo in a folder against what the folder is for; the ones that don't fit are decided
+        again. Returns how many moved."""
         held = defaultdict(list)
         for d in decisions:
             if d[5] in ("folder", "new_folder"):
@@ -1328,8 +1418,157 @@ def run(cfg: Config, con, run_id: str, place_only: bool = False):
                 moved += len(u)
                 decisions.append([u, d[1], d[2] | {d[6]}, d[3],
                                   *decide(u, d[1], d[2] | {d[6]}, d[3], more=grown, no_album=not novel(u))])
-        print(f"  refine: {len(described)} destinations described, {len(proposed)} new albums offered to the rest,"
-              f" {joined} new albums part of another album's event, {moved} photos moved out of folders they didn't fit")
+        return moved
+
+    def is_new_album(t):
+        return bool(t) and bool(re.search(r"^Pictures/Albums/\d{4}/\d{4}-\d{2}-\d{2} ", t)) and t not in (lib.albums if lib else {})
+
+    said = {}  # summary_of per destination and size, so a round doesn't ask again for what didn't change
+
+    def said_of(t, rs):
+        if (t, len(rs)) not in said:
+            said[(t, len(rs))] = summary_of(t, rs)
+        return said[(t, len(rs))]
+
+    def sure_first(decisions, grown):
+        """P45 (user: "something that runs in a loop and tries to put a photo into an album, and if it's not sure,
+        waits for another pass, so maybe the descriptions will be better"). Pass 1's pick, the library's albums
+        within a day, the new albums placed so far and the places of the group's look-alikes (in any folder)
+        are each asked about, yes or no. A group whose best answer is sure (SURE, MARGIN ahead) is placed; the
+        others wait for the next round, which knows where more photos went. What's still unsure after ROUNDS
+        takes its best place and says so."""
+        from .neighbours import build, look_alikes
+        build(con)
+        look = look_alikes(con, NEIGHBOUR_LIKE)
+        home = {}  # the library's photos: their album or thematic folder
+        for f, ids in folder_ids.items():
+            for i in ids:
+                home[i] = f
+        for a, rows in album_rows.items():
+            for r in rows:
+                home[r["id"]] = a
+        pick = [tuple(d[5:8]) for d in decisions]
+        sure, last, asked, rounds = [False] * len(decisions), [[] for _ in decisions], {}, 0
+
+        def candidates(k, d, held, seen):
+            rs, away, banned, messenger = d[0], d[1], d[2], d[3]
+            kind, target, name = pick[k]
+            out = [("own", None, name) if kind == "new_album" else ("album", target, None) if kind == "album"
+                   else (kind, target, name)]
+            if not messenger:
+                out += [("album", a, None) for a in sorted(lib.albums if lib else ()) if a not in banned and album_rows.get(a)
+                        and apart(rs, album_rows[a]) <= 86400 and not strangers(rs, album_faces.get(a))]
+                at_home_pet = not away and faces_of(rs) is None and 2 * sum(r["id"] in own_pet for r in rs) >= len(rs)
+                if (len(rs) > SMALL_EVENT or novel(rs)) and not at_home_pet:
+                    out.append(("own", None, name if kind == "new_album" else None))
+            for t, rows in held.items():
+                if is_new_album(t) and t not in banned and apart(rs, rows) <= 86400 and not strangers(rs, faces_of(rows)) \
+                        and (not messenger or all(is_sent(r) for r in rows)):
+                    out.append(("new", t, t.split("/")[-1][11:]))
+            for t, _ in seen.most_common(3):  # where its look-alikes are
+                if t in banned or t == RANDOM:
+                    continue
+                if t in (lib.albums if lib else {}):
+                    out.append(("album", t, None))
+                elif is_new_album(t):
+                    out.append(("new", t, t.split("/")[-1][11:]))
+                elif t.startswith("Pictures/") and not t.startswith("Pictures/Albums/"):
+                    out.append(("folder", t, None))
+            return list(dict.fromkeys(c for c in out if c[0] == "own" or c[1]))
+
+        def score(c, d, held, evidence):
+            kind, t, name = c
+            rs = d[0]
+            if kind == "album":
+                return part_of(rs, t, album_rows[t], evidence) if album_rows.get(t) else 0.0
+            if kind == "new":
+                return part_of(rs, t, held[t], evidence)
+            group = describe(rs, d[1], d[3])[1]
+            ev = f"\n{evidence}\n" if evidence else ""
+            if kind == "own":
+                q = OWN_PROMPT.format(group=group, evidence=ev)
+            elif t.split("/")[-1].lower() in pet_folder_names:  # the pet the user named: its photos only
+                return 0.95 if 2 * sum(r["id"] in own_pet for r in rs) >= len(rs) else 0.0
+            else:
+                desc = fixed(t) or (said_of(t, held[t])[0] if held.get(t) else "") or name or t.split("/")[-1]
+                q = FIT_PROMPT.format(name=t.split("/")[-1], path=t, desc=desc, group=group, evidence=ev)
+            ans = vlm.choice([{"type": "text", "text": q}], ["yes", "no"])
+            return ans.get("yes", 0.5) if ans else 0.5
+
+        def place(d, c, note):
+            kind, t, name = c
+            if kind == "album":
+                d[5:8] = ["album", t, None]
+            elif kind == "new":
+                d[5:8] = ["new_album", t, name]
+            elif kind == "own" and d[5] != "new_album":
+                d0 = d[4]
+                name = name or said_of(f"Pictures/Albums/{d0:%Y}/{d0:%Y-%m-%d} ", d[0])[1] or d[7] or "Wydarzenie"
+                d[5:8] = ["new_album", f"Pictures/Albums/{d0:%Y}/{d0:%Y-%m-%d} {name}", name]
+            elif kind in ("folder", "new_folder"):
+                d[5:8] = [kind, t, name]
+            d[8] = f"{d[8]} ({note})"
+
+        # An album's event comes first: "part of that album?" is weighed against the other albums, and only when
+        # no album wants the group (below 0.5) do an album of its own and the folders compete. Both "part of the
+        # trip" and "an event" are true of a trip's night, so they never pull apart (s6: 0.96 against 0.9).
+        def split(scored):
+            albums_ = sorted((x for x in scored if x[1][0] in ("album", "new")), key=lambda x: -x[0])
+            return albums_, sorted((x for x in scored if x[1][0] not in ("album", "new")), key=lambda x: -x[0])
+
+        def ranked(scored):
+            albums_, rest = split(scored)
+            return albums_ + rest if albums_ and albums_[0][0] >= 0.5 else rest + albums_
+
+        def is_sure(scored):
+            albums_, rest = split(scored)
+            level = albums_ if albums_ and albums_[0][0] >= 0.5 else rest
+            return bool(level) and level[0][0] >= SURE and (len(level) == 1 or level[0][0] - level[1][0] >= MARGIN)
+
+        for rounds in range(1, ROUNDS + 1):
+            where_now, held = dict(home), defaultdict(list)
+            for k, d in enumerate(decisions):
+                if sure[k]:
+                    held[d[6]] += d[0]
+                    where_now |= {r["id"]: d[6] for r in d[0]}
+            done_now = []
+            for k, d in enumerate(decisions):
+                if sure[k]:
+                    continue
+                ids = {r["id"] for r in d[0]}
+                seen = Counter(where_now[o] for r in d[0] for o, _ in look.get(r["id"], ()) if o not in ids and o in where_now)
+                evidence = ("Photos that look like these, from any folder, are in: "
+                            + ", ".join(f"{t.split('/')[-1]} ({n})" for t, n in seen.most_common(4)) + ".") if seen else ""
+                scored = []
+                for c in candidates(k, d, held, seen):
+                    key = (k, c, len(held.get(c[1], ())), evidence)
+                    if key not in asked:
+                        asked[key] = score(c, d, held, evidence)
+                    scored.append((asked[key], c))
+                last[k] = ranked(scored)
+                if last[k] and is_sure(scored):
+                    done_now.append(k)
+            for k in done_now:  # placed together at the end of the round, so the order of the groups doesn't matter
+                p, c = last[k][0]
+                place(decisions[k], c, f"sure in round {rounds}: {p:.2f}")
+                sure[k] = True
+            print(f"  sure-first round {rounds}: {len(done_now)} groups placed, {sure.count(False)} waiting")
+            if not done_now or all(sure):
+                break
+        unsure = []
+        for k, d in enumerate(decisions):
+            if not sure[k] and last[k]:
+                (p, c), nxt = last[k][0], last[k][1] if len(last[k]) > 1 else None
+                if p < 0.5:  # nothing fits well: pass 1's pick, made with every folder in view, unless it was ruled out
+                    first = next((x for x in last[k] if x[1] == candidates(k, d, {}, Counter())[0]), None)
+                    p, c = first if first and first[0] > 0.0 else (p, ("folder", other_of(d[0][0]["taken_ts"]), None))
+                label = lambda c_: (c_[1] or "an album of its own").split("/")[-1]  # noqa: E731
+                note = f"{label(c)} {p:.2f}" + (f", then {label(nxt[1])} {nxt[0]:.2f}" if nxt else "")
+                place(d, c, f"unsure: {note}")
+                unsure_of.update({r["id"]: note for r in d[0]})
+                unsure.append(f"{len(d[0])} photos {p:.2f}")
+        print(f"  sure-first: {sure.count(True)} groups sure in {rounds} rounds, {len(unsure)} unsure {unsure};"
+              f" {len(asked)} questions")
 
     folder_moves = defaultdict(list)  # thematic folder -> [(photo, why)]: one proposal per folder
     counts = Counter()
@@ -1379,13 +1618,21 @@ def run(cfg: Config, con, run_id: str, place_only: bool = False):
     merge_alike_folders(decisions)
     one_day_events(decisions)
     pet_moments(decisions, grown)
-    refine(decisions, grown)
+    if SORT == "loop":
+        sure_first(decisions, grown)
+        rename_new(decisions)
+        joined, moved = join_new_albums(decisions), check_folders(decisions, grown)
+        print(f"  after the loop: {joined} new albums part of another album's event, {moved} photos moved out of"
+              " folders they didn't fit")
+    else:
+        refine(decisions, grown)
     merge_alike_folders(decisions)
     one_day_events(decisions)
     pet_moments(decisions, grown)
     small_albums(decisions, grown)
     pet_folder_only(decisions, grown)
     pet_in_album(decisions)
+    print(f"  sent together: {sent_together(decisions)} messenger photos join the new album of their day")
     for rs, away, banned, messenger, d0, kind, target, name, why, alts in decisions:
         counts[kind] += 1
         if messenger or kind in ("folder", "new_folder"):

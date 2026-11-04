@@ -166,11 +166,11 @@ def run(cfg: Config, con, run_id: str, out: str | None):
     for pr in props:
         base = (pr["target"] or "").removesuffix(" PRIV").removesuffix("/Dokumenty")
         if pr["action"] == "add" and base in album_files:
-            why = json.loads(pr["data"] or "{}").get("why")
+            pdata = json.loads(pr["data"] or "{}")
             for (i,) in con.execute("SELECT id FROM proposal_member WHERE pid=?", (pr["pid"],)):
                 if i in dec:
-                    joining[base][i] = {"from": str(PurePosixPath(files[i]["path"]).parent), "why": why,
-                                        "target": pr["target"]}
+                    joining[base][i] = {"from": str(PurePosixPath(files[i]["path"]).parent), "why": pdata.get("why"),
+                                        "target": pr["target"], "unsure": (pdata.get("unsure") or {}).get(i)}
             joined_pids.add(pr["pid"])
     nude = {r[0] for r in con.execute("SELECT id FROM signal WHERE kind='nudity' AND value >= 1")}  # never captioned
     taken, rows = set(), []
@@ -216,7 +216,7 @@ def run(cfg: Config, con, run_id: str, out: str | None):
                 encoding="utf-8")
             row |= {"bursts": len(bursts), "keep": sum(1 for x in items if x["verdict"] == "keep"),
                     "review": sum(1 for x in items if x["tier"] == "review"), "start": items[0]["date"],
-                    "joining": len(joining[album]),
+                    "joining": len(joining[album]), "unsure": sum(1 for j in joining[album].values() if j.get("unsure")),
                     "cover": next((x["id"] for x in items if x["verdict"] == "keep"), items[0]["id"]),
                     "proposals": [[x["name"], x["verdict"], x["group"]] for x in items], "seeded": data["user_labels"]}
         rows.append(row)
@@ -236,7 +236,8 @@ def run(cfg: Config, con, run_id: str, out: str | None):
             for (i,) in con.execute("SELECT id FROM proposal_member WHERE pid=?", (pr["pid"],)):
                 if i in dec:
                     members[i] = {"from": str(PurePosixPath(files[i]["path"]).parent),
-                                  "why": (pdata.get("reasons") or {}).get(i) or pdata.get("why"), "target": pr["target"]}
+                                  "why": (pdata.get("reasons") or {}).get(i) or pdata.get("why"), "target": pr["target"],
+                                  "unsure": (pdata.get("unsure") or {}).get(i)}
         if not members:
             continue
         pr0, pdata = prs[0], json.loads(prs[0]["data"] or "{}")
@@ -271,6 +272,7 @@ def run(cfg: Config, con, run_id: str, out: str | None):
             template.replace("/*DATA*/null", json.dumps(data, ensure_ascii=False).replace("</", "<\\/")), encoding="utf-8")
         rows.append({"album": key, "slug": slug, "photos": len(items), "ready": True, "kind": "proposal",
                      "action": kind, "title": title, "subtitle": subtitle,
+                     "unsure": sum(1 for m in members.values() if m.get("unsure")),
                      "bursts": len(bursts), "keep": sum(1 for x in items if x["verdict"] == "keep"),
                      "review": sum(1 for x in items if x["tier"] == "review"), "start": day,
                      "cover": next((x["id"] for x in items if x["verdict"] == "keep"), items[0]["id"]),
@@ -328,7 +330,8 @@ def index_page(run_id: str, rows: list[dict], moves: list | None = None) -> str:
                 f'<a href="albums/{quote(r["slug"])}.html"><img src="t/{r["cover"]}.jpg" alt="" loading="lazy"></a>'
                 f'<div><a href="albums/{quote(r["slug"])}.html"><b>{name}</b></a><span>{parent}</span>'
                 f'<span>{r["photos"]} photos · {r["bursts"]} bursts · keep {r["keep"]} · {r["review"]} to review'
-                f'{" · " + str(r["joining"]) + " joining from unsorted folders" if r.get("joining") else ""}</span>'
+                f'{" · " + str(r["joining"]) + " joining from unsorted folders" if r.get("joining") else ""}'
+                f'{" · <b>" + str(r["unsure"]) + " unsure</b>" if r.get("unsure") else ""}</span>'
                 f'<span class="lab"></span><button class="trust" title="accept every proposal of this album as it is">'
                 f'Trust automatic picks</button></div></div>')
     proposals = {r["album"]: r["proposals"] for r in rows if r["ready"]}

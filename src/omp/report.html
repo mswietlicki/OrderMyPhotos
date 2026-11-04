@@ -137,7 +137,7 @@ header input[type=range] { width: 120px; vertical-align: middle; }
   <span class="stats" id="stats"></span>
   <span class="spacer"></span>
   <label title="thumbnail size">Size <input type="range" id="size" min="180" max="720" step="20"></label>
-  <label>Show <select id="filter"><option value="all">all</option><option value="review">needs review</option><option value="archive">archive proposals</option><option value="open">not labelled yet</option></select></label>
+  <label>Show <select id="filter"><option value="all">all</option><option value="review">needs review</option><option value="archive">archive proposals</option><option value="open">not labelled yet</option><option value="unsure">the sort's unsure ones</option></select></label>
   <button id="maybes" title="archive every 'maybe redundant' frame you haven't labelled">Archive the maybes</button>
   <button id="trust" title="accept every proposal you haven't labelled">Trust automatic picks</button>
   <button id="imp">Load labels…</button><input type="file" id="impf" accept=".json" hidden>
@@ -224,6 +224,7 @@ function badges(x) {
   if ((x.cap && x.cap.purpose && x.cap.purpose !== "memory") || (!x.cap && x.f.purpose && x.f.purpose !== "memory"))
     b.push('<span class="b ref">' + esc((x.cap && x.cap.category !== "none" && x.cap.category) || (x.cap && x.cap.purpose) || x.f.purpose) + '</span>');
   if (x.joins) b.push('<span class="b ref" title="joins this album from ' + esc(x.joins.from) + (x.joins.why ? ": " + esc(x.joins.why) : "") + (x.joins.sent ? " (sent " + esc(x.joins.sent) + ", shown next to the album photo it looks most like)" : "") + '. o keeps it out">+ ' + esc(x.joins.from.split("/").pop()) + (x.joins.target !== DATA.album ? " → " + esc(x.joins.target.split("/").pop()) : "") + '</span>');
+  if (x.joins && x.joins.unsure) b.push('<span class="b rev" title="the sort wasn\'t sure where this goes (its best answer: ' + esc(x.joins.unsure) + '): please look">unsure</span>');
   if (L(x).move) b.push('<span class="b rev" title="m: you moved it here">→ ' + esc(L(x).move.replace(/^new:/, "new album: ").split("/").pop()) + '</span>');
   if (L(x).out) b.push('<span class="b rev" title="o: does not belong in this ' + (DATA.proposal ? "proposal" : "album") + '; it goes to the thematic folder it fits">out</span>');
   if (L(x).confirmed && L(x).verdict && L(x).verdict !== x.verdict) b.push('<span class="b rev" title="your label differs from the proposal">pipeline: ' + esc(x.verdict) + '</span>');
@@ -248,6 +249,7 @@ function visible(x) {
   if (f === "review") return x.tier === "review";
   if (f === "archive") return verdictOf(x) !== "keep";
   if (f === "open") return !L(x).confirmed;
+  if (f === "unsure") return !!(x.joins && x.joins.unsure);
   return true;
 }
 function render() {

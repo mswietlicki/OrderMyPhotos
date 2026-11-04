@@ -404,6 +404,22 @@ The user: the week album is fine, but its Event 11, a birthday party at another 
 
 **Final s6:**
 - "Urodziny <friend>", 34 photos; the album keeps the evening before and the night walk after;
-- the trip whole, and the pet-shop trip its own album (13 photos);
+- the trip whole, and the pet-shop trip its own album: 13 photos, then 19 once the WhatsApp photos sent that day could join it;
 - the cat's folder with 11 photos of it, 5 of them from `Cats`;
 - review: 16 of 16 albums ready, 517 photos.
+
+### s6: repeatable answers and the sure-first prototype (P45)
+
+**Two runs of the same code didn't agree:** with a fixed hash seed, they still moved 11 photos and renamed every new album. Logging every question showed the same question getting a different answer. llama-swap's `:instruct` alias sets temperature 0.7 on every request. After switching to the model's own id, long answers still drifted until the prompt cache was off. Then two runs asked the same 101 questions and placed every photo the same.
+
+**The neighbour table:** 517 photos, 20 look-alikes each, one matrix product.
+
+**The sure-first loop**, against the passes, both repeatable:
+- the same placements, photo for photo;
+- 15 groups sure, 8 unsure: the two halves of the pet-shop trip (merged afterwards), the beer shopping and four single photos;
+- the second round placed 1 more group, the third none;
+- 114 calls in 107 s, against 101 calls in 116 s.
+
+**Against the user's last review:** the beer shopping (8 photos) is an album of its own, not in Shopping. One photo went from Screens to Maps and one from Documents to Random.
+
+**The loop adopted** as the default (user): the next run placed every photo as before. The review now flags the unsure ones: 11 photos of the pet-shop trip, 5 of the beer shopping, and one each in `Other/2022`, `Documents`, `Food`, `Maps` and `Random`.

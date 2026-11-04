@@ -440,7 +440,9 @@ The user, on the s6 review: the week-long album "<name>" (12–19 Nov) is fine, 
   - the first wording ("an errand is an event of its own") split the pet-shop trip into two albums, because it read the other half as the errand.
 - **A group's own new album is offered in pass 2:** "keep it there" named an album the group wasn't offered, and 10 trip photos went to `Other/2022`.
 - **S11 reads English only** (user, 2026-11-04): the album namer got Polish titles, and now gets English ones. Album names stay Polish.
-- *Result on s6:* the party is a new album ("Urodziny <friend>", 34 photos). The album keeps the evening before and the night walk after. The trip is whole, and the pet-shop trip is its own album again (13 photos). Besides that, the changes from the accepted run are:
+- **Messenger photos sent the same day** as a new album made of that day's messenger photos join it when "part of that album?" says so, burst by burst. The user noticed photos of the pet-shop trip outside its album: a spoon and a harness that didn't look like the rest, decided alone to folders. 6 more joined, 19 in all.
+- **The namer names a place** only from the GPS or a name readable in the photos. A geyser without GPS became "Islandia".
+- *Result on s6:* the party is a new album ("Urodziny <friend>", 34 photos). The album keeps the evening before and the night walk after. The trip is whole, and the pet-shop trip is its own album again (19 photos). Besides that, the changes from the accepted run are:
   - the cat's own photos are in its folder (11, 5 of them from `Cats`);
   - new albums' names vary a little.
 
@@ -523,6 +525,37 @@ The user, before the whole-library run: "resilience to breaks and restarts. This
   - `deploy/test.env`: a test set next to it.
 - The code is mounted from the clone, so `git pull` and a restart deploy a change.
 - It's tailnet-only, through Tailscale Serve (mimir D25).
+
+## P45 — Repeatable S11 answers; a neighbour table and a sure-first loop, as a prototype (2026-11-04, user)
+
+The user: "Do we need more phases? Something that runs in a loop and tries to put a photo into an album, and if it's not sure, waits for another pass, so maybe the descriptions will be better and we'll be able to decide. Also maybe find a fast way of comparing any photo to all others, maybe with a graph DB, so that similar photos are found even in different directories." (P42–P44 and P46 are the full-run work.)
+
+- **Why S11 wasn't repeatable:** llama-swap's `:instruct` alias sets temperature 0.7, top-p 0.8 and presence penalty 1.5 on every request (its `setParamsByID` filter). So every S11 call "at temperature 0" was really sampled. Two runs of the same code moved 11 photos and renamed every new album. The yes/no answers weren't affected, because their probabilities are read before sampling.
+  - S11 now asks the same loaded model by its own id (`qwen3.8-27b`) with thinking off, where temperature 0 holds. It does this through `VLM(cfg.llm, repeatable=True)` (P46); a wrapper in `albums.py` did it before.
+  - It also turns off the server's prompt cache. Reusing the start of the previous prompt still changed long answers after some words, and those changes reached later questions. With the cache off, two runs ask the same 101 questions. Only reason texts can still differ (6 of them), never a placement. It costs about 15 s per run on s6.
+  - Test runs get a fixed hash seed (`PYTHONHASHSEED=0`), because some prompts are built from sets.
+  - Captions went through the alias too, so they were written at temperature 0.7 with a presence penalty, not at 0.2. Since P46 they get the temperature they ask for; the s6 captions are still the earlier ones.
+- **The neighbour table** (`neighbours.py`): each photo's 20 most alike photos by SigLIP 2, from any folder, in a `neighbour` table of the same DB. No graph database: the queries go one or two steps deep. On s6 it's one matrix product. The full library (~173,000 photos in the mirror) needs a chunked GPU path or FAISS, which is part of the full-run work.
+- **The sure-first loop** (`OMP_SORT=loop`, in place of pass 2):
+  - **Places to try** for each group: pass 1's pick, the library's albums within a day, the new albums placed so far, an album of its own, and the places of its look-alikes.
+  - **One question per place,** answered yes or no: "part of that album?", "an event of its own?" or "belongs in this folder?". Each comes with where the look-alikes are, as evidence.
+  - **Albums first:** when an album wants the group (≥ 0.5), the albums compete among themselves. Otherwise an album of its own and the folders compete. "Part of the trip" and "an event" were both true of a trip's night (0.96 and 0.9), so weighed together they never pulled apart.
+  - **Placing:** a group is placed when its best answer is ≥ 0.8 and 0.3 ahead of the next one. The others wait for the next round, which knows where the placed groups went.
+  - **After 4 rounds,** or a round that placed nothing, the rest take their best place, or pass 1's pick when nothing scores 0.5. They're marked "unsure" in their reason.
+  - **Then the usual steps:** new albums are renamed and joined to their event's album, pass 3 runs, then the rules after it.
+- *Result on s6:*
+  - repeatable: two loop runs place every photo the same;
+  - the same placements as the passes;
+  - 15 groups sure (14 in the first round, 1 in the second) and 8 unsure: the pet-shop trip's two halves (0.79 and 0.54, merged afterwards), the beer shopping (0.18) and four single photos;
+  - 114 calls in 107 s, against 101 calls in 116 s for the passes.
+
+  With temperature 0 really holding, the beer shopping became its own album (8 photos), where the user's last review had it in Shopping.
+- **Adopted** (user, 2026-11-04): the loop is the default, and `OMP_SORT=passes` brings back the old pass 2.
+  - Photos the loop wasn't sure of carry an "unsure" badge on their review page, with the best answer and the next one.
+  - The page's Show menu lists them on their own.
+  - The index counts them per album and folder.
+
+  On s6 that's 11 photos of the pet-shop trip, 5 of the beer shopping and five single photos. On this small set the loop changes no placement. Its rounds should matter where many groups depend on each other, and the look-alike evidence where the library has its own albums and folders.
 
 ## P46 — LLM calls ask for the model by its plain name, so their temperature holds (2026-11-04, measured)
 
