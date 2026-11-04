@@ -719,6 +719,37 @@ The user: "Did we add face mood recognition? If not, let's do this and add it to
   - Captions already written aren't redone for this: the whole-library run writes them with it.
   - Tested on a scratch copy of s6: three photos with smiling faces, captioned again, all had the line in their prompt, a description that says so, and the tag. The tag pass put `People/Smiling` on 64 of 363 captions.
 
+## P51 — "Look at every photo" runs its stages side by side, one lane per device (2026-11-04, measured)
+
+Part of the user's "use all resources we have to speed up the process". One after the other, the B50, the CPU, the depth service and the chat model each waited for the others.
+
+- **The lanes** (`lanes.py`), in the phase's one process:
+
+  | lane | steps, in order |
+  |---|---|
+  | B50 | SigLIP 2 (first: the VLM lane waits for it), DINOv2, Q-ReAlign (with the 4090's help, P49), subjects |
+  | CPU | nudity, faces (with expressions, P50) |
+  | depth | the depth service (on the B50, through llama-swap) |
+  | VLM | orient, then text, once SigLIP is done (orient before text, as before) |
+
+- **Threads, not processes:** each lane is a thread with its own DB connection. The lock, the status file and the stop stay one per run.
+  - The status has a part per lane, and the finished steps say their lane. The app shows a table: lane, step, a bar, photos, speed, time left.
+  - In lanes every photo is committed at once. A lane holding the write lock for the usual 10 s would stall the others. In the tests, one write waited 3.9 s once, and the rest less than 0.5 s.
+  - A stop raises the flag that each lane checks between photos. The process waits up to 60 s for them, then exits 143.
+  - A lane that fails doesn't stop the others. The phase fails at the end, and its retry runs the stages one after the other, in case the lanes together were the problem (the B50's memory). `OMP_LANES=0` turns lanes off.
+- **The chat model and the 4090's helper:**
+  - This process's own chat calls close the helper's gate while they run and for a minute after. Their tokens don't count as someone chatting. The gate is one per process, so its quiet stretch survives from stage to stage.
+  - Orient now screens every photo first and asks the chat model about the flagged ones in one stretch at the end. Spread over the screen, its calls kept the 4090 from the helper. On s6 they took 3.9–4.5 s each; in one stretch, 0.7 s.
+  - Text commits before its next VLM call, and both check for a stop between photos.
+- **Measured** on a copy of s6 (517 photos), all of the phase's results cleared:
+  - One after the other it took 808 s; in lanes, 596 s (−26 %). Both had the 4090's help, with the idle wait off.
+  - With the final code (SigLIP first, orient's checks in one stretch, faces with expressions), it took 461 s. That was without the 4090: another client was using the chat model, so the gate stayed closed.
+  - The B50 is the lanes' shared bottleneck. Its stages run 2–3× slower each, and depth goes from 90 to 155 s, but the CPU's faces and the chat model's checks now run alongside.
+  - The chat model was also serving another client during these runs, so its share is noisy in both.
+  - The results match the B50-only reference: vectors cosine ≥ 0.9997, kinds all the same, IQA within 0.01, and nudity, faces, subjects, depth and the orient turns identical.
+  - Stopped after 100 s, it exited in 3 s. The resume did only what wasn't committed, and its results matched too.
+  - B50 memory: the lanes take up to ~7 GB, against ~4.3 GB one after the other. With the RAG models at their usual 8.7 GB the peak was 15.2 of 16.3 GB, so it fits, with ~1 GB to spare.
+
 ## Open — for the user
 
 1. ~~**Language** of titles, descriptions and tags.~~ Resolved by P42: both languages; S11 reads English only.

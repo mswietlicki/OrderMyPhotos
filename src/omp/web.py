@@ -146,7 +146,10 @@ class Runner:
 
     def _spawn(self):
         stages = self.phase["stages"]
-        lanes = ["--lanes"] if self.phase.get("lanes") and os.environ.get("OMP_LANES", "1") != "0" else []
+        # Side by side (P51), unless turned off or retrying: a retry runs one stage after the other, in case
+        # it was the lanes together (the B50's memory) that failed.
+        lanes = ["--lanes"] if (self.phase.get("lanes") and os.environ.get("OMP_LANES", "1") != "0"
+                                and not self.control["retries"]) else []
         log = open(self.log_path(), "ab")
         log.write(f"\n=== {time.strftime('%Y-%m-%d %H:%M:%S %Z')} {self.phase['title']}: {' '.join(stages + lanes)}\n".encode())
         log.flush()
