@@ -1,9 +1,10 @@
 # omp-cuda: `omp worker` on the RTX 4090 (P49), the 4090's share of the vision stages. Started by llama-swap as
 # `omp-vision-cuda` (mimir stacks/llama-swap), with the code mounted from a clone of this repo at /code.
-#   docker build -t omp-cuda:0.2 -f docker/Dockerfile.cuda .
+#   docker build -t omp-cuda:0.3 -f docker/Dockerfile.cuda .
 # The same Python and library versions as docker/Dockerfile, so a photo comes out the same on either GPU; torch
 # is the CUDA 13.2 build (the host driver is 615, CUDA 13.4). flash-linear-attention gives Q-ReAlign its fast
 # kernels here (pure Triton), which the B50 doesn't have; Triton builds its launcher with gcc at first use.
+# scipy: ViTPose's preprocessing (subjects, P52).
 FROM ubuntu:26.04
 
 RUN apt-get update \
@@ -18,7 +19,8 @@ RUN uv venv --python 3.13 /opt/venv \
       torch==2.15.0+cu132 torchvision==0.29.1+cu132 \
  && uv pip install --no-cache \
       transformers==5.22.1 fastapi==0.162.0 uvicorn==0.54.0 pillow==13.0.0 "numpy<3" \
-      pyyaml==6.0.3 httpx==0.28.1 accelerate==1.15.0 huggingface-hub==2.4.0 flash-linear-attention==0.6.0
+      pyyaml==6.0.3 httpx==0.28.1 accelerate==1.15.0 huggingface-hub==2.4.0 flash-linear-attention==0.6.0 \
+      scipy==1.18.1
 
 ENV HOME=/tmp HF_HOME=/models/hf HF_HUB_DISABLE_TELEMETRY=1 PYTHONUNBUFFERED=1 PYTHONPATH=/code
 WORKDIR /tmp

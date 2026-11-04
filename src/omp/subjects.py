@@ -100,9 +100,93 @@ def facing_of(kps: np.ndarray, kind: str) -> str:
     return "unknown"
 
 
+class Subjects:
+    """One photo's people and animals, with pose, facing, cut and action: the rows for `subject`. The same here
+    on the B50 and in `omp worker` on the 4090, which takes photos from the other end of the list (P52)."""
+
+    def __init__(self, dev):
+        from transformers import (AutoModel, AutoProcessor, RTDetrForObjectDetection, RTDetrImageProcessor,
+                                  VitPoseForPoseEstimation)
+
+        self.dev, self.dtype = dev, torch.float16 if dev != "cpu" else torch.float32
+        self.det_proc = RTDetrImageProcessor.from_pretrained(DET)
+        self.det = RTDetrForObjectDetection.from_pretrained(DET).to(dev).eval()   # fp32: detection heads are touchy in fp16
+        self.pose_proc = AutoProcessor.from_pretrained(POSE)
+        self.pose = VitPoseForPoseEstimation.from_pretrained(POSE, dtype=self.dtype).to(dev).eval()
+        self.sig = AutoModel.from_pretrained(SIGLIP, dtype=self.dtype).to(dev).eval()
+        self.sig_proc = AutoProcessor.from_pretrained(SIGLIP)
+
+        def action_text(table):
+            t = siglip_text(self.sig, self.sig_proc, [p for _, en, pl in table for p in (en, pl)], dev)
+            return torch.nn.functional.normalize(t.view(len(table), 2, -1).mean(1), dim=-1)
+
+        self.texts = {"person": (PERSON_ACTIONS, action_text(PERSON_ACTIONS)),
+                      "animal": (ANIMAL_ACTIONS, action_text(ANIMAL_ACTIONS))}
+        self.scale, self.bias = self.sig.logit_scale.detach().exp().float(), self.sig.logit_bias.detach().float()
+        self.id2label = self.det.config.id2label
+
+    def __call__(self, path) -> dict:
+        dev, dtype = self.dev, self.dtype
+        img = Image.open(path).convert("RGB")
+        w, h = img.size
+        with torch.inference_mode():
+            inputs = self.det_proc(images=img, return_tensors="pt").to(dev)
+            out = self.det(**inputs)
+        # Post-processing on the CPU: boolean-mask indexing on XPU returns garbage (torch 2.15.0+xpu).
+        out.logits, out.pred_boxes = out.logits.float().cpu(), out.pred_boxes.float().cpu()
+        res = self.det_proc.post_process_object_detection(out, target_sizes=torch.tensor([[h, w]]), threshold=0.4)[0]
+        found = []
+        for score, label, box in zip(res["scores"].tolist(), res["labels"].tolist(), res["boxes"].tolist()):
+            name = self.id2label[label].lower()
+            kind = "person" if name == "person" else "animal" if name in ANIMALS else None
+            x0, y0, x1, y1 = max(0, box[0]), max(0, box[1]), min(w, box[2]), min(h, box[3])
+            if kind and (y1 - y0) / h >= MIN_SIZE and x1 > x0:
+                found.append({"kind": kind, "label": name, "score": score, "box": [x0, y0, x1, y1]})
+        found = sorted(found, key=lambda s: -(s["box"][3] - s["box"][1]))[:MAX_SUBJECTS]
+        rows = []
+        for kind, head in (("person", POSE_PEOPLE), ("animal", POSE_ANIMALS)):
+            group = [s for s in found if s["kind"] == kind]
+            if not group:
+                continue
+            coco = [[s["box"][0], s["box"][1], s["box"][2] - s["box"][0], s["box"][3] - s["box"][1]] for s in group]
+            with torch.inference_mode():
+                pin = self.pose_proc(img, boxes=[coco], return_tensors="pt").to(dev)
+                pin["pixel_values"] = pin["pixel_values"].to(dtype)
+                pout = self.pose(**pin, dataset_index=torch.full((len(group),), head, device=dev))
+            pout.heatmaps = pout.heatmaps.float().cpu()
+            poses = self.pose_proc.post_process_pose_estimation(pout, boxes=[coco])[0]
+            crops = []
+            for s, p in zip(group, poses):
+                x0, y0, x1, y1 = s["box"]
+                kp = p["keypoints"].float().cpu().numpy()
+                sc = p["scores"].float().cpu().numpy()
+                rel = np.stack([(kp[:, 0] - x0) / max(x1 - x0, 1), (kp[:, 1] - y0) / max(y1 - y0, 1), sc], 1)
+                s["kps"] = rel
+                mx, my = (x1 - x0) * 0.1, (y1 - y0) * 0.1
+                crops.append(img.crop((max(0, x0 - mx), max(0, y0 - my), min(w, x1 + mx), min(h, y1 + my))))
+            table, tvec = self.texts[kind]
+            with torch.inference_mode():
+                si = self.sig_proc(images=crops, return_tensors="pt", max_num_patches=256).to(dev)
+                si["pixel_values"] = si["pixel_values"].to(dtype)
+                emb = self.sig.get_image_features(**si)
+                emb = emb if torch.is_tensor(emb) else emb.pooler_output
+                emb = torch.nn.functional.normalize(emb.float(), dim=-1)
+                probs = torch.softmax(emb @ tvec.T * self.scale + self.bias, -1).cpu().numpy()
+            for s, pr in zip(group, probs):
+                order = np.argsort(-pr)
+                x0, y0, x1, y1 = s["box"]
+                rows.append({
+                    "kind": kind, "label": s["label"], "score": s["score"], "size": (y1 - y0) / h,
+                    "box": [round(x0 / w, 4), round(y0 / h, 4), round(x1 / w, 4), round(y1 / h, 4)],
+                    "kps": np.round(s["kps"], 3).tolist(), "facing": facing_of(s["kps"], kind),
+                    "cut": int(x0 <= 0.01 * w or y0 <= 0.01 * h or x1 >= 0.99 * w or y1 >= 0.99 * h),
+                    "action": table[order[0]][0], "action_p": float(pr[order[0]]),
+                    "actions": [[table[j][0], round(float(pr[j]), 3)] for j in order[:3]]})
+        return {"count": len(found), "subjects": rows}
+
+
 def run(cfg: Config, con, run_id: str):
-    from transformers import (AutoModel, AutoProcessor, RTDetrForObjectDetection, RTDetrImageProcessor,
-                              VitPoseForPoseEstimation)
+    from .helper import Share
 
     con.executescript(SCHEMA)
     done = {r[0] for r in con.execute("SELECT id FROM signal WHERE kind='subjects' AND model=?", (MODEL,))}
@@ -110,89 +194,31 @@ def run(cfg: Config, con, run_id: str):
     if not ids:
         return
     dev = device()
-    dtype = torch.float16 if dev != "cpu" else torch.float32
-    det_proc = RTDetrImageProcessor.from_pretrained(DET)
-    det = RTDetrForObjectDetection.from_pretrained(DET).to(dev).eval()   # fp32: detection heads are touchy in fp16
-    pose_proc = AutoProcessor.from_pretrained(POSE)
-    pose = VitPoseForPoseEstimation.from_pretrained(POSE, dtype=dtype).to(dev).eval()
-    sig = AutoModel.from_pretrained(SIGLIP, dtype=dtype).to(dev).eval()
-    sig_proc = AutoProcessor.from_pretrained(SIGLIP)
-
-    def action_text(table):
-        t = siglip_text(sig, sig_proc, [p for _, en, pl in table for p in (en, pl)], dev)
-        return torch.nn.functional.normalize(t.view(len(table), 2, -1).mean(1), dim=-1)
-
-    texts = {"person": (PERSON_ACTIONS, action_text(PERSON_ACTIONS)), "animal": (ANIMAL_ACTIONS, action_text(ANIMAL_ACTIONS))}
-    scale, bias = sig.logit_scale.detach().exp().float(), sig.logit_bias.detach().float()
-    id2label = det.config.id2label
+    engine = Subjects(dev)
     t0 = time.perf_counter()
     n_subj = 0
     with Progress(con, "signals.subjects", MODEL, total=len(ids)) as prog:
-        for id_ in ids:
+        share = Share(cfg, "subjects", ids)
+        for id_, r in share:
             with prog.item(id_):
-                img = Image.open(cfg.preview(id_)).convert("RGB")
-                w, h = img.size
-                with torch.inference_mode():
-                    inputs = det_proc(images=img, return_tensors="pt").to(dev)
-                    out = det(**inputs)
-                # Post-processing on the CPU: boolean-mask indexing on XPU returns garbage (torch 2.15.0+xpu).
-                out.logits, out.pred_boxes = out.logits.float().cpu(), out.pred_boxes.float().cpu()
-                res = det_proc.post_process_object_detection(out, target_sizes=torch.tensor([[h, w]]), threshold=0.4)[0]
-                found = []
-                for score, label, box in zip(res["scores"].tolist(), res["labels"].tolist(), res["boxes"].tolist()):
-                    name = id2label[label].lower()
-                    kind = "person" if name == "person" else "animal" if name in ANIMALS else None
-                    x0, y0, x1, y1 = max(0, box[0]), max(0, box[1]), min(w, box[2]), min(h, box[3])
-                    if kind and (y1 - y0) / h >= MIN_SIZE and x1 > x0:
-                        found.append({"kind": kind, "label": name, "score": score, "box": [x0, y0, x1, y1]})
-                found = sorted(found, key=lambda s: -(s["box"][3] - s["box"][1]))[:MAX_SUBJECTS]
+                r = r or engine(cfg.preview(id_))
+                if "error" in r:
+                    raise RuntimeError(r["error"])
                 con.execute("DELETE FROM subject WHERE id=? AND model=?", (id_, MODEL))
-                for kind, head in (("person", POSE_PEOPLE), ("animal", POSE_ANIMALS)):
-                    group = [s for s in found if s["kind"] == kind]
-                    if not group:
-                        continue
-                    coco = [[s["box"][0], s["box"][1], s["box"][2] - s["box"][0], s["box"][3] - s["box"][1]] for s in group]
-                    with torch.inference_mode():
-                        pin = pose_proc(img, boxes=[coco], return_tensors="pt").to(dev)
-                        pin["pixel_values"] = pin["pixel_values"].to(dtype)
-                        pout = pose(**pin, dataset_index=torch.full((len(group),), head, device=dev))
-                    pout.heatmaps = pout.heatmaps.float().cpu()
-                    poses = pose_proc.post_process_pose_estimation(pout, boxes=[coco])[0]
-                    crops = []
-                    for s, p in zip(group, poses):
-                        x0, y0, x1, y1 = s["box"]
-                        kp = p["keypoints"].float().cpu().numpy()
-                        sc = p["scores"].float().cpu().numpy()
-                        rel = np.stack([(kp[:, 0] - x0) / max(x1 - x0, 1), (kp[:, 1] - y0) / max(y1 - y0, 1), sc], 1)
-                        s["kps"] = rel
-                        mx, my = (x1 - x0) * 0.1, (y1 - y0) * 0.1
-                        crops.append(img.crop((max(0, x0 - mx), max(0, y0 - my), min(w, x1 + mx), min(h, y1 + my))))
-                    table, tvec = texts[kind]
-                    with torch.inference_mode():
-                        si = sig_proc(images=crops, return_tensors="pt", max_num_patches=256).to(dev)
-                        si["pixel_values"] = si["pixel_values"].to(dtype)
-                        emb = sig.get_image_features(**si)
-                        emb = emb if torch.is_tensor(emb) else emb.pooler_output
-                        emb = torch.nn.functional.normalize(emb.float(), dim=-1)
-                        probs = torch.softmax(emb @ tvec.T * scale + bias, -1).cpu().numpy()
-                    for s, pr in zip(group, probs):
-                        order = np.argsort(-pr)
-                        x0, y0, x1, y1 = s["box"]
-                        cut = int(x0 <= 0.01 * w or y0 <= 0.01 * h or x1 >= 0.99 * w or y1 >= 0.99 * h)
-                        con.execute(
-                            "INSERT INTO subject(id, model, kind, label, box, score, size, kps, facing, cut, action, action_p, actions)"
-                            " VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)",
-                            (id_, MODEL, kind, s["label"], json.dumps([round(x0 / w, 4), round(y0 / h, 4), round(x1 / w, 4), round(y1 / h, 4)]),
-                             s["score"], (y1 - y0) / h, json.dumps(np.round(s["kps"], 3).tolist()), facing_of(s["kps"], kind), cut,
-                             table[order[0]][0], float(pr[order[0]]),
-                             json.dumps([[table[j][0], round(float(pr[j]), 3)] for j in order[:3]])))
-                        n_subj += 1
+                for s in r["subjects"]:
+                    con.execute(
+                        "INSERT INTO subject(id, model, kind, label, box, score, size, kps, facing, cut, action, action_p, actions)"
+                        " VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                        (id_, MODEL, s["kind"], s["label"], json.dumps(s["box"]), s["score"], s["size"], json.dumps(s["kps"]),
+                         s["facing"], s["cut"], s["action"], s["action_p"], json.dumps(s["actions"])))
+                    n_subj += 1
                 con.execute("INSERT OR REPLACE INTO signal(id, kind, model, value) VALUES (?,?,?,?)",
-                            (id_, "subjects", MODEL, len(found)))
+                            (id_, "subjects", MODEL, r["count"]))
                 con.commit()
     dt = time.perf_counter() - t0
-    log_timing(con, "signals.subjects", run_id, prog.ok, dt, dev)
+    log_timing(con, "signals.subjects", run_id, prog.ok, dt, dev + share.note())
     con.commit()
-    print(f"signals.subjects: {prog.ok} images, {n_subj} subjects, {dt:.1f} s ({prog.ok / max(dt, 1e-6):.1f} img/s on {dev})")
-    del det, pose, sig
+    print(f"signals.subjects: {prog.ok} images, {n_subj} subjects, {dt:.1f} s ({prog.ok / max(dt, 1e-6):.1f} img/s on {dev}"
+          f"{share.note()})")
+    del engine
     free()
