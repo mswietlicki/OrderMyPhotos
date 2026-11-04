@@ -104,7 +104,7 @@ class Runner:
 
     def _spawn(self):
         log = open(self.log_path(), "ab")
-        log.write(f"\n=== {time.strftime('%Y-%m-%d %H:%M:%S')} start {' '.join(self.stages)}\n".encode())
+        log.write(f"\n=== {time.strftime('%Y-%m-%d %H:%M:%S %Z')} start {' '.join(self.stages)}\n".encode())
         log.flush()
         self.proc = subprocess.Popen([sys.executable, "-m", "omp", *self.stages, "--run", self.control["run"]],
                                      stdout=log, stderr=subprocess.STDOUT, cwd="/tmp" if os.name != "nt" else None)
@@ -183,9 +183,10 @@ def gpu_models() -> list:
     import httpx
 
     try:
-        return httpx.get(f"{cfg.llm}/running", timeout=2).json().get("running", [])
+        running = httpx.get(f"{cfg.llm}/running", timeout=2).json().get("running", [])
     except (httpx.HTTPError, ValueError):
         return []
+    return [{k: m.get(k) for k in ("model", "state", "name")} for m in running]
 
 
 def tail(path: Path, lines: int) -> str:

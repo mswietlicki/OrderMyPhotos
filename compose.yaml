@@ -18,9 +18,8 @@ services:
     network_mode: host
     user: "${OMP_UID:-1001}:${OMP_GID:-1002}"
     group_add: ["${OMP_RENDER_GID:-990}"]
-    devices:
+    devices:  # the B50 only: the NVIDIA CDI device breaks Level Zero; models on the 4090 run under llama-swap
       - ${OMP_B50:-/dev/dri/b50-render}:/dev/dri/renderD128
-      - nvidia.com/gpu=all        # only for nvidia-smi in the monitor; models on the 4090 run under llama-swap
     environment:
       OMP_ROOT: /library
       OMP_DB: /state/omp.db
@@ -33,6 +32,8 @@ services:
       OMP_LLM: ${OMP_LLM:-http://127.0.0.1:9292}
       OMP_LIBRARY_INDEX: ${OMP_LIBRARY_INDEX:-manifest}   # manifest (OneDrive) | self (the library's own DB)
       OMP_POLICY_EXTRA: ${OMP_POLICY_EXTRA:-}
+      OMP_GPU_STATS: /run/mimir-gpu/stats.json          # the 4090 and the B50's VRAM, from the host (mimir-gpu-stats)
+      OMP_B50_PCI: ${OMP_B50_PCI:-0000:0e:00.0}
       HF_HOME: /models/hf
       PYTHONPATH: /code
     volumes:
@@ -44,3 +45,4 @@ services:
       - ${OMP_MODELS_DIR:?}:/models
       - ${OMP_MANIFESTS_DIR:?}:/manifests:ro
       - ./src:/code:ro
+      - /run/mimir-gpu:/run/mimir-gpu:ro

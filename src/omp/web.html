@@ -182,6 +182,9 @@ function render(s) {
   rows.push(["Run: CPU", m.cpu == null ? "—" : `${(m.cpu / 100).toFixed(1)} cores · ${m.processes} processes`]);
   rows.push(["Run: memory", gib(m.rss)]);
   rows.push(["Run: disk", `read ${mbs(m.read)} · write ${mbs(m.write)}`]);
+  const load = m.b50_load || {};
+  rows.push(["Arc Pro B50", (load.gt0 != null ? `${load.gt0} % compute` + (load.gt1 ? ` · ${load.gt1} % media` : "") : "—")
+    + (m.b50_vram_total_used != null ? ` · ${gib(m.b50_vram_total_used)} of 16 GiB VRAM` : "")]);
   rows.push(["Run: B50", m.b50_vram ? `${gib(m.b50_vram)} VRAM` + Object.entries(m.b50_busy || {}).filter(([, v]) => v > 0).map(([e, v]) => ` · ${e} ${v} %`).join("") : "not in use"]);
   rows.push(["RTX 4090", g ? `${g.util} % · ${gib(g.vram_used)} of ${gib(g.vram_total)} · ${Math.round(g.power)} W · ${g.temp} °C` : "—"]);
   for (const [k, d] of Object.entries(m.disks || {})) rows.push([`Free on ${k}`, `${gib(d.free)} of ${gib(d.total)}`]);

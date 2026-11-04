@@ -1,18 +1,23 @@
 """What a run costs the machine, sampled every few seconds for the web app: CPU, memory and disk I/O of the
-pipeline's process tree and of the whole host, free space, the 4090 (nvidia-smi) and the pipeline's own use
-of the B50 (the xe driver's per-client fdinfo: VRAM held and engine cycles). Linux only; on other systems
-the fields are just missing.
+pipeline's process tree and of the whole host, free space, and both GPUs:
+- the B50's load from the xe driver's idle residency in sysfs, and the pipeline's own VRAM and engine
+  cycles from its DRM clients' fdinfo;
+- the 4090, and the B50's total VRAM, from the host's GPU stats file (mimir `mimir-gpu-stats`), since this
+  container can't have the NVIDIA device: it breaks Level Zero for the B50.
+Linux only; on other systems the fields are just missing.
 """
 
+import json
 import os
 import re
 import shutil
-import subprocess
 import threading
 import time
 from collections import deque
 
 INTERVAL = 3
+GPU_STATS = os.environ.get("OMP_GPU_STATS", "/run/mimir-gpu/stats.json")
+B50_PCI = os.environ.get("OMP_B50_PCI", "0000:0e:00.0")
 HISTORY = 200            # samples kept for the charts: 10 minutes
 _UNITS = {"B": 1, "KiB": 1024, "MiB": 1024 ** 2, "GiB": 1024 ** 3}
 _TICK = os.sysconf("SC_CLK_TCK") if hasattr(os, "sysconf") else 100
@@ -88,17 +93,28 @@ def _b50(pids):
     return vram, cycles, total
 
 
-def _nvidia():
-    if not shutil.which("nvidia-smi"):
-        return None
+def _host_gpus():
+    """The host's GPU stats file, if it's fresh: the 4090 and the B50's total VRAM."""
     try:
-        out = subprocess.run(["nvidia-smi", "--query-gpu=name,utilization.gpu,memory.used,memory.total,power.draw,temperature.gpu",
-                              "--format=csv,noheader,nounits"], capture_output=True, text=True, timeout=5).stdout
-        name, util, used, tot, power, temp = [x.strip() for x in out.splitlines()[0].split(",")]
-        return {"name": name, "util": float(util), "vram_used": float(used) * 2 ** 20, "vram_total": float(tot) * 2 ** 20,
-                "power": float(power), "temp": float(temp)}
-    except (OSError, ValueError, IndexError, subprocess.SubprocessError):
-        return None
+        d = json.loads(_read(GPU_STATS) or "")
+    except ValueError:
+        return None, None
+    if time.time() - d.get("t", 0) > 30:
+        return None, None
+    n = d.get("nvidia") or {}
+    nvidia = {"name": n.get("name"), "util": n.get("util"), "power": n.get("power_w"), "temp": n.get("temp_c"),
+              "vram_used": n["mem_used_mib"] * 2 ** 20 if n.get("mem_used_mib") is not None else None,
+              "vram_total": n["mem_total_mib"] * 2 ** 20 if n.get("mem_total_mib") is not None else None}
+    return (nvidia if n.get("util") is not None else None), (d.get("b50") or {}).get("vram_used")
+
+
+def _b50_idle() -> dict[str, int]:
+    """Milliseconds each B50 GT (gt0 render and compute, gt1 media) has spent idle since boot."""
+    out = {}
+    for gt in ("gt0", "gt1"):
+        if (v := _read(f"/sys/bus/pci/devices/{B50_PCI}/tile0/{gt}/gtidle/idle_residency_ms")) is not None:
+            out[gt] = int(v)
+    return out
 
 
 def _memory():
@@ -137,7 +153,9 @@ class Sampler:
         host_total, host_idle = _host_cpu() if os.path.exists("/proc/stat") else (0, 0)
         cpu, rss, rd, wr = _proc(pids)
         vram, cycles, total = _b50(pids)
-        cur = {"t": now, "host": (host_total, host_idle), "cpu": cpu, "rd": rd, "wr": wr, "cycles": cycles, "total": total}
+        idle = _b50_idle()
+        cur = {"t": now, "host": (host_total, host_idle), "cpu": cpu, "rd": rd, "wr": wr, "cycles": cycles, "total": total,
+               "idle": idle}
         s = {"t": now, "processes": len(pids), "rss": rss, "b50_vram": vram, "cores": os.cpu_count()}
         if (p := self._prev) and now > p["t"]:
             dt = now - p["t"]
@@ -148,11 +166,13 @@ class Sampler:
             s["write"] = max(0, wr - p["wr"]) / dt
             s["b50_busy"] = {e: round(100 * (cycles[e] - p["cycles"].get(e, 0)) / (total[e] - p["total"][e]), 1)
                              for e in cycles if e in total and e in p["total"] and total[e] > p["total"][e]}
+            s["b50_load"] = {gt: round(max(0.0, min(100.0, 100 * (1 - (idle[gt] - p["idle"][gt]) / (1000 * dt)))), 1)
+                             for gt in idle if gt in p["idle"]}
         self._prev = cur
         mem = _memory()
         s["mem_total"], s["mem_available"] = mem.get("MemTotal"), mem.get("MemAvailable")
         s["load"] = os.getloadavg() if hasattr(os, "getloadavg") else None
-        s["gpu4090"] = _nvidia()
+        s["gpu4090"], s["b50_vram_total_used"] = _host_gpus()
         s["disks"] = {}
         for name, path in self.disks.items():
             try:
@@ -162,4 +182,4 @@ class Sampler:
                 pass
         self.latest = s
         self.history.append({k: s.get(k) for k in ("t", "host_cpu", "cpu", "rss", "read", "write")}
-                            | {"gpu": (s["gpu4090"] or {}).get("util"), "b50": max((s.get("b50_busy") or {}).values(), default=None)})
+                            | {"gpu": (s["gpu4090"] or {}).get("util"), "b50": (s.get("b50_load") or {}).get("gt0")})
