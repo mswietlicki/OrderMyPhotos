@@ -21,6 +21,7 @@ from PIL import Image, ImageOps
 
 from .config import Config
 from .db import get_data, log_timing
+from .runtime import post
 from .vlm import VLM, image_part
 
 MODEL = "unlimited-ocr-2"
@@ -260,8 +261,7 @@ def run_ocr(cfg: Config, con, run_id: str):
     n_text, pages = 0, []
     with httpx.Client(timeout=1800) as client:
         for i in rotate:
-            r = client.post(url, files=[("file", ("page.jpg", upright(path[i], rotate[i]), "image/jpeg"))])
-            r.raise_for_status()
+            r = post(client, url, files=[("file", ("page.jpg", upright(path[i], rotate[i]), "image/jpeg"))])
             out = r.json()
             blocks = blocks_of(out.get("raw") or out["text"])
             text = markdown_of(blocks) if blocks else plain_text(out["text"])

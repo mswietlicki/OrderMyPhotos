@@ -1,5 +1,5 @@
 # omp: the OrderMyPhotos runner. CPU stages plus PyTorch XPU for the Arc Pro B50 (falls back to CPU).
-# Built on Mimir from /srv/mimir/stacks/photos/src (a copy of this repo):
+# Built on Mimir by compose.yaml from a clone of this repo (or by mimir stacks/photos from a copy):
 #   docker build -t mimir/omp:0.1 -f docker/Dockerfile .
 # The first layers are identical to mimir's stacks/depth image, so they come from the build cache.
 FROM ubuntu:26.04

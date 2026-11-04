@@ -1,0 +1,230 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>OrderMyPhotos</title>
+<style>
+  :root {
+    --bg: #f6f7f9; --card: #fff; --fg: #1d2129; --muted: #667085; --line: #e4e7ec;
+    --accent: #2f6fde; --ok: #1f8a4c; --warn: #b7791f; --bad: #c0392b; --bar: #e8eefc; --c2: #8a5cd6; --c3: #d9822b;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root { --bg: #14161a; --card: #1c1f24; --fg: #e6e8eb; --muted: #98a2b3; --line: #2c3038;
+            --accent: #6b9cff; --ok: #4cc38a; --warn: #e0a84a; --bad: #ef6b5b; --bar: #26324a; --c2: #b18cf2; --c3: #f0a35e; }
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--fg); font: 15px/1.45 system-ui, -apple-system, "Segoe UI", sans-serif; }
+  main { max-width: 1180px; margin: 0 auto; padding: 20px 16px 48px; }
+  header { display: flex; flex-wrap: wrap; gap: 12px; align-items: center; justify-content: space-between; margin-bottom: 16px; }
+  h1 { font-size: 22px; margin: 0; }
+  h2 { font-size: 13px; text-transform: uppercase; letter-spacing: .06em; color: var(--muted); margin: 0 0 10px; font-weight: 600; }
+  h3 { font-size: 14px; margin: 14px 0 6px; }
+  .card { background: var(--card); border: 1px solid var(--line); border-radius: 10px; padding: 16px; margin-bottom: 14px; min-width: 0; }
+  .row { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; }
+  .badge { display: inline-block; padding: 2px 10px; border-radius: 999px; font-weight: 600; font-size: 13px; background: var(--line); }
+  .badge.running { background: var(--accent); color: #fff; }
+  .badge.stopping, .badge.retrying { background: var(--warn); color: #fff; }
+  .badge.finished { background: var(--ok); color: #fff; }
+  .badge.failed { background: var(--bad); color: #fff; }
+  button, select { font: inherit; padding: 7px 14px; border-radius: 8px; border: 1px solid var(--line); background: var(--card); color: var(--fg); }
+  button.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
+  button:disabled { opacity: .45; }
+  .bar { height: 10px; background: var(--bar); border-radius: 999px; overflow: hidden; margin: 6px 0; }
+  .bar > div { height: 100%; background: var(--accent); width: 0; transition: width .6s; }
+  .bar.small { height: 6px; margin: 3px 0 8px; }
+  .muted { color: var(--muted); }
+  .big { font-size: 26px; font-weight: 650; font-variant-numeric: tabular-nums; }
+  .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 14px; }
+  .kpis { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 12px; margin-top: 10px; }
+  .kpi .label { font-size: 12px; color: var(--muted); text-transform: uppercase; letter-spacing: .04em; }
+  ol.stages { list-style: none; padding: 0; margin: 0; }
+  ol.stages li { display: flex; justify-content: space-between; padding: 5px 0; border-bottom: 1px solid var(--line); }
+  ol.stages li:last-child { border-bottom: 0; }
+  .dot { display: inline-block; width: 9px; height: 9px; border-radius: 50%; margin-right: 8px; background: var(--line); }
+  .dot.done { background: var(--ok); } .dot.running { background: var(--accent); }
+  table { border-collapse: collapse; width: 100%; font-size: 14px; }
+  th { text-align: left; font-weight: 600; color: var(--muted); font-size: 12px; padding: 4px 6px 4px 0; border-bottom: 1px solid var(--line); }
+  td { padding: 4px 6px 4px 0; border-bottom: 1px solid var(--line); vertical-align: top; }
+  td.n, th.n { text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
+  .scroll { overflow-x: auto; }
+  pre { margin: 0; max-height: 380px; overflow: auto; font: 12px/1.4 ui-monospace, Consolas, monospace; white-space: pre-wrap; word-break: break-word; }
+  a { color: var(--accent); }
+  .error { color: var(--bad); white-space: pre-wrap; word-break: break-word; }
+  .chart { display: block; width: 100%; height: 56px; }
+  .legend span { margin-right: 12px; font-size: 12px; } .legend i { display: inline-block; width: 10px; height: 3px; vertical-align: middle; margin-right: 4px; }
+  details > summary { cursor: pointer; color: var(--muted); }
+</style>
+</head>
+<body>
+<main>
+  <header>
+    <h1>OrderMyPhotos</h1>
+    <div class="row">
+      <span id="state" class="badge">…</span>
+      <select id="pipeline" aria-label="Pipeline"></select>
+      <button id="start" class="primary">Start</button>
+      <button id="pause">Pause</button>
+    </div>
+  </header>
+
+  <section class="card">
+    <h2>Now</h2>
+    <div id="nowText">Loading…</div>
+    <div class="bar"><div id="bar"></div></div>
+    <div id="nowNumbers" class="muted"></div>
+    <div class="kpis">
+      <div class="kpi"><div class="label">Photos done in this step</div><div class="big" id="kDone">—</div></div>
+      <div class="kpi"><div class="label">Speed, last minute</div><div class="big" id="kRate">—</div></div>
+      <div class="kpi"><div class="label">Left in this step</div><div class="big" id="kEta">—</div></div>
+      <div class="kpi"><div class="label">Skipped</div><div class="big" id="kFailed">—</div></div>
+    </div>
+    <div id="error" class="error"></div>
+    <div id="stepErrors"></div>
+  </section>
+
+  <div class="grid">
+    <section class="card"><h2>Stages</h2><ol class="stages" id="stages"></ol>
+      <h3>Steps finished in this run</h3><div class="scroll"><table id="steps"></table></div></section>
+    <section class="card"><h2>Machine</h2>
+      <div class="legend"><span><i style="background:var(--accent)"></i>host CPU %</span><span><i style="background:var(--c2)"></i>4090 %</span><span><i style="background:var(--c3)"></i>B50 %</span></div>
+      <svg class="chart" id="chartLoad" viewBox="0 0 200 56" preserveAspectRatio="none"></svg>
+      <div class="legend"><span><i style="background:var(--accent)"></i>read MB/s</span><span><i style="background:var(--c2)"></i>write MB/s</span></div>
+      <svg class="chart" id="chartIo" viewBox="0 0 200 56" preserveAspectRatio="none"></svg>
+      <table id="machine"></table></section>
+    <section class="card"><h2>Results</h2><div id="results" class="muted">None yet</div>
+      <h3>GPU models loaded (llama-swap)</h3><div id="gpu" class="muted">—</div>
+      <h3>Library</h3><table id="library"></table></section>
+  </div>
+
+  <section class="card"><h2>Skipped photos</h2><div class="scroll"><table id="errors"></table></div></section>
+  <div class="grid">
+    <section class="card"><h2>Recent runs</h2><div class="scroll"><table id="history"></table></div></section>
+    <section class="card"><h2>Stage timings</h2><div class="scroll"><table id="timing"></table></div></section>
+  </div>
+  <section class="card"><h2>Log</h2><pre id="log"></pre></section>
+  <p class="muted">API: <a href="/docs">/docs</a> · <a href="/api/status">/api/status</a> · <a href="/api/history">/api/history</a> · <a href="/api/log?lines=1000">/api/log</a></p>
+</main>
+<script>
+const $ = id => document.getElementById(id);
+const esc = s => String(s ?? "").replace(/[&<>"]/g, c => ({"&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;"}[c]));
+const fmtDur = s => s == null ? "—" : s < 90 ? `${Math.round(s)} s` : s < 5400 ? `${Math.round(s / 60)} min`
+  : s < 172800 ? `${(s / 3600).toFixed(1)} h` : `${(s / 86400).toFixed(1)} days`;
+const fmtTime = t => t ? new Date(typeof t === "number" ? t * 1000 : t.replace(" ", "T") + "Z").toLocaleString() : "—";
+const num = n => n == null ? "—" : Number(n).toLocaleString();
+const gib = b => b == null ? "—" : `${(b / 2 ** 30).toFixed(1)} GiB`;
+const mbs = b => b == null ? "—" : `${(b / 1e6).toFixed(1)} MB/s`;
+let pipelinesShown = false;
+
+async function api(path, body) {
+  const r = await fetch(path, body === undefined ? {} : {method: "POST", headers: {"Content-Type": "application/json"}, body: JSON.stringify(body)});
+  if (!r.ok) throw new Error((await r.json().catch(() => ({}))).detail || r.statusText);
+  return r.json();
+}
+
+function chart(svg, series, max) {
+  const n = Math.max(...series.map(s => s.values.length), 2);
+  const top = max ?? Math.max(1, ...series.flatMap(s => s.values.filter(v => v != null)));
+  svg.innerHTML = series.map(s => {
+    const pts = s.values.map((v, i) => v == null ? null : `${(200 * i / (n - 1)).toFixed(1)},${(54 - 52 * Math.min(v, top) / top).toFixed(1)}`).filter(Boolean);
+    return pts.length ? `<polyline fill="none" stroke="${s.color}" stroke-width="1.5" vector-effect="non-scaling-stroke" points="${pts.join(" ")}"/>` : "";
+  }).join("") + `<text x="198" y="10" text-anchor="end" font-size="9" fill="currentColor" opacity=".5">${Math.round(top)}</text>`;
+}
+
+function render(s) {
+  if (!pipelinesShown) {
+    $("pipeline").innerHTML = Object.entries(s.pipelines).map(([k, v]) => `<option value="${k}">${esc(v.title)}</option>`).join("");
+    pipelinesShown = true;
+  }
+  if (document.activeElement !== $("pipeline")) $("pipeline").value = s.pipeline;
+  $("state").textContent = s.state;
+  $("state").className = "badge " + s.state;
+  const busy = s.state === "running" || s.state === "stopping";
+  $("start").disabled = busy;
+  $("start").textContent = ["paused", "retrying", "failed"].includes(s.state) ? "Resume" : "Start";
+  $("pause").disabled = !(s.state === "running" || s.state === "retrying");
+  $("pipeline").disabled = busy;
+
+  const st = s.step;
+  if (st) {
+    const pct = st.total ? 100 * (st.ok + st.failed) / st.total : 0;
+    $("bar").style.width = pct.toFixed(1) + "%";
+    $("nowText").innerHTML = `Stage <b>${esc(s.stage)}</b>, step <b>${esc(st.name)}</b> · ${pct.toFixed(1)} % · started ${fmtTime(st.started)}`;
+    $("nowNumbers").textContent = `average ${st.rate}/s since the step started (pid ${s.pid})`;
+    $("kDone").textContent = `${num(st.ok)} / ${num(st.total)}`;
+    $("kRate").textContent = st.recent_rate == null ? "—" : `${st.recent_rate}/s`;
+    $("kEta").textContent = fmtDur(st.eta);
+    $("kFailed").textContent = num(st.failed);
+    $("stepErrors").innerHTML = (st.errors || []).length ? "<h3>Latest skipped in this step</h3>" + st.errors.map(e =>
+      `<div class="error">${esc(e.id.slice(0, 12))}: ${esc(e.error)}</div>`).join("") : "";
+  } else {
+    $("bar").style.width = s.state === "finished" ? "100%" : "0";
+    $("nowText").textContent = s.stage ? `Stage ${s.stage} (no per-photo progress for this stage)` :
+      s.state === "retrying" ? `Failed with exit ${s.last_exit}; retry ${s.retries} at ${fmtTime(s.next_try)}` :
+      s.state === "paused" ? "Paused. Resume continues where it stopped." :
+      s.state === "finished" ? "Finished." : s.state === "failed" ? "Failed too many times in a row. See the log." : "Not started.";
+    $("nowNumbers").textContent = s.started ? `Last started ${fmtTime(s.started)}` : "";
+    for (const k of ["kDone", "kRate", "kEta", "kFailed"]) $(k).textContent = "—";
+    $("stepErrors").innerHTML = "";
+  }
+  $("error").textContent = s.error || "";
+
+  $("stages").innerHTML = s.stages.map(x => `<li><span><span class="dot ${x.state}"></span>${esc(x.stage)}</span>`
+    + `<span class="muted">${x.state === "done" ? fmtDur(x.seconds) : x.state === "running" ? "running" : ""}</span></li>`).join("");
+  $("steps").innerHTML = s.steps.length ? "<tr><th>Step</th><th class='n'>Done</th><th class='n'>Skipped</th><th class='n'>Time</th><th class='n'>/s</th></tr>"
+    + s.steps.slice().reverse().map(x => `<tr><td>${esc(x.name)}${x.stopped ? " <span class='muted'>(stopped)</span>" : ""}</td><td class="n">${num(x.ok)}</td>`
+    + `<td class="n">${num(x.failed)}</td><td class="n">${fmtDur(x.seconds)}</td><td class="n">${x.seconds ? (x.ok / x.seconds).toFixed(1) : "—"}</td></tr>`).join("")
+    : "<tr><td class='muted'>None yet</td></tr>";
+
+  const m = s.system || {}, g = m.gpu4090, rows = [];
+  rows.push(["Host CPU", m.host_cpu == null ? "—" : `${m.host_cpu} % of ${m.cores} cores` + (m.load ? ` · load ${m.load.map(x => x.toFixed(1)).join(" ")}` : "")]);
+  rows.push(["Host memory", m.mem_total ? `${gib(m.mem_total - m.mem_available)} of ${gib(m.mem_total)} used` : "—"]);
+  rows.push(["Run: CPU", m.cpu == null ? "—" : `${(m.cpu / 100).toFixed(1)} cores · ${m.processes} processes`]);
+  rows.push(["Run: memory", gib(m.rss)]);
+  rows.push(["Run: disk", `read ${mbs(m.read)} · write ${mbs(m.write)}`]);
+  rows.push(["Run: B50", m.b50_vram ? `${gib(m.b50_vram)} VRAM` + Object.entries(m.b50_busy || {}).filter(([, v]) => v > 0).map(([e, v]) => ` · ${e} ${v} %`).join("") : "not in use"]);
+  rows.push(["RTX 4090", g ? `${g.util} % · ${gib(g.vram_used)} of ${gib(g.vram_total)} · ${Math.round(g.power)} W · ${g.temp} °C` : "—"]);
+  for (const [k, d] of Object.entries(m.disks || {})) rows.push([`Free on ${k}`, `${gib(d.free)} of ${gib(d.total)}`]);
+  $("machine").innerHTML = rows.map(([k, v]) => `<tr><td class="muted">${k}</td><td class="n">${esc(v)}</td></tr>`).join("");
+
+  $("results").innerHTML = s.results.length ? s.results.map(u => `<div><a href="${u}" target="_blank">${esc(u.split("/").pop())}</a></div>`).join("") : "None yet";
+  $("gpu").textContent = s.gpu.length ? s.gpu.map(x => x.model + (x.state && x.state !== "ready" ? ` (${x.state})` : "")).join(", ") : "none";
+  const lib = s.library || {}, photos = lib.photos || 0;
+  $("library").innerHTML = lib.error ? `<tr><td class="error">${esc(lib.error)}</td></tr>` :
+    `<tr><td>Files</td><td class="n">${num(lib.files)}</td></tr><tr><td>Photos (unique)</td><td class="n">${num(lib.photos)}</td></tr>`
+    + `<tr><td>Database</td><td class="n">${gib(lib.db_bytes)}</td></tr>`
+    + Object.entries(lib.by_policy || {}).map(([k, v]) => `<tr><td class="muted">files: ${esc(k)}</td><td class="n">${num(v)}</td></tr>`).join("")
+    + Object.entries(lib.signals || {}).filter(([k]) => !k.startsWith("error.")).map(([k, v]) =>
+      `<tr><td class="muted">${esc(k)}</td><td class="n">${num(v)}${photos ? ` · ${Math.min(100, 100 * v / photos).toFixed(0)} %` : ""}</td></tr>`).join("");
+  const errs = lib.errors || [];
+  $("errors").innerHTML = errs.length ? "<tr><th>When</th><th>Step</th><th>Photo</th><th>Error</th></tr>" + errs.map(e => {
+    let msg = e.data; try { msg = JSON.parse(e.data).error; } catch (x) {}
+    return `<tr><td class="muted">${fmtTime(e.created)}</td><td>${esc(e.kind.slice(6))}</td><td>${esc(String(e.id).slice(0, 40))}</td><td class="error">${esc(msg)}</td></tr>`;
+  }).join("") : "<tr><td class='muted'>None</td></tr>";
+  $("history").innerHTML = s.history.length ? "<tr><th>Pipeline</th><th>From → to</th><th>End</th></tr>" + s.history.slice().reverse().map(h =>
+    `<tr><td>${esc(h.pipeline)}</td><td class="muted">${fmtTime(h.started)} → ${fmtTime(h.ended)}</td>`
+    + `<td>${h.exit === 0 ? "finished" : h.exit === 143 ? "paused" : "exit " + h.exit}</td></tr>`).join("") : "<tr><td class='muted'>None yet</td></tr>";
+  $("timing").innerHTML = (lib.timing || []).length ? "<tr><th>Stage</th><th class='n'>Items</th><th class='n'>Time</th><th class='n'>/s</th><th>Where</th></tr>"
+    + lib.timing.map(t => `<tr><td>${esc(t.stage)}</td><td class="n">${num(t.items)}</td><td class="n">${fmtDur(t.seconds)}</td>`
+    + `<td class="n">${t.seconds ? (t.items / t.seconds).toFixed(1) : "—"}</td><td class="muted">${esc(t.device || "")}</td></tr>`).join("") : "<tr><td class='muted'>None yet</td></tr>";
+}
+
+async function refresh() {
+  try { render(await api("/api/status")); } catch (e) { $("nowText").textContent = "Can't reach the server: " + e.message; }
+  try {
+    const h = await api("/api/history");
+    chart($("chartLoad"), [{values: h.map(x => x.host_cpu), color: "var(--accent)"}, {values: h.map(x => x.gpu), color: "var(--c2)"},
+                           {values: h.map(x => x.b50), color: "var(--c3)"}], 100);
+    chart($("chartIo"), [{values: h.map(x => x.read == null ? null : x.read / 1e6), color: "var(--accent)"},
+                         {values: h.map(x => x.write == null ? null : x.write / 1e6), color: "var(--c2)"}]);
+  } catch (e) {}
+  try { const r = await fetch("/api/log?lines=120"); const pre = $("log"); const atEnd = pre.scrollTop + pre.clientHeight >= pre.scrollHeight - 20;
+        pre.textContent = await r.text(); if (atEnd) pre.scrollTop = pre.scrollHeight; } catch (e) {}
+}
+$("start").onclick = async () => { try { render(await api("/api/run/start", {pipeline: $("pipeline").value})); } catch (e) { alert(e.message); } };
+$("pause").onclick = async () => { try { render(await api("/api/run/pause", {})); } catch (e) { alert(e.message); } };
+refresh();
+setInterval(refresh, 3000);
+</script>
+</body>
+</html>

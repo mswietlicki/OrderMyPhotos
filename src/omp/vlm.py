@@ -10,6 +10,8 @@ import time
 import httpx
 from PIL import Image
 
+from .runtime import post
+
 MODEL = "qwen3.8-27b:instruct"
 IMAGE_PX = 1152  # long side; ~1 MP at 4:3, about 1,000 image tokens for Qwen3.x
 
@@ -34,8 +36,7 @@ class VLM:
 
     def _post(self, body):
         t0 = time.perf_counter()
-        r = self.client.post(self.url, json={"model": self.model, **body})
-        r.raise_for_status()
+        r = post(self.client, self.url, json={"model": self.model, **body})
         d = r.json()
         self.calls += 1
         self.seconds += time.perf_counter() - t0

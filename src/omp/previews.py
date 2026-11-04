@@ -7,7 +7,6 @@ punishes bokeh (v1's Laplacian std at 400 px).
 """
 
 import time
-from concurrent.futures import ProcessPoolExecutor
 from pathlib import Path
 
 import cv2
@@ -17,6 +16,7 @@ from PIL import Image, ImageOps
 
 from .config import Config
 from .db import log_timing, put_signal
+from .runtime import Progress, worker_pool
 
 MODEL = "classic@1"
 PREVIEW_PX, THUMB_PX = 1536, 384
@@ -138,13 +138,11 @@ def run(cfg: Config, con, run_id: str, force=False):
     todo = [(r["id"], str(cfg.root / r["path"]), str(cfg.preview(r["id"])), str(cfg.thumb(r["id"])))
             for r in rows if r["id"] not in done]
     started = time.perf_counter()
-    n = errors = 0
     per_image = []
-    with ProcessPoolExecutor(max_workers=cfg.workers) as pool:
+    with Progress(con, "previews", MODEL, total=len(todo)) as prog, worker_pool(cfg.workers) as pool:
         for res in pool.map(process, todo, chunksize=1):
             if "error" in res:
-                errors += 1
-                put_signal(con, res["id"], "error.previews", MODEL, data={"error": res["error"]})
+                prog.fail(res["id"], res["error"])
                 continue
             s = res["sharp"]
             put_signal(con, res["id"], "sharp", MODEL, value=s["p90"], vec=s["grid"],
@@ -152,11 +150,11 @@ def run(cfg: Config, con, run_id: str, force=False):
             put_signal(con, res["id"], "exposure", MODEL, data=res["exposure"])
             put_signal(con, res["id"], "phash", MODEL, data=res["hashes"])
             per_image.append(res["seconds"])
-            n += 1
-    con.commit()
+            prog.done(res["id"])
     elapsed = time.perf_counter() - started
+    n = prog.ok
     log_timing(con, "previews", run_id, n, elapsed, f"cpu x{cfg.workers}")
     con.commit()
     mean = np.mean(per_image) if per_image else 0
-    print(f"previews: {n} photos, {errors} errors, {elapsed:.1f} s wall ({n / max(elapsed, 1e-6):.1f}/s),"
+    print(f"previews: {n} photos, {prog.failed} errors, {elapsed:.1f} s wall ({n / max(elapsed, 1e-6):.1f}/s),"
           f" {mean:.2f} s per photo per core")

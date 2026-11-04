@@ -14,6 +14,7 @@ from PIL import Image
 
 from .config import Config
 from .db import log_timing
+from .runtime import Progress
 from .vision import SIGLIP, device, free, siglip_text
 
 DET = "PekingU/rtdetr_r50vd_coco_o365"
@@ -126,70 +127,72 @@ def run(cfg: Config, con, run_id: str):
     id2label = det.config.id2label
     t0 = time.perf_counter()
     n_subj = 0
-    for id_ in ids:
-        img = Image.open(cfg.preview(id_)).convert("RGB")
-        w, h = img.size
-        with torch.inference_mode():
-            inputs = det_proc(images=img, return_tensors="pt").to(dev)
-            out = det(**inputs)
-        # Post-processing on the CPU: boolean-mask indexing on XPU returns garbage (torch 2.15.0+xpu).
-        out.logits, out.pred_boxes = out.logits.float().cpu(), out.pred_boxes.float().cpu()
-        res = det_proc.post_process_object_detection(out, target_sizes=torch.tensor([[h, w]]), threshold=0.4)[0]
-        found = []
-        for score, label, box in zip(res["scores"].tolist(), res["labels"].tolist(), res["boxes"].tolist()):
-            name = id2label[label].lower()
-            kind = "person" if name == "person" else "animal" if name in ANIMALS else None
-            x0, y0, x1, y1 = max(0, box[0]), max(0, box[1]), min(w, box[2]), min(h, box[3])
-            if kind and (y1 - y0) / h >= MIN_SIZE and x1 > x0:
-                found.append({"kind": kind, "label": name, "score": score, "box": [x0, y0, x1, y1]})
-        found = sorted(found, key=lambda s: -(s["box"][3] - s["box"][1]))[:MAX_SUBJECTS]
-        con.execute("DELETE FROM subject WHERE id=? AND model=?", (id_, MODEL))
-        for kind, head in (("person", POSE_PEOPLE), ("animal", POSE_ANIMALS)):
-            group = [s for s in found if s["kind"] == kind]
-            if not group:
-                continue
-            coco = [[s["box"][0], s["box"][1], s["box"][2] - s["box"][0], s["box"][3] - s["box"][1]] for s in group]
-            with torch.inference_mode():
-                pin = pose_proc(img, boxes=[coco], return_tensors="pt").to(dev)
-                pin["pixel_values"] = pin["pixel_values"].to(dtype)
-                pout = pose(**pin, dataset_index=torch.full((len(group),), head, device=dev))
-            pout.heatmaps = pout.heatmaps.float().cpu()
-            poses = pose_proc.post_process_pose_estimation(pout, boxes=[coco])[0]
-            crops = []
-            for s, p in zip(group, poses):
-                x0, y0, x1, y1 = s["box"]
-                kp = p["keypoints"].float().cpu().numpy()
-                sc = p["scores"].float().cpu().numpy()
-                rel = np.stack([(kp[:, 0] - x0) / max(x1 - x0, 1), (kp[:, 1] - y0) / max(y1 - y0, 1), sc], 1)
-                s["kps"] = rel
-                mx, my = (x1 - x0) * 0.1, (y1 - y0) * 0.1
-                crops.append(img.crop((max(0, x0 - mx), max(0, y0 - my), min(w, x1 + mx), min(h, y1 + my))))
-            table, tvec = texts[kind]
-            with torch.inference_mode():
-                si = sig_proc(images=crops, return_tensors="pt", max_num_patches=256).to(dev)
-                si["pixel_values"] = si["pixel_values"].to(dtype)
-                emb = sig.get_image_features(**si)
-                emb = emb if torch.is_tensor(emb) else emb.pooler_output
-                emb = torch.nn.functional.normalize(emb.float(), dim=-1)
-                probs = torch.softmax(emb @ tvec.T * scale + bias, -1).cpu().numpy()
-            for s, pr in zip(group, probs):
-                order = np.argsort(-pr)
-                x0, y0, x1, y1 = s["box"]
-                cut = int(x0 <= 0.01 * w or y0 <= 0.01 * h or x1 >= 0.99 * w or y1 >= 0.99 * h)
-                con.execute(
-                    "INSERT INTO subject(id, model, kind, label, box, score, size, kps, facing, cut, action, action_p, actions)"
-                    " VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)",
-                    (id_, MODEL, kind, s["label"], json.dumps([round(x0 / w, 4), round(y0 / h, 4), round(x1 / w, 4), round(y1 / h, 4)]),
-                     s["score"], (y1 - y0) / h, json.dumps(np.round(s["kps"], 3).tolist()), facing_of(s["kps"], kind), cut,
-                     table[order[0]][0], float(pr[order[0]]),
-                     json.dumps([[table[j][0], round(float(pr[j]), 3)] for j in order[:3]])))
-                n_subj += 1
-        con.execute("INSERT OR REPLACE INTO signal(id, kind, model, value) VALUES (?,?,?,?)",
-                    (id_, "subjects", MODEL, len(found)))
-        con.commit()
+    with Progress(con, "signals.subjects", MODEL, total=len(ids)) as prog:
+        for id_ in ids:
+            with prog.item(id_):
+                img = Image.open(cfg.preview(id_)).convert("RGB")
+                w, h = img.size
+                with torch.inference_mode():
+                    inputs = det_proc(images=img, return_tensors="pt").to(dev)
+                    out = det(**inputs)
+                # Post-processing on the CPU: boolean-mask indexing on XPU returns garbage (torch 2.15.0+xpu).
+                out.logits, out.pred_boxes = out.logits.float().cpu(), out.pred_boxes.float().cpu()
+                res = det_proc.post_process_object_detection(out, target_sizes=torch.tensor([[h, w]]), threshold=0.4)[0]
+                found = []
+                for score, label, box in zip(res["scores"].tolist(), res["labels"].tolist(), res["boxes"].tolist()):
+                    name = id2label[label].lower()
+                    kind = "person" if name == "person" else "animal" if name in ANIMALS else None
+                    x0, y0, x1, y1 = max(0, box[0]), max(0, box[1]), min(w, box[2]), min(h, box[3])
+                    if kind and (y1 - y0) / h >= MIN_SIZE and x1 > x0:
+                        found.append({"kind": kind, "label": name, "score": score, "box": [x0, y0, x1, y1]})
+                found = sorted(found, key=lambda s: -(s["box"][3] - s["box"][1]))[:MAX_SUBJECTS]
+                con.execute("DELETE FROM subject WHERE id=? AND model=?", (id_, MODEL))
+                for kind, head in (("person", POSE_PEOPLE), ("animal", POSE_ANIMALS)):
+                    group = [s for s in found if s["kind"] == kind]
+                    if not group:
+                        continue
+                    coco = [[s["box"][0], s["box"][1], s["box"][2] - s["box"][0], s["box"][3] - s["box"][1]] for s in group]
+                    with torch.inference_mode():
+                        pin = pose_proc(img, boxes=[coco], return_tensors="pt").to(dev)
+                        pin["pixel_values"] = pin["pixel_values"].to(dtype)
+                        pout = pose(**pin, dataset_index=torch.full((len(group),), head, device=dev))
+                    pout.heatmaps = pout.heatmaps.float().cpu()
+                    poses = pose_proc.post_process_pose_estimation(pout, boxes=[coco])[0]
+                    crops = []
+                    for s, p in zip(group, poses):
+                        x0, y0, x1, y1 = s["box"]
+                        kp = p["keypoints"].float().cpu().numpy()
+                        sc = p["scores"].float().cpu().numpy()
+                        rel = np.stack([(kp[:, 0] - x0) / max(x1 - x0, 1), (kp[:, 1] - y0) / max(y1 - y0, 1), sc], 1)
+                        s["kps"] = rel
+                        mx, my = (x1 - x0) * 0.1, (y1 - y0) * 0.1
+                        crops.append(img.crop((max(0, x0 - mx), max(0, y0 - my), min(w, x1 + mx), min(h, y1 + my))))
+                    table, tvec = texts[kind]
+                    with torch.inference_mode():
+                        si = sig_proc(images=crops, return_tensors="pt", max_num_patches=256).to(dev)
+                        si["pixel_values"] = si["pixel_values"].to(dtype)
+                        emb = sig.get_image_features(**si)
+                        emb = emb if torch.is_tensor(emb) else emb.pooler_output
+                        emb = torch.nn.functional.normalize(emb.float(), dim=-1)
+                        probs = torch.softmax(emb @ tvec.T * scale + bias, -1).cpu().numpy()
+                    for s, pr in zip(group, probs):
+                        order = np.argsort(-pr)
+                        x0, y0, x1, y1 = s["box"]
+                        cut = int(x0 <= 0.01 * w or y0 <= 0.01 * h or x1 >= 0.99 * w or y1 >= 0.99 * h)
+                        con.execute(
+                            "INSERT INTO subject(id, model, kind, label, box, score, size, kps, facing, cut, action, action_p, actions)"
+                            " VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                            (id_, MODEL, kind, s["label"], json.dumps([round(x0 / w, 4), round(y0 / h, 4), round(x1 / w, 4), round(y1 / h, 4)]),
+                             s["score"], (y1 - y0) / h, json.dumps(np.round(s["kps"], 3).tolist()), facing_of(s["kps"], kind), cut,
+                             table[order[0]][0], float(pr[order[0]]),
+                             json.dumps([[table[j][0], round(float(pr[j]), 3)] for j in order[:3]])))
+                        n_subj += 1
+                con.execute("INSERT OR REPLACE INTO signal(id, kind, model, value) VALUES (?,?,?,?)",
+                            (id_, "subjects", MODEL, len(found)))
+                con.commit()
     dt = time.perf_counter() - t0
-    log_timing(con, "signals.subjects", run_id, len(ids), dt, dev)
+    log_timing(con, "signals.subjects", run_id, prog.ok, dt, dev)
     con.commit()
-    print(f"signals.subjects: {len(ids)} images, {n_subj} subjects, {dt:.1f} s ({len(ids) / max(dt, 1e-6):.1f} img/s on {dev})")
+    print(f"signals.subjects: {prog.ok} images, {n_subj} subjects, {dt:.1f} s ({prog.ok / max(dt, 1e-6):.1f} img/s on {dev})")
     del det, pose, sig
     free()

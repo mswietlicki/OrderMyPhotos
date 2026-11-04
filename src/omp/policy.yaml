@@ -5,8 +5,11 @@
 #   ignore    not personal photos; still counted as copies (S1) and as S3b examples
 #   people    a person's folder: the faces in it teach the pipeline who that person is (S8); the photos stay as they are
 #   reference examples only (a sample's copies of thematic folders): they teach S11 routing, nothing else
-# Open question 6 in decisions.md: confirm the top-level folders.
+#   leave     left as it is (user, P42): not even read, so it's no copy, example or target for anything
+# Open question 6 in decisions.md: the other top-level folders.
 rules:
+  - {glob: "Pictures/Private/**", policy: leave}
+  - {glob: "Code/**", policy: leave}
   - {glob: "**/_archived/**", policy: cull}        # v1's archive folders: candidates again, at their album
   - {glob: "Pictures/Albums/**", policy: cull}
   - {glob: "Pictures/Info/**", policy: cull}
@@ -18,9 +21,12 @@ rules:
   - {glob: "Obrazy/Camera Roll/**", policy: unsorted}
   - {glob: "Obrazy/Other/**", policy: unsorted}
   - {glob: "**/WhatsApp*/**", policy: unsorted}
-  - {glob: "**/Screenshots/**", policy: describe}
+  - {glob: "**/Screenshots*/**", policy: describe}  # also "Screenshots 1"
   - {glob: "Obrazy/Scan/**", policy: describe}
   - {glob: "**/Wallpapers/**", policy: ignore}
+  - {glob: "**/Tapety/**", policy: ignore}
+  - {glob: "**/wallpaper/**", policy: ignore}
+  - {glob: "Obrazy/thermo_tc2c/**", policy: ignore}   # the thermal camera (design.md: not personal photos)
   - {glob: "Obrazy/Druk/**", policy: ignore}
   - {glob: "**/Faktury/**", policy: ignore}
   - {glob: "Backup/**", policy: ignore}

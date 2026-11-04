@@ -5,7 +5,6 @@ import os
 import re
 import subprocess
 import time
-from concurrent.futures import ProcessPoolExecutor
 from datetime import datetime, timedelta, timezone
 from pathlib import Path, PurePosixPath
 from zoneinfo import ZoneInfo
@@ -13,6 +12,7 @@ from zoneinfo import ZoneInfo
 from .config import PHOTO_EXT, VIDEO_EXT, Config, Policy
 from .db import log_timing
 from .qxh import quickxorhash_file
+from .runtime import Progress, worker_pool
 
 CONTEXT_FILES = {"context.txt": 1, "_trip-context.txt": 0, "DESCRIPTION.md": 0}  # name -> trusted
 
@@ -52,16 +52,22 @@ def logical_album(rel: str) -> tuple[str, int]:
 
 def _hash_one(args):
     path, rel = args
-    st = os.stat(path)
-    return rel, quickxorhash_file(path).hex(), st.st_size, st.st_mtime
+    try:
+        st = os.stat(path)
+        return rel, quickxorhash_file(path).hex(), st.st_size, st.st_mtime, None
+    except OSError as exc:  # gone or unreadable since the walk: logged, the rest goes on
+        return rel, None, None, None, f"{type(exc).__name__}: {exc}"
 
 
-def walk(cfg: Config):
+def walk(cfg: Config, policy: Policy | None = None):
     media, context, v1 = [], [], []
     for dirpath, dirnames, filenames in os.walk(cfg.root):
         dirnames[:] = sorted(d for d in dirnames if not d.startswith("."))
         if Path(dirpath) == cfg.root:  # the review bundle is ours, not photos
             dirnames[:] = [d for d in dirnames if d != cfg.bundle.name]
+        if policy:  # folders the user leaves as they are aren't read at all (P42)
+            here = Path(dirpath).relative_to(cfg.root)
+            dirnames[:] = [d for d in dirnames if policy((here / d / "_").as_posix()) != "leave"]
         for name in sorted(filenames):
             full = Path(dirpath) / name
             rel = full.relative_to(cfg.root).as_posix()
@@ -210,7 +216,7 @@ def run(cfg: Config, con, run_id: str):
     started = time.perf_counter()
     policy = Policy(cfg.policy_file)
     tz = ZoneInfo(cfg.tz)
-    media, context, v1 = walk(cfg)
+    media, context, v1 = walk(cfg, policy)
 
     known = {r["path"]: (r["size"], r["mtime"], r["id"]) for r in con.execute("SELECT path, size, mtime, id FROM file")}
     todo = []
@@ -222,34 +228,39 @@ def run(cfg: Config, con, run_id: str):
             con.execute("UPDATE file SET seen_run=?, policy=? WHERE path=?", (run_id, policy(rel), rel))
         else:
             todo.append((full, rel))
-    with ProcessPoolExecutor(max_workers=cfg.workers) as pool:
-        hashed = list(pool.map(_hash_one, todo, chunksize=4))
-    for rel, id_, size, mtime in hashed:
-        album, v1_arch = logical_album(rel)
-        con.execute(
-            "INSERT OR REPLACE INTO file(path, id, size, mtime, media, policy, album, v1_archived, seen_run)"
-            " VALUES (?,?,?,?,?,?,?,?,?)",
-            (rel, id_, size, mtime, media_of(Path(rel)), policy(rel), album, v1_arch, run_id),
-        )
     con.commit()
+    # Hashes are committed as they come, so a stop in the middle of the library's terabyte resumes there.
+    with Progress(con, "inventory.hash", "quickxorhash", total=len(todo)) as prog, worker_pool(cfg.workers) as pool:
+        for rel, id_, size, mtime, error in pool.map(_hash_one, todo, chunksize=4):
+            if error:
+                prog.fail(rel, error)
+                continue
+            album, v1_arch = logical_album(rel)
+            con.execute(
+                "INSERT OR REPLACE INTO file(path, id, size, mtime, media, policy, album, v1_archived, seen_run)"
+                " VALUES (?,?,?,?,?,?,?,?,?)",
+                (rel, id_, size, mtime, media_of(Path(rel)), policy(rel), album, v1_arch, run_id),
+            )
+            prog.done(rel)
     t_hash = time.perf_counter() - started
 
-    # Metadata, once per content hash (copies share it).
+    # Metadata, once per content hash (copies share it), in exiftool batches of 200 run side by side.
     have = {r[0] for r in con.execute("SELECT id FROM photo")}
     first = {}
     for r in con.execute("SELECT path, id, mtime FROM file WHERE media='photo' ORDER BY path"):
         if r["id"] not in have and r["id"] not in first:
             first[r["id"]] = (r["path"], r["mtime"])
-    paths = [cfg.root / p for p, _ in first.values()]
-    by_path = {}
-    for m in run_exiftool(paths):
-        rel = Path(m["SourceFile"]).relative_to(cfg.root).as_posix()
-        by_path[rel] = m
-    for id_, (rel, mtime) in first.items():
-        row = photo_row(by_path.get(rel, {}), rel, mtime, tz)
-        cols = ",".join(row)
-        con.execute(f"INSERT OR REPLACE INTO photo(id,{cols}) VALUES (?{',?' * len(row)})", (id_, *row.values()))
-    con.commit()
+    items = list(first.items())
+    batches = [items[i : i + 200] for i in range(0, len(items), 200)]
+    with Progress(con, "inventory.meta", "exiftool", total=len(batches)) as prog, \
+            worker_pool(max(1, cfg.workers // 2), threads=True) as pool:
+        for batch, metas in zip(batches, pool.map(run_exiftool, [[cfg.root / p for _, (p, _) in b] for b in batches])):
+            by_path = {Path(m["SourceFile"]).relative_to(cfg.root).as_posix(): m for m in metas}
+            for id_, (rel, mtime) in batch:
+                row = photo_row(by_path.get(rel, {}), rel, mtime, tz)
+                cols = ",".join(row)
+                con.execute(f"INSERT OR REPLACE INTO photo(id,{cols}) VALUES (?{',?' * len(row)})", (id_, *row.values()))
+            prog.done(batch[0][0])
 
     # v1 traces: burst records and album context.
     for full, rel in v1:

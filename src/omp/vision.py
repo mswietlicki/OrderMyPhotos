@@ -10,6 +10,7 @@ from PIL import Image
 
 from .config import Config
 from .db import done_ids, get_vecs, log_timing, put_signal
+from .runtime import Progress
 
 DINO = "facebook/dinov2-base"
 SIGLIP = "google/siglip2-so400m-patch16-naflex"
@@ -80,20 +81,22 @@ def run_dino(cfg: Config, con, run_id: str):
     mean = torch.tensor([0.485, 0.456, 0.406]).view(3, 1, 1)
     std = torch.tensor([0.229, 0.224, 0.225]).view(3, 1, 1)
     t0 = time.perf_counter()
-    for id_ in ids:
-        img = load_preview(cfg, id_)
-        # Keep the aspect ratio: long side 448, both sides multiples of the 14 px patch.
-        s = 448 / max(img.size)
-        w, h = (max(14, round(img.width * s / 14) * 14), max(14, round(img.height * s / 14) * 14))
-        x = torch.from_numpy(np.asarray(img.resize((w, h), Image.Resampling.BICUBIC), np.float32) / 255)
-        x = ((x.permute(2, 0, 1) - mean) / std).unsqueeze(0).to(dev, dtype)
-        with torch.inference_mode():
-            out = model(pixel_values=x)
-        cls = torch.nn.functional.normalize(out.pooler_output.float(), dim=-1)[0].cpu().numpy()
-        patch = torch.nn.functional.normalize(out.last_hidden_state[:, 1:].float().mean(1), dim=-1)[0].cpu().numpy()
-        put_signal(con, id_, "dino", DINO, vec=cls)
-        put_signal(con, id_, "dino_patch", DINO, vec=patch)
-    _timed(con, run_id, "signals.dino", len(ids), t0, dev)
+    with Progress(con, "signals.dino", DINO, total=len(ids)) as prog:
+        for id_ in ids:
+            with prog.item(id_):
+                img = load_preview(cfg, id_)
+                # Keep the aspect ratio: long side 448, both sides multiples of the 14 px patch.
+                s = 448 / max(img.size)
+                w, h = (max(14, round(img.width * s / 14) * 14), max(14, round(img.height * s / 14) * 14))
+                x = torch.from_numpy(np.asarray(img.resize((w, h), Image.Resampling.BICUBIC), np.float32) / 255)
+                x = ((x.permute(2, 0, 1) - mean) / std).unsqueeze(0).to(dev, dtype)
+                with torch.inference_mode():
+                    out = model(pixel_values=x)
+                cls = torch.nn.functional.normalize(out.pooler_output.float(), dim=-1)[0].cpu().numpy()
+                patch = torch.nn.functional.normalize(out.last_hidden_state[:, 1:].float().mean(1), dim=-1)[0].cpu().numpy()
+                put_signal(con, id_, "dino", DINO, vec=cls)
+                put_signal(con, id_, "dino_patch", DINO, vec=patch)
+    _timed(con, run_id, "signals.dino", prog.ok, t0, dev)
     del model
     free()
 
@@ -173,20 +176,22 @@ def run_siglip(cfg: Config, con, run_id: str):
     text = torch.nn.functional.normalize(text.view(len(KINDS), k, -1).mean(1), dim=-1)
     scale, bias = model.logit_scale.detach().exp().float(), model.logit_bias.detach().float()
     t0 = time.perf_counter()
-    for id_ in ids:
-        img = load_preview(cfg, id_, 1024)
-        inputs = processor(images=[img], return_tensors="pt", max_num_patches=576).to(dev)
-        inputs["pixel_values"] = inputs["pixel_values"].to(dtype)
-        with torch.inference_mode():
-            out = model.get_image_features(**inputs)
-        out = out if torch.is_tensor(out) else out.pooler_output
-        emb = torch.nn.functional.normalize(out.float(), dim=-1)
-        logits = (emb @ text.T) * scale + bias
-        value, data = kind_row(torch.softmax(logits[0], -1).cpu().numpy(), torch.sigmoid(logits)[0].cpu().numpy())
-        put_signal(con, id_, "siglip", SIGLIP, vec=emb[0].cpu().numpy())
-        put_signal(con, id_, "kind", KINDS_MODEL, value=value, data=data)
+    with Progress(con, "signals.siglip", SIGLIP, total=len(ids)) as prog:
+        for id_ in ids:
+            with prog.item(id_):
+                img = load_preview(cfg, id_, 1024)
+                inputs = processor(images=[img], return_tensors="pt", max_num_patches=576).to(dev)
+                inputs["pixel_values"] = inputs["pixel_values"].to(dtype)
+                with torch.inference_mode():
+                    out = model.get_image_features(**inputs)
+                out = out if torch.is_tensor(out) else out.pooler_output
+                emb = torch.nn.functional.normalize(out.float(), dim=-1)
+                logits = (emb @ text.T) * scale + bias
+                value, data = kind_row(torch.softmax(logits[0], -1).cpu().numpy(), torch.sigmoid(logits)[0].cpu().numpy())
+                put_signal(con, id_, "siglip", SIGLIP, vec=emb[0].cpu().numpy())
+                put_signal(con, id_, "kind", KINDS_MODEL, value=value, data=data)
     if ids:
-        _timed(con, run_id, "signals.siglip", len(ids), t0, dev)
+        _timed(con, run_id, "signals.siglip", prog.ok, t0, dev)
     stored = get_vecs(con, "siglip")
     for id_ in stale:
         if id_ in stored:
@@ -228,25 +233,27 @@ def run_iqa(cfg: Config, con, run_id: str):
 
     prompts = [prompt("quality"), prompt("aesthetics")]
     t0 = time.perf_counter()
-    for id_ in ids:
-        img = load_preview(cfg, id_, 1024)
-        rows = []
-        for p in prompts:  # one at a time: batching two image prompts breaks Qwen3.5's rope index
-            batch = processor(text=[p], images=[img], return_tensors="pt")
-            # Batch of one, no padding: without the mask, get_rope_index skips a boolean-mask index
-            # that returns the wrong length on XPU (torch 2.15.0+xpu).
-            del batch["attention_mask"]
-            batch = batch.to(dev)
-            batch["pixel_values"] = batch["pixel_values"].to(dtype)
-            with torch.inference_mode():
-                rows.append(model(**batch).logits[0, -1, level_ids].float().cpu())
-        probs = torch.stack(rows).softmax(-1)
-        quality, aesthetics = (probs * weights).sum(-1).tolist()
-        put_signal(con, id_, "iqa", QREALIGN, value=quality,
-                   data={"quality": quality, "aesthetics": aesthetics,
-                         "q_probs": [round(p, 4) for p in probs[0].tolist()],
-                         "a_probs": [round(p, 4) for p in probs[1].tolist()]})
-    _timed(con, run_id, "signals.iqa", len(ids), t0, dev)
+    with Progress(con, "signals.iqa", QREALIGN, total=len(ids)) as prog:
+        for id_ in ids:
+            with prog.item(id_):
+                img = load_preview(cfg, id_, 1024)
+                rows = []
+                for p in prompts:  # one at a time: batching two image prompts breaks Qwen3.5's rope index
+                    batch = processor(text=[p], images=[img], return_tensors="pt")
+                    # Batch of one, no padding: without the mask, get_rope_index skips a boolean-mask index
+                    # that returns the wrong length on XPU (torch 2.15.0+xpu).
+                    del batch["attention_mask"]
+                    batch = batch.to(dev)
+                    batch["pixel_values"] = batch["pixel_values"].to(dtype)
+                    with torch.inference_mode():
+                        rows.append(model(**batch).logits[0, -1, level_ids].float().cpu())
+                probs = torch.stack(rows).softmax(-1)
+                quality, aesthetics = (probs * weights).sum(-1).tolist()
+                put_signal(con, id_, "iqa", QREALIGN, value=quality,
+                           data={"quality": quality, "aesthetics": aesthetics,
+                                 "q_probs": [round(p, 4) for p in probs[0].tolist()],
+                                 "a_probs": [round(p, 4) for p in probs[1].tolist()]})
+    _timed(con, run_id, "signals.iqa", prog.ok, t0, dev)
     del model
     free()
 
@@ -275,13 +282,15 @@ def run_nudity(cfg: Config, con, run_id: str):
     detector = NudeDetector()  # the bundled 320n ONNX model, on the CPU
     t0 = time.perf_counter()
     flagged = 0
-    for i in ids:
-        dets = detector.detect(str(cfg.preview(i)))
-        full = full_nudity(dets)
-        flagged += full
-        exposed = sorted({d["class"] for d in dets if d["score"] >= NUDITY_SCORE and d["class"].endswith("_EXPOSED")})
-        put_signal(con, i, "nudity", NUDITY, value=float(full), data={"full": full, "exposed": exposed})
+    with Progress(con, "signals.nudity", NUDITY, total=len(ids)) as prog:
+        for i in ids:
+            with prog.item(i):
+                dets = detector.detect(str(cfg.preview(i)))
+                full = full_nudity(dets)
+                flagged += full
+                exposed = sorted({d["class"] for d in dets if d["score"] >= NUDITY_SCORE and d["class"].endswith("_EXPOSED")})
+                put_signal(con, i, "nudity", NUDITY, value=float(full), data={"full": full, "exposed": exposed})
     dt = time.perf_counter() - t0
-    log_timing(con, "signals.nudity", run_id, len(ids), dt, "cpu")
+    log_timing(con, "signals.nudity", run_id, prog.ok, dt, "cpu")
     con.commit()
-    print(f"signals.nudity: {len(ids)} images, {flagged} with full nudity, {dt:.1f} s ({len(ids) / max(dt, 1e-6):.1f} img/s on cpu)")
+    print(f"signals.nudity: {prog.ok} images, {flagged} with full nudity, {dt:.1f} s ({prog.ok / max(dt, 1e-6):.1f} img/s on cpu)")

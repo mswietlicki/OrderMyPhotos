@@ -38,3 +38,6 @@ build/
 samples/
 work/
 cache/
+
+# Deployment settings: host paths only, no secrets
+!deploy/*.env
