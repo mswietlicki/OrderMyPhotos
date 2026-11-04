@@ -315,7 +315,7 @@ function bigInfo(p) {
     <div class="muted">${esc(p.taken || "")} · ${esc(p.from)}/${esc(p.name)}${p.why ? " · " + esc(p.why) : ""}${p.unsure ? " · unsure: " + esc(p.unsure) : ""}
     ${p.pipeline && p.pipeline !== p.verdict ? ` · the pipeline said ${p.pipeline}` : ""}${p.rotate ? ` · turned ${p.rotate}°` : ""}
     · <a href="/library/${p.path.split("/").map(encodeURIComponent).join("/")}" target="_blank">original</a></div>
-    <div class="muted"><kbd>←</kbd><kbd>→</kbd> previous, next · right-click or <kbd>Space</kbd> keep or archive · <kbd>O</kbd> take out · <kbd>Enter</kbd> or <kbd>Esc</kbd> back</div>`;
+    <div class="muted"><kbd>←</kbd><kbd>→</kbd><kbd>↑</kbd><kbd>↓</kbd> as on the page · right-click or <kbd>Space</kbd> keep or archive · <kbd>O</kbd> take out · <kbd>Enter</kbd> or <kbd>Esc</kbd> back</div>`;
   burstPanel(p);
 }
 // The rest of the photo's burst, on the right: kept or archived, the one shown outlined. A click opens a
@@ -354,7 +354,7 @@ document.addEventListener("keydown", e => {
   const arrow = {ArrowRight: "right", ArrowLeft: "left", ArrowDown: "down", ArrowUp: "up"}[e.key];
   if (arrow) {
     e.preventDefault();
-    step(big ? (arrow === "down" ? "right" : arrow === "up" ? "left" : arrow) : arrow);
+    step(arrow);  // the same moves as on the page: the large view shows whatever is selected there
     if (big && photos[focusIdx]) showBig(photos[focusIdx]);
   }
   else if (!p) return;
