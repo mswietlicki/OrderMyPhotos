@@ -98,23 +98,59 @@ def segment_events(photos):
 
 
 def cluster(n, margin):
-    """Average-margin agglomeration with a diameter guard. margin[i, j] is -inf where not allowed."""
-    clusters = [[i] for i in range(n)]
+    """Average-margin agglomeration with a diameter guard. margin[i, j] is -inf where not allowed.
+
+    The two clusters with the best mean margin merge, as long as it's positive and no pair across them is
+    below -DIAMETER. Clusters in different connected parts of the allowed pairs can never merge, so each part
+    is done on its own; and inside a part, the clusters' margin sums and minimums are kept and merged instead
+    of recomputed. Before, every round recomputed every pair of clusters: ~n³/3 submatrices for an event of
+    n photos, hours for 2,000 (P52). The clusters are the same, in the same order (by their first photo)."""
+    parent = list(range(n))
+
+    def root(x):
+        while parent[x] != x:
+            parent[x] = parent[parent[x]]
+            x = parent[x]
+        return x
+
+    for i, j in zip(*np.nonzero(np.isfinite(margin))):
+        if i < j:
+            parent[root(i)] = root(j)
+    parts = {}
+    for i in range(n):
+        parts.setdefault(root(i), []).append(i)
+    out = []
+    for part in parts.values():
+        out += _cluster_part(part, margin) if len(part) > 1 else [part]
+    return sorted(out, key=lambda c: c[0])
+
+
+def _cluster_part(part, margin):
+    """`cluster` on one connected part (sorted indices). Row x stands for the cluster whose first photo is
+    part[x]; merging y into x keeps x, as the list of clusters did."""
+    k = len(part)
+    total = margin[np.ix_(part, part)].astype(np.float64)   # sums of the pairs across two clusters
+    low = total.copy()                                       # their minimum
+    size = np.ones(k)
+    alive = np.ones(k, dtype=bool)
+    upper = np.triu(np.ones((k, k), dtype=bool), 1)
+    members = [[p] for p in part]
     while True:
-        best, pair = 0.0, None
-        for x in range(len(clusters)):
-            for y in range(x + 1, len(clusters)):
-                m = margin[np.ix_(clusters[x], clusters[y])]
-                if m.min() < -DIAMETER:
-                    continue
-                score = float(m.mean())
-                if score > best:
-                    best, pair = score, (x, y)
-        if pair is None:
-            return clusters
-        x, y = pair
-        clusters[x] = sorted(clusters[x] + clusters[y])
-        del clusters[y]
+        with np.errstate(invalid="ignore"):
+            score = total / np.outer(size, size)
+        ok = upper & alive[:, None] & alive[None, :] & (low >= -DIAMETER)
+        score = np.where(ok, score, -np.inf)
+        best = int(np.argmax(score))  # the first best in (x, y) order, as the scan of every pair found it
+        x, y = divmod(best, k)
+        if not score[x, y] > 0.0:
+            return [members[i] for i in range(k) if alive[i]]
+        total[x, :] += total[y, :]
+        total[:, x] = total[x, :]
+        low[x, :] = np.minimum(low[x, :], low[y, :])
+        low[:, x] = low[x, :]
+        size[x] += size[y]
+        alive[y] = False
+        members[x] = sorted(members[x] + members[y])
 
 
 def run(cfg: Config, con, run_id: str):
