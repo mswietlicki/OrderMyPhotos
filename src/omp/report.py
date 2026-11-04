@@ -359,6 +359,7 @@ button.primary {{ background: var(--accent); border-color: var(--accent); color:
 h2 {{ font-size: 15px; margin: 24px 0 10px; }}
 </style></head><body><main>
 <header><h1>Review · run {html.escape(run_id)} <small>{ready} of {len(rows)} albums ready</small></h1><span class="sp"></span>
+<a href="people.html" id="people">People: name the faces</a>
 <button class="primary" id="exp">Export all decisions</button></header>
 <div class="grid">{"".join(card(r) for r in rows if r.get("kind") != "proposal")}</div>
 {'<h2>Albums and folders receiving photos</h2><p class="k">Each one shows the photos that would move into it, marked with the folder they come from.</p><div class="grid">' + "".join(card(r) for r in rows if r.get("kind") == "proposal") + "</div>" if any(r.get("kind") == "proposal" for r in rows) else ""}
@@ -391,7 +392,8 @@ document.getElementById("exp").onclick = () => {{
     const labels = labelsOf(a);
     if (Object.keys(labels).length) albums[a.dataset.album] = {{trusted: !!load(a.dataset.key + "::trusted"), labels}};
   }});
-  const blob = new Blob([JSON.stringify({{run: RUN, exported: new Date().toISOString(), albums}}, null, 1)], {{type: "application/json"}});
+  const names = load("omp-people-" + RUN + "::names") || undefined;  // from the People page (P40)
+  const blob = new Blob([JSON.stringify({{run: RUN, exported: new Date().toISOString(), albums, names}}, null, 1)], {{type: "application/json"}});
   const l = document.createElement("a"); l.href = URL.createObjectURL(blob); l.download = `decisions-${{RUN}}.json`; l.click();
 }};
 refresh();
@@ -404,7 +406,16 @@ def import_labels(cfg: Config, con, path: str):
     from .albums import page_target
 
     spec = json.loads(Path(path).read_text(encoding="utf-8"))
-    albums = spec.get("albums") or {spec.get("album"): {"labels": spec["labels"]}}
+    if spec.get("names"):  # the People page's names (P40), per face or animal box
+        from .people import SCHEMA as PEOPLE_SCHEMA
+        con.executescript(PEOPLE_SCHEMA)
+        con.executemany("INSERT OR REPLACE INTO name_label(key, who, name, nick, owner, source) VALUES (?,?,?,?,?,?)",
+                        [(k, v.get("who") or "", v.get("name") or None, v.get("nick") or None, int(bool(v.get("owner"))),
+                          f"user:{spec.get('run')}:{spec.get('exported')}") for k, v in spec["names"].items()])
+        con.commit()
+        print(f"labels: {len(spec['names'])} names of faces and animals"
+              f" ({len({v.get('who') for v in spec['names'].values() if v.get('who')})} people and pets)")
+    albums = spec.get("albums") or ({spec.get("album"): {"labels": spec["labels"]}} if "labels" in spec else {})
     by_name = {}
     for r in con.execute("SELECT id, path, album FROM file"):
         by_name[(r["album"], PurePosixPath(r["path"]).name)] = r["id"]

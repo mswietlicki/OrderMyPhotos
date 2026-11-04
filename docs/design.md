@@ -354,7 +354,9 @@ The page itself:
 - Faces come from S3, for every photo including archived ones, because more samples make better clusters. They use the same InsightFace `buffalo_l` models that Immich uses.
 - Faces that are tiny, low-confidence or low-quality are left out of clustering.
 - **Clustering** runs library-wide on the identity embeddings (HDBSCAN or Chinese Whispers, whichever does better on the sample). A person can own several clusters (children change with age), and unassigned faces stay unassigned.
-- **Naming happens in Immich** (P6), which already has merge, hide, rename and a review flow:
+- **The owner** is the cluster their People folder names. Without one, it's the face their phone's front camera sees most: the camera setting with mostly selfies. Clusters of the same face are the owner's too (P39).
+- **The People page** (`people.html` in the bundle, P40) comes right after clustering, before sorting. The user names each cluster (full name, nickname), marks themselves, merges split people by giving them one name, and takes wrong faces out. Pets are named the same way: animal boxes are clustered on DINOv2 crops. The names are stored per face, so they survive re-clustering, and a cluster that matches a named person takes their name. Albums use nicknames or first names, and captions use the names ("Jan z Filemonem").
+- **Naming happens on our People page** (P40, below). Immich (P6), which already has merge, hide, rename and a review flow, can take the names later:
   - Our clusters are pushed as people and faces through the API (`POST /api/people`, `POST /api/faces`), or Immich clusters on its own.
   - The names are read back (`GET /api/people`, `GET /api/faces`) and matched to our faces by box overlap.
   - If Immich turns out not to fit, the fallback is a People view in our own UI.
@@ -442,11 +444,11 @@ There are two kinds: **event albums** for memories, described here, and **catego
   7. **Three passes** (P38):
      - pass 1 decides every group against the starter folders of `themes.yaml` (or the library's own) and the albums close in time;
      - pass 2 describes every destination from what it got, renames new albums, and looks again only at groups with a reason: look-alikes elsewhere, a new album of the day, or an album of the library on that day ("is this part of it?");
-     - pass 3 checks each photo in a folder against the folder's description.
+     - pass 3 checks each photo in a folder, a burst as one, against what most of the folder shows. A folder of animals takes only animals.
 
-     A new folder needs photos from more than one day. New folders that look the same merge. Fine leftovers go to `Other/<year>`, and `Random` is only for photos that make no sense.
+     A group that shows people, none of whom is in an album's photos, never joins that album, by look or by the LLM (P39). A burst whose photos were decided apart ends up in one place, an album before a folder. A new folder needs photos from more than one day. New folders that look the same merge. Fine leftovers go to `Other/<year>`, and `Random` is only for photos that make no sense.
 
-  Steps 1–5 (without the LLM) run as their own stage, `place`, before grouping (S4). A photo that joins an album is grouped, ranked, captioned and reviewed with that album: it can form a new burst with the album's photos, and it shows on the album's page (P33).
+  Steps 1–5 (without the LLM) run as their own stage, `place`, after `people` (so the owner is known, P39) and before grouping (S4). A photo that joins an album is grouped, ranked, captioned and reviewed with that album: it can form a new burst with the album's photos, and it shows on the album's page (P33).
 
   Album folders outside `Pictures/Albums/<year>/` are proposed to move there (P30). The library's albums come from the OneDrive manifest, so the rules see the whole library.
 - **Progressive:** a proposal is ready when its event is closed (no photos for a while, or the next event has started) and its photos are processed. The folder is processed from the oldest photo onwards, so review can start long before a folder of 43k photos is done.

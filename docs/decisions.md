@@ -336,6 +336,81 @@ Their rules: "Random is random as in not making sense. To put some single photos
 - **Events, said more clearly:** an occasion, an activity or a visit to a place is an event even in 2–3 photos without people (a dinner out, a walk to a bridge, a bike ride, an injury at training). A folder is for photos kept for their subject.
 - **Cost on s5:** about 340–500 LLM calls at 0.9 s, 5–8 min for 437 photos.
 
+## P39 — People veto a join; a burst moves as one; folders by their subject (2026-11-03, user)
+
+The user reviewed the redone s5:
+- two WhatsApp photos were in the camping album, but there's a "different person on the photos";
+- two WhatsApp bursts of the dinner outside were half in its new album and half in `Other/2022`: "Photos that are already in Albums should not be duplicated in themed directories";
+- two bursts in the cat's folder have no cat in them.
+
+- **Faces veto a join into an album.** Some groups show people, and none of them is among an album's faces. That's someone else's event, however alike it looks, and the group doesn't join that album. A face counts when it's big and sure enough to be clustered (S8) and isn't the owner's. Two faces are one person at InsightFace cosine ≥ 0.35; the other person here scored 0.06–0.15. The veto applies to:
+  - a messenger photo joining by its look (P32);
+  - a session near an album that would join only by its look;
+  - the albums offered to the LLM, existing and proposed;
+  - the "is this part of that album?" question.
+
+  A session taken inside an album's time span, at its place, still joins it whoever is in it: the owner photographs strangers at events too. The two photos had been a messenger group that the LLM put in the album because the album's description mentions a couple.
+- **A burst moves as one.** In a messenger burst, the photos without a caption went by their look while the rest of the burst was decided. So, after every proposal is made, burst photos that went apart join the rest. An album wins over a folder; otherwise the burst follows its captioned photos, then the larger share. Pass 3 checks and moves a burst as one too. The private sibling (P26) keeps its own.
+- **Folders by their subject.** The cat's folder was described from all of its photos, so the description took in a monitor unboxed at home that day, and the monitor then "fit". Now:
+  - a folder is described by what most of its photos show;
+  - a folder that is mostly animals takes only photos of an animal (the zero-shot kind or the caption), without asking.
+- **The owner from the front camera.** Without a People folder of the owner's (a test set has none), the owner was unknown, so their own face counted as a stranger. Two problems in s5:
+  - the clustering split them into four clusters, one of them only in WhatsApp photos others sent;
+  - the railway-bridge photos of the owner were kept out of every album.
+
+  So the owner is now found from the front camera:
+  - a phone's front camera is the camera setting (model, f-number, 35 mm focal length) whose photos are at least 40 % selfies;
+  - the owner is the cluster that is most often the biggest face in its photos (at least 3, and most of them);
+  - clusters whose faces match the owner's (median best cosine ≥ 0.35) are the owner's too.
+
+  On s5 this was f/2.2 at 25 mm, with 11 selfies in 18 photos, and it marked 3 of the owner's clusters. `people` now runs before `place`, so the joins that `place` makes before grouping already know the owner.
+- **The owner's own pet isn't an event.** A new album has its pass-1 answer taken back and is decided again, without an album, when it:
+  - is at home;
+  - has nobody else in it;
+  - is mostly an animal seen on 3 other days or more.
+
+  In s5, "Kot na blacie" and "Koty na drzewie" had become albums. Animals seen only that day (a zoo) and trips stay albums.
+- **"Part of that album?" asked with more to go on.** In s6 the user's album of a camping trip covers only its day. Its night (102 photos, 8.5 h earlier) and the morning walk became new albums. Asked with a one-line description of the album, the LLM said 0.51 and 0.43. The question now shows:
+  - the album's own captions and dates;
+  - the group's captions and how long before or after the album it was taken;
+  - whether a person is in both.
+
+  It says what "part of" means: the same outing, trip or occasion, including getting ready, the night before and the way back, but not another activity or place the same day. On s5 and s6 that gives 0.93 and 0.96 for those two, and 0.29 or less for every other pair. It's asked:
+  - for each new album within a day of a library album, or of a bigger new album (two albums of one pet-shop trip became one);
+  - the best yes ≥ 0.5 wins.
+
+  At the end, an album of 1–2 photos without new people is decided again, however it got that small.
+
+## P40 — Naming people and pets on a People page (2026-11-04, user)
+
+The user: "as one of the first steps of the run (before sorting), let's create face clusters from all photos with faces, then build a webpage to name those faces with Id, Full Name and a Nickname, so that sorting, photo titles and albums know the names of the people. Albums should use mostly nicknames or first names in the titles." And: photo titles shouldn't be "Man with a cat" but "<owner> with <cat>" or "<name> i <owner> na szczycie góry" (names replaced here).
+
+- **When:** `people` runs right after `faces`, before `place` and sorting (P39). It clusters every face and writes `people.html` into the bundle, next to the review's `index.html`, which links to it.
+- **The page:** one card per face cluster, biggest first, with an Id (P1…), its face crops (big and frontal first), "Full name", "Nickname", "This is me" and "Not a person".
+  - Clicking a face takes it out of the person.
+  - **Merging:** the clustering splits people (s5: the owner in four clusters; s6: the person the albums name in eleven). The user ticks the cards and presses Merge, or types their Ids ("P1 P7 P8 …"). They become one card under the biggest, and a chip per merged card undoes it. The same full name on two cards merges them too. A merge without a name yet is exported as a group ("@P1"), so it holds until the person is named. Animals merge the same way, but never with people.
+  - **"I don't know them"** (user, 2026-11-04) keeps a stranger as one anonymous person ("?P3"): never named, never suggested again, but still someone else when photos are sorted (another person, another event, P39). "Not a person" is for false detections, which are dropped. For animals, "Not an animal of ours" means what "I don't know them" means for people.
+  - Suggestions from the album names and the front camera are shown with a "use" button.
+- **Pets** are on the same page. The subject detector's animal boxes (≥ 15 % of the frame, score ≥ 0.5) are embedded with DINOv2 on the crop and clustered: 37 animal clusters from 107 boxes in s6. Animals seen in one photo only are folded away.
+- **Saving:** names stay in the browser. They leave with the index page's "Export all decisions" (or the page's own "Export names"), and `omp labels --file` imports them. They're stored per face or animal box (`name_label`, keyed by photo and box), not per cluster, so they hold when the faces are clustered again.
+- **Applying them** (`people`, step 0, before People folders and album names):
+  - a cluster is whoever most of its named faces are;
+  - faces taken out leave it;
+  - clusters with one name merge;
+  - an unnamed cluster whose faces match a named person's (median best cosine ≥ 0.35; pets ≥ 0.6 on DINOv2) is that person.
+
+  "This is me" makes the owner, ahead of the People folder and the front camera; without a name it's still the owner.
+- **Using them:**
+  - **albums** name people by the nickname, else the first name ("z Anią"), and named pets too ("z Filemonem"); the owner is never named in an album;
+  - the pet the user named is the owner's pet: a new album at home that is mostly that pet isn't an event (the P39 rule, which by look alone needs the animal on 3 other days);
+  - **captions** get "Recognized in the photo: Jan (the owner, on the left), Ola (on the right); the cat Filemon", with positions only when there are several. They're asked to use the names in the right Polish forms, and a photo is captioned again only when who it shows has changed.
+- *Tested* on a copy of the s6 DB with test names:
+  - one named cluster pulled in 8 more clusters of the same face (89 faces);
+  - a face taken out left;
+  - "This is me" without a name made the owner;
+  - a named cat gathered 37 boxes;
+  - the caption context read "Ania", "the owner".
+
 ## Open — for the user
 
 1. **Language** of titles, descriptions and tags: English, Polish, or both. Tags could carry both; descriptions need one.

@@ -40,6 +40,7 @@ from .config import Config
 from .db import log_timing
 from .db import get_vecs
 from .library import library_for
+from .people import MIN_SCORE as FACE_SCORE, MIN_SIZE as FACE_SIZE
 from .profiles import DEFAULT_FOLDERS, OTHER_YEAR, album_summary, folder_profiles
 from .vlm import VLM
 
@@ -106,7 +107,7 @@ Their existing album names (the date in front is added separately):
 This event:
 - {when}
 - {where}
-- People recognized in the photos (the owner isn't listed): {people}
+- People and pets recognized in the photos (the owner isn't listed): {people}
 - {count} photos. What they show (captions of some of them):
 {captions}
 
@@ -204,6 +205,7 @@ FIT_MIN = 0.4             # a photo in a folder that fits its refined descriptio
 PET_DAYS = 3               # the same animal on this many other days is probably the owner's own pet
 NO_GPS_GAP = 3600          # sessions without a position join only this close in time
 MIN_NEW_FOLDER = 3         # a new thematic folder needs this many photos (one-photo folders were noise in s4d)
+FACE_SAME = 0.35           # faces this alike (InsightFace cosine) are one person (s5: someone else 0.06-0.15)
 SMALL_EVENT = 2            # an event this small is an album only with new people in it (the user's rule)
 
 
@@ -476,12 +478,46 @@ def run(cfg: Config, con, run_id: str, place_only: bool = False):
     # when it looks like that album's photos, or an album within FAR_DAYS it looks very much like. An album
     # without processed photos can't be compared, so it takes none (albums are processed before unsorted
     # folders). Everything else (documents too) goes to the category or thematic folders below.
-    album_mat, album_ids = defaultdict(list), defaultdict(list)
+    # Who is in each photo (S8): the faces big and sure enough to be clustered, without the owner's. A group
+    # that shows people, none of whom is in an album's photos, is someone else's event however alike it
+    # looks, and doesn't join that album (P39; user, s5: "Different person on the photos").
+    def unit(b):
+        v = np.frombuffer(b, dtype=np.float32 if len(b) == 2048 else np.float16).astype(np.float32)
+        return v / np.linalg.norm(v)
+
+    face_vecs = defaultdict(list)
+    try:
+        try:  # the owner's faces (S8; `people` runs before `place` so the owner is known here)
+            mine = [unit(r[0]) for r in con.execute("SELECT f.emb FROM face f JOIN person p ON p.pid=f.person"
+                                                    " WHERE p.owner=1 AND f.emb IS NOT NULL")]
+        except Exception:  # noqa: BLE001 - no people stage yet: every face counts
+            mine = []
+        owner_mat = np.stack(mine) if mine else None
+        for r in con.execute("SELECT id, emb FROM face WHERE emb IS NOT NULL AND size >= ? AND score >= ?",
+                             (FACE_SIZE, FACE_SCORE)):
+            v = unit(r[1])
+            if owner_mat is None or float((owner_mat @ v).max()) < FACE_SAME:  # not the owner, clustered or not
+                face_vecs[r[0]].append(v)
+    except Exception:  # noqa: BLE001 - no faces stage yet
+        pass
+
+    def faces_of(rs):
+        vs = [v for r in rs for v in face_vecs.get(r["id"], ())]
+        return np.stack(vs) if vs else None
+
+    def strangers(rs, faces):
+        """The photos show people, and none of them is among `faces` (a destination's)."""
+        mine = faces_of(rs)
+        return mine is not None and faces is not None and float((mine @ faces.T).max()) < FACE_SAME
+
+    album_mat, album_ids, album_faces = defaultdict(list), defaultdict(list), defaultdict(list)
     for r in con.execute("SELECT f.id, f.album, p.taken_ts FROM file f JOIN photo p ON p.id=f.id WHERE f.policy='cull'"):
+        album_faces[r["album"]] += face_vecs.get(r["id"], [])
         if r["id"] in sig:
             album_mat[r["album"]].append(sig[r["id"]])
             album_ids[r["album"]].append((r["id"], r["taken_ts"]))
     album_mat = {a: np.stack(v) for a, v in album_mat.items()}
+    album_faces = {a: np.stack(v) for a, v in album_faces.items() if v}
     from .db import put_signal
 
     con.execute("DELETE FROM signal WHERE kind='placed_at'")
@@ -504,7 +540,8 @@ def run(cfg: Config, con, run_id: str, place_only: bool = False):
                     j = int(np.argmax(sims))
                     look, like = float(sims[j]), album_ids[album][j]
                 during = s <= d <= e + timedelta(days=LAG_DAYS)
-                if look is not None and ((during and look >= LIKE) or look >= STRONG):
+                if look is not None and ((during and look >= LIKE) or look >= STRONG) \
+                        and not strangers([r], album_faces.get(album)):
                     score = (during, look)
                     if best is None or score > best[0]:
                         best = (score, album, look, during, like)
@@ -554,10 +591,11 @@ def run(cfg: Config, con, run_id: str, place_only: bool = False):
             days_of[r[0]].add(int(r[1] // 86400))
     except Exception:  # noqa: BLE001 - no people stage yet
         clusters, short, days_of = defaultdict(set), {}, defaultdict(set)
-    album_pts, album_people = defaultdict(list), defaultdict(set)
+    album_pts, album_people, album_rows = defaultdict(list), defaultdict(set), defaultdict(list)
     for r in con.execute("SELECT f.album, p.id, p.taken_ts, p.lat, p.lon FROM file f JOIN photo p ON p.id=f.id"
                          " WHERE f.policy='cull'"):
         album_pts[r["album"]].append((r["taken_ts"], (r["lat"], r["lon"]) if r["lat"] is not None else None))
+        album_rows[r["album"]].append({"id": r["id"], "taken_ts": r["taken_ts"]})
         album_people[r["album"]] |= clusters.get(r["id"], set())
 
     # 3. A session during an existing album's event joins it: inside the album's time span at its place, or
@@ -575,7 +613,8 @@ def run(cfg: Config, con, run_id: str, place_only: bool = False):
             place_ok = None if c is None or not near else min(km(c, xy) for xy in near) <= PLACE_KM
             shared = bool(ppl & album_people.get(album, set()))
             look = float((album_mat[album] @ np.stack(vs).T).max()) if album in album_mat and vs else None
-            if (inside and place_ok is not False) or shared or (look is not None and look >= LIKE):
+            alike = look is not None and look >= LIKE and not strangers(s, album_faces.get(album))
+            if (inside and place_ok is not False) or shared or alike:
                 score = (inside, shared, look or 0.0)
                 if best is None or score > best[0]:
                     best = (score, album, inside, shared, look)
@@ -616,6 +655,11 @@ def run(cfg: Config, con, run_id: str, place_only: bool = False):
             who[r["id"]].add(r["short"])
     except Exception:  # noqa: BLE001 - no people stage yet
         who = {}
+    try:  # and the pets the user named (P40): "<river> z Olą i Kotem"
+        for r in con.execute("SELECT m.id, p.short FROM pet_member m JOIN pet p ON p.pid=m.pid WHERE p.short IS NOT NULL"):
+            who.setdefault(r["id"], set()).add(r["short"])
+    except Exception:  # noqa: BLE001 - no pets yet
+        pass
 
     def context(ev, away):
         kept = [r for r in ev if dec.get(r["id"], {}).get("verdict", "keep") == "keep"]
@@ -838,7 +882,8 @@ def run(cfg: Config, con, run_id: str, place_only: bool = False):
             if any(i in dino and float((mat @ dino[i]).max()) >= PET_LIKE for i in ids):
                 extra.append(album)
         lo, hi = rs[0]["taken_ts"] - NEARBY_DAYS * 86400, rs[-1]["taken_ts"] + NEARBY_DAYS * 86400
-        near = [a for a, v in (lib.albums.items() if lib else ()) if v["end"] >= lo and v["start"] <= hi and a not in banned]
+        near = [a for a, v in (lib.albums.items() if lib else ()) if v["end"] >= lo and v["start"] <= hi and a not in banned
+                and not strangers(rs, album_faces.get(a))]
         near = sorted(near, key=lambda a: abs(lib.albums[a]["start"] - rs[0]["taken_ts"]))[:8]
         albums_txt = "\n".join(f"  {a}: {datetime.fromtimestamp(lib.albums[a]['start'], tz):%d %b}–"
                                f"{datetime.fromtimestamp(lib.albums[a]['end'], tz):%d %b %Y}"
@@ -856,8 +901,9 @@ def run(cfg: Config, con, run_id: str, place_only: bool = False):
         if more:
             tail += "\nA new folder isn't possible for this group: choose a folder above or offered here.\n"
         if no_album:
-            tail += ("\nThis group is too small for an album of its own (one or two photos without new people):"
-                     " choose an existing album or a folder.\n")
+            why_not = no_album if isinstance(no_album, str) else "This group is too small for an album of its own" \
+                " (one or two photos without new people)"
+            tail += f"\n{why_not}: choose an existing album or a folder.\n"
         if refined:
             tail += "\nWhat the folders hold so far (from the photos sorted into them):\n" + \
                 "\n".join(f"  {f}: {desc[:200]}" for f, desc in refined.items()) + "\n"
@@ -915,8 +961,9 @@ def run(cfg: Config, con, run_id: str, place_only: bool = False):
         if not lines:
             return "", ""
         new = target.startswith("Pictures/Albums/") and re.search(r"/\d{4}-\d{2}-\d{2} ", target)
-        prompt = (f"Photos the owner's library would put in \"{target}\":\n{lines}\n\nIn one sentence, say what "
-                  "these photos are (the event, or what the folder collects), concretely." +
+        prompt = (f"Photos the owner's library would put in \"{target}\":\n{lines}\n\nIn one sentence, say " +
+                  ("what these photos are (the event), concretely." if new else "what most of these photos show (what"
+                   " the folder collects), concretely; leave out what only a few of them show.") +
                   (" Also give a better album name in the owner's style, in Polish, 2-6 words, naming the place or"
                    " the activity and the people (examples: " + "; ".join(examples[:30]) + "), or the same name if"
                    " it fits." if new else ' Set "name" to "".'))
@@ -947,6 +994,35 @@ def run(cfg: Config, con, run_id: str, place_only: bool = False):
                 d[4:] = [d0, "new_album", f"Pictures/Albums/{d0:%Y}/{d0:%Y-%m-%d} {name}", name,
                          d[8] + " (one day: an event)", []]
 
+    try:
+        own_pet = {r[0] for r in con.execute("SELECT m.id FROM pet_member m JOIN pet p ON p.pid=m.pid"
+                                             " WHERE p.source='user' AND p.name IS NOT NULL")}
+    except Exception:  # noqa: BLE001 - no pets named
+        own_pet = set()
+
+    def pet_moments(decisions, grown):
+        """The owner's own pet at home isn't an event (s5: "Kot na blacie", "Koty na drzewie" became albums): a
+        new album at home that is mostly the pet the user named, or an animal seen on other days too, with
+        nobody else in it, is decided again without an album. A trip, or animals seen only that day (a zoo),
+        stays an album."""
+        for d in decisions:
+            ours = sum(r["id"] in own_pet for r in d[0])  # the pet the user named on the People page (P40)
+            if d[5] == "new_album" and not d[1] and faces_of(d[0]) is None and (2 * ours >= len(d[0])
+                    or 2 * sum(r["id"] in animal_set for r in d[0]) >= len(d[0]) and pet_days(d[0]) >= PET_DAYS):
+                d[4:] = decide(d[0], d[1], d[2], d[3], more=grown, no_album="These photos are of the owner's own pet,"
+                               " which isn't an event")
+
+    def small_albums(decisions, grown):
+        """One or two photos make an album only with new people, counted per album once every pass is done (s6:
+        one photo was left in "Czarny kot w domu" after the rest of it went elsewhere)."""
+        held = defaultdict(list)
+        for d in decisions:
+            if d[5] == "new_album":
+                held[d[6]] += d[0]
+        for d in decisions:
+            if d[5] == "new_album" and len(held[d[6]]) <= SMALL_EVENT and not novel(held[d[6]]):
+                d[4:] = decide(d[0], d[1], d[2], d[3], more=grown, no_album=True)
+
     def merge_alike_folders(decisions):
         """New folders whose photos look the same are one folder, under the name of the bigger (s5: the owner's
         cat as "Czarny kot" and as "Coty")."""
@@ -968,15 +1044,37 @@ def run(cfg: Config, con, run_id: str, place_only: bool = False):
                 if d[5] == "new_folder":
                     d[7] = d[6].split("/")[-1]
 
-    def part_of(rs, album):
-        """Is this group part of that album (asked when a new album would start on the album's day)?"""
-        _, group = describe(rs, False)
-        desc = summaries.get(album) or ""
-        q = (f"An album of the owner's: {album}" + (f" — {desc[:300]}" if desc else "") + f"\n\nA group of photos taken"
-             f" the same day:\n{group}\n\nIs this group part of that album's event (before, during or after it,"
-             " e.g. getting ready for it)? Answer with one word: yes or no.")
+    def part_of(rs, album, rows):
+        """P(yes) that this group is part of the event of `album` (the library's or a new one), whose photos are
+        `rows`. Asked with what both sides show and when, and whether a person is in both (P39: a one-line
+        description of the album left the night before a trip at 0.5)."""
+        mine, theirs = faces_of(rs), faces_of(rows)
+        if strangers(rs, theirs):
+            return 0.0
+        s0, s1 = min(r["taken_ts"] for r in rs), max(r["taken_ts"] for r in rs)
+        a0, a1 = min(r["taken_ts"] for r in rows), max(r["taken_ts"] for r in rows)
+
+        def shows(xs, n):
+            cs = [caps[r["id"]] for r in sorted(xs, key=lambda r: r["taken_ts"]) if r["id"] in caps]
+            return "\n".join(f"  - {c.get('title_en')}: {c.get('description_en', '')[:150]}" for c in cs[::max(1, len(cs) // n)][:n])
+
+        def span(x0, x1):
+            d0, d1 = datetime.fromtimestamp(x0, tz), datetime.fromtimestamp(x1, tz)
+            return f"{d0:%A %d %B %Y %H:%M} – {d1:%A %d %B %H:%M}"
+
+        gap = (a0 - s1) / 3600 if s1 < a0 else (s0 - a1) / 3600 if s0 > a1 else 0
+        long = f"{gap * 60:.0f} minutes" if gap < 1 else f"{gap:.1f} hours"
+        timing = ("taken during the album's time" if not gap else
+                  f"taken {long} before the album's first photo" if s1 < a0 else f"taken {long} after the album's last photo")
+        both = mine is not None and theirs is not None and float((mine @ theirs.T).max()) >= FACE_SAME
+        q = (f"An album of the owner's: \"{album.split('/')[-1]}\", photos from {span(a0, a1)}. What they show:\n"
+             f"{shows(rows, 10)}\n\nA group of photos {timing} ({span(s0, s1)}):\n{shows(rs, 12)}\n"
+             + ("\nThe same person (not the owner) is in both.\n" if both else "") +
+             "\nIs this group part of that album's event: the same outing, trip or occasion (before, during or after it:"
+             " getting ready, the night before, the way back)? A different activity or a different place the same day is"
+             " not. Answer with one word: yes or no.")
         ans = vlm.choice([{"type": "text", "text": q}], ["yes", "no"])
-        return (ans.get("yes", 0.5) if ans else 0.5) >= 0.5
+        return ans.get("yes", 0.5) if ans else 0.5
 
     def refine(decisions, grown):
         """Passes 2 and 3 (P38). Pass 2: every destination is described from what it got (and a new album
@@ -999,7 +1097,7 @@ def run(cfg: Config, con, run_id: str, place_only: bool = False):
                     s = float(vecs[k] @ vecs[j])
                     if s >= LOOKALIKE:
                         alike.append(f"{e[6]} ({s:.2f})")
-            own = {t_: v for t_, v in proposed.items() if t_ != d[6]}
+            own = {t_: v for t_, v in proposed.items() if t_ != d[6] and not strangers(d[0], faces_of(held[t_]))}
             same_day = [t_ for t_ in own if abs(album_day(t_) - d[0][0]["taken_ts"]) <= 86400]
             # Pass 1 stands unless there's a reason to look again: photos that look alike went elsewhere within
             # a day, or a folder's group has a new album of its day to join. (Deciding everything again flipped
@@ -1026,22 +1124,42 @@ def run(cfg: Config, con, run_id: str, place_only: bool = False):
                 for d in decisions:
                     if d[6] == t_:
                         d[6], d[7] = new, name
-        # A new album on a day the library already has an album for: is it part of that one?
+        # A new album within a day of an album of the library, or of a bigger new album: is it part of that
+        # one's event? The best yes wins (s6: the night camping before the user's album of the trip 0.93, its
+        # morning walk 0.96, every other pair in s5 and s6 0.29 or less).
         joined = 0
+        new = defaultdict(list)
         for d in decisions:
-            if d[5] != "new_album" or d[3] or not lib:
+            if d[5] == "new_album" and not d[3]:
+                new[d[6]] += d[0]
+
+        def apart(xs, ys):
+            x0, x1 = min(r["taken_ts"] for r in xs), max(r["taken_ts"] for r in xs)
+            y0, y1 = min(r["taken_ts"] for r in ys), max(r["taken_ts"] for r in ys)
+            return max(y0 - x1, x0 - y1, 0)
+
+        for t_ in sorted(new, key=lambda t_: len(new[t_])):
+            rs = new[t_]
+            if not rs:
                 continue
-            day = datetime.fromtimestamp(d[0][0]["taken_ts"], tz).date()
-            for album, a in lib.albums.items():
-                if album in d[2]:
-                    continue
-                if datetime.fromtimestamp(a["start"], tz).date() <= day <= datetime.fromtimestamp(a["end"], tz).date() \
-                        or abs(album_day(album) - d[0][0]["taken_ts"]) <= 86400:
-                    if part_of(d[0], album):
-                        d[5:8] = ["album", album, None]
-                        d[8] += f" (part of {album.split('/')[-1]})"
-                        joined += 1
-                        break
+            banned = set().union(*(d[2] for d in decisions if d[6] == t_))
+            cands = [(a, album_rows[a]) for a in (lib.albums if lib else ()) if a not in banned and album_rows.get(a)
+                     and apart(rs, album_rows[a]) <= 86400]
+            cands += [(u, us) for u, us in new.items() if u != t_ and len(us) >= len(rs) and apart(rs, us) <= 86400]
+            p_, best = max(((part_of(rs, a, rows), a) for a, rows in cands), default=(0.0, None))
+            if p_ < 0.5:
+                continue
+            for d in decisions:
+                if d[6] == t_:
+                    if best in new:
+                        d[6], d[7] = best, best.split("/")[-1][11:]
+                    else:
+                        d[5:8] = ["album", best, None]
+                    d[8] += f" (part of {best.split('/')[-1]}, {p_:.2f})"
+            if best in new:
+                new[best] += rs
+            new[t_] = []
+            joined += 1
         # Pass 3: each photo in a folder against what the folder now holds.
         held = defaultdict(list)
         for d in decisions:
@@ -1049,29 +1167,40 @@ def run(cfg: Config, con, run_id: str, place_only: bool = False):
                 held[d[6]] += d[0]
         now = {t_: profile.get(t_) or (profile.get(OTHER_YEAR) if re.match(r"^Pictures/Other/\d{4}$", t_) else None)
                    or summary_of(t_, rs)[0] for t_, rs in held.items()}
+        # A burst is checked, and moves, as one. A folder of animals takes only photos of an animal (s5: the
+        # monitor unboxed at home stayed in the cat's folder); the others are asked about.
+        beasts = {t_ for t_, rs in held.items() if sum(r["id"] in animal_set for r in rs) >= PET_ALBUM_ANIMALS * len(rs)}
+
+        def fits(target, rs):
+            if target in beasts:
+                return any(r["id"] in animal_set for r in rs)
+            ps = []
+            for c in [caps[r["id"]] for r in rs if r["id"] in caps][:3]:
+                q = (f"The owner's folder \"{target}\" holds: {now[target]}\nA photo: {c.get('title_en')}: "
+                     f"{c.get('description_en', '')[:200]}\nDoes this photo belong in this folder? Answer with one word: yes or no.")
+                ans = vlm.choice([{"type": "text", "text": q}], ["yes", "no"])
+                ps.append(ans.get("yes", 0.5) if ans else 0.5)
+            return not ps or sum(ps) / len(ps) >= FIT_MIN
+
         moved = 0
         for d in list(decisions):
             if d[5] not in ("folder", "new_folder") or not now.get(d[6]):
                 continue
-            keep, out_ = [], []
+            units = defaultdict(list)
             for r in d[0]:
-                c = caps.get(r["id"])
-                if not c:
-                    keep.append(r)
-                    continue
-                q = (f"The owner's folder \"{d[6]}\" holds: {now[d[6]]}\nA photo: {c.get('title_en')}: "
-                     f"{c.get('description_en', '')[:200]}\nDoes this photo belong in this folder? Answer with one word: yes or no.")
-                ans = vlm.choice([{"type": "text", "text": q}], ["yes", "no"])
-                (keep if (ans.get("yes", 0.5) if ans else 0.5) >= FIT_MIN else out_).append(r)
+                units[burst_of.get(r["id"], r["id"])].append(r)
+            keep, out_ = [], []
+            for u in units.values():
+                (keep if fits(d[6], u) else out_).append(u)
             if not out_ or not keep:
                 continue
-            d[0] = keep
-            for r in out_:
-                moved += 1
-                decisions.append([[r], d[1], d[2] | {d[6]}, d[3],
-                                  *decide([r], d[1], d[2] | {d[6]}, d[3], more=grown, no_album=not novel([r]))])
+            d[0] = [r for u in keep for r in u]
+            for u in out_:
+                moved += len(u)
+                decisions.append([u, d[1], d[2] | {d[6]}, d[3],
+                                  *decide(u, d[1], d[2] | {d[6]}, d[3], more=grown, no_album=not novel(u))])
         print(f"  refine: {len(described)} destinations described, {len(proposed)} new albums offered to the rest,"
-              f" {joined} joined an album of their day, {moved} photos moved out of folders they didn't fit")
+              f" {joined} new albums part of another album's event, {moved} photos moved out of folders they didn't fit")
 
     folder_moves = defaultdict(list)  # thematic folder -> [(photo, why)]: one proposal per folder
     counts = Counter()
@@ -1120,9 +1249,12 @@ def run(cfg: Config, con, run_id: str, place_only: bool = False):
             d[4:] = decide(d[0], d[1], d[2], d[3], more=grown, no_album=True)
     merge_alike_folders(decisions)
     one_day_events(decisions)
+    pet_moments(decisions, grown)
     refine(decisions, grown)
     merge_alike_folders(decisions)
     one_day_events(decisions)
+    pet_moments(decisions, grown)
+    small_albums(decisions, grown)
     for rs, away, banned, messenger, d0, kind, target, name, why, alts in decisions:
         counts[kind] += 1
         if messenger or kind in ("folder", "new_folder"):
@@ -1165,6 +1297,45 @@ def run(cfg: Config, con, run_id: str, place_only: bool = False):
         add("theme", target, None, [r for r, _ in items],
             {"n": len(items), "new_folder": new, "why": Counter(w for _, w in items).most_common(1)[0][0],
              "reasons": {r["id"]: w for r, w in items}})
+
+    # A burst moves as one (P35, P39): a photo decided apart from its burst (a messenger photo without a
+    # caption goes by its look) goes where the rest of it went, an album before a folder (user, s5: B17 and
+    # B18 half in a new album and half in Other/2022). The private sibling keeps its own.
+    where, action_of = {}, {}
+    for r in con.execute("SELECT p.pid, p.action, p.target, m.id FROM proposal p JOIN proposal_member m ON m.pid=p.pid"
+                         " WHERE p.run=? AND p.action IN ('add', 'create', 'theme')", (run_id,)):
+        if not r["target"].endswith(" PRIV"):
+            where[r["id"]], action_of[r["pid"]] = r["pid"], r["action"]
+    burst_ids = defaultdict(list)
+    for i, gid in burst_of.items():
+        if i in where:
+            burst_ids[gid].append(i)
+    rejoined, touched, came = 0, set(), defaultdict(list)
+    for ids in burst_ids.values():
+        n = Counter(where[i] for i in ids)
+        if len(n) < 2:
+            continue
+        best = max(n, key=lambda pid: (action_of[pid] != "theme", sum(where[i] == pid and i in caps for i in ids), n[pid]))
+        for i in ids:
+            if where[i] != best:
+                con.execute("UPDATE proposal_member SET pid=? WHERE pid=? AND id=?", (best, where[i], i))
+                touched |= {best, where[i]}
+                came[best].append(i)
+                rejoined += 1
+    for pid in touched:
+        ts = [r[0] for r in con.execute("SELECT x.taken_ts FROM proposal_member m JOIN photo x ON x.id=m.id WHERE m.pid=?",
+                                        (pid,))]
+        if not ts:
+            con.execute("DELETE FROM proposal WHERE pid=?", (pid,))
+            continue
+        data = json.loads(con.execute("SELECT data FROM proposal WHERE pid=?", (pid,)).fetchone()[0] or "{}")
+        data["n"] = len(ts)
+        if "reasons" in data:
+            data["reasons"] |= {i: "with the rest of its burst" for i in came[pid]}
+        con.execute("UPDATE proposal SET start=?, end=?, data=? WHERE pid=?",
+                    (min(ts), max(ts), json.dumps(data, ensure_ascii=False), pid))
+    if rejoined:
+        print(f"  bursts: {rejoined} photos decided apart went with the rest of their burst")
 
     # Album folders in the wrong place (the phone gallery's, a wrong year): moved where they belong (P30).
     relocated = []

@@ -316,3 +316,74 @@ After the user's review of s5, the sort was redone from the beginning four times
 - an album "Kable na schodach" (cables and a ladybug);
 - the balcony group is an album, not the folder of views the user liked the idea of;
 - the railway-bridge photos joined the camping album rather than an album of their own.
+
+### s5 after the user's second review (P39)
+
+**The user's review:**
+- two WhatsApp photos of a couple in a forest were in the camping album, with a "different person on the photos";
+- two WhatsApp bursts of the dinner outside were half in its album and half in `Other/2022`;
+- two bursts in the cat's folder have no cat in them.
+
+**What caused each:**
+- **The forest photos** were a two-photo messenger group. The LLM put it in the camping album because the album's description mentions a couple. Neither face matches the album's faces (cosine 0.06–0.15).
+- **The dinner bursts:** the photos of a messenger burst without a caption went by their look, apart from the rest of the burst.
+- **The cat's folder:** one day at home was decided as one event: the cat, a monitor unboxed and then set up. Its description was made from all of its photos, the monitor included, so pass 3 found the monitor "fits". Pass 3 also took one photo out of a burst and left the other.
+- **The owner:** the test set has no People folder, so the owner was unknown. Their face, split into four clusters, counted as a stranger. One cluster appears only in WhatsApp photos others sent.
+
+**Re-sorted four times** (people, albums, report, plan):
+- the forest photos go to a folder;
+- the dinner bursts are whole in the dinner album, with no burst split anywhere;
+- the box and the monitor go to Hardware;
+- the owner is found from the front camera (f/2.2, 25 mm; 11 of its 18 photos are selfies), 3 clusters;
+- the railway-bridge photos sent the evening before are now an album of their own, which the user had asked for in the first review;
+- a rule for the owner's own pet stopped "Kot na blacie" and "Koty na drzewie" becoming albums.
+
+**Cost:** about 290–305 LLM calls, 5.4 min.
+
+**Still weak:**
+- the forest selfies are in `City`;
+- one new album came out with an English name ("Balcony view and coffee");
+- the bonfire photos with the stranger's face still join the camping album. In these re-sorts they sit in a burst built before the veto: `place` and `group` weren't re-run.
+
+## Run s6: a new clean-slate set, whole days (2026-11-03/04)
+
+The user: "let's apply some more tweaks and try on different 500 photos".
+
+**The test set:** 518 photos of 18–23 November 2022, built like s5:
+- 3 albums with 132 photos, 47 of them back from `_archived/`;
+- every unsorted Samsung Gallery (330) and WhatsApp (56) photo named with one of those days.
+
+It's whole days rather than a random pick, so events and bursts are complete. None of the unsorted photos are byte copies of album photos. s5's DB and plan are kept in `cache/photos/archive/s5/`.
+
+**Every stage from scratch**, about 45 min in all: judge 51 bursts in 3 min, captions 270 photos at 4 s, S11 88 calls in 1.5 min.
+
+**What it showed, and what changed (P39):**
+- **The owner wasn't found at first:** the zero-shot tag called only 2 of the 10 front-camera photos selfies. A face at arm's length (≥ 20 % of the frame) now counts as a selfie too: 9 of 10 there, at most 7 % on the other cameras. The owner was found (1 cluster, 14 faces).
+- **The camping trip in three pieces:** the user's album covers only its day. Its night (102 photos, 8.5 h earlier) and the morning walk became new albums, because the "part of that album?" question had only a one-line description. With both sides' captions, the time between and a shared person, it answers 0.92. The whole trip is now in the album, 222 photos.
+- **The pet-shop trip** the day before was two albums. They're one now, and at 0.50 it joined the trip as getting ready for it: travel bowls and a leash for the dog and cat. That's for the user to judge.
+- **Cat albums at home** (a one-photo one among them) went to folders. A 1–2 photo album without new people is now checked again at the very end.
+
+**Final sort:**
+- 183 photos join the 3 albums by time, and 222 are in the trip album;
+- 2 new albums (a steaming geyser at night, going by its captions, and a shopping trip);
+- folders: `Other/2022` 19, `Cats` 11, the rest small;
+- no burst split.
+
+**People:** 260 faces in 21 clusters, plus 165 smaller or unsure faces, and 107 animal boxes in 37 clusters. They went on the new People page (P40) for the user to name.
+
+### s6 with the user's names (P40)
+
+**What the user did on the page:**
+- merged 11 face clusters into one person;
+- named 8 people, one of them themselves ("This is me", with a nickname);
+- marked 2 strangers "I don't know them" and took 4 faces out;
+- named the cat (75 boxes) and marked 2 animal groups "not ours".
+
+The export (`names-s6.json`, 291 entries) was imported with `omp labels --file`, and s6 was re-run from `people` to `plan`, about 22 min.
+
+**Results:**
+- **People:** 10 people (8 named, 2 strangers). The owner is now the one the user marked. The cat gathered 6 more boxes by its look (81 in all), and the animal clusters went from 37 to 15.
+- **Album names:** the namer now proposes names with the nicknames and the cat, in the right Polish forms ("<river> z <nick> i <cat>"), where the user's own was "<river> z <name> i Kotem". The new albums say so too ("<cat> przy kiełkach").
+- **Captions:** 101 kept photos were written knowing who's in them, e.g. "<nick> i kot <cat> przy ognisku" and "<cat> w trzcinach". 198 photos carry names in all.
+- **The pet rule with the cat's name:** "<cat> przy kiełkach" was still an album, because by look alone the cat wasn't seen on 3 other days of this short set. A new album that is mostly the pet the user named now counts as the owner's pet at home too. Its 5 photos joined the user's album whose photos span 12–19 Nov and already show the cat.
+- **A bug found:** the captions already used `names` for name-like tags, so the new field was overwritten and every caption looked changed. It's renamed `recognized` (read back from the context line for older captions), and nothing is re-captioned without need.

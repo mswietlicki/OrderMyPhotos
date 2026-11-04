@@ -56,7 +56,9 @@ Write:
 - purpose: memory (people, places, events, scenery), reference (taken to keep information: a document, receipt, label, map, information board, screen), media (meme, screenshot), junk (accidental, nothing recognizable).
 - category: for reference or media photos one of the listed categories, otherwise "none".
 - people_count: number of people visible.
-Do not name people: names are added later from face recognition."""
+- Names: when the context says who is in the photo (face recognition) or names an animal, call them by those
+  names in the titles and descriptions, in the right Polish forms ("Jan z Filemonem", "Ola i Jan na szczycie
+  góry"), where it's clear who is who. Never give anyone else a name."""
 
 SEASONS = {12: "winter", 1: "winter", 2: "winter", 3: "spring", 4: "spring", 5: "spring", 6: "summer", 7: "summer",
            8: "summer", 9: "autumn", 10: "autumn", 11: "autumn"}
@@ -139,6 +141,16 @@ class SiglipCheck:
         return {p: float(r) / (len(self.paths) - 1) for p, r in zip(self.paths, ranks)}
 
 
+def knew(caption: dict) -> str:
+    """Who a caption was written knowing about (P40); the first ones keep it only in their context line."""
+    if "recognized" in caption:
+        return caption["recognized"]
+    return next((x[len(RECOGNIZED):] for x in caption.get("context", []) if x.startswith(RECOGNIZED)), "")
+
+
+RECOGNIZED = "- Recognized in the photo: "
+
+
 def run(cfg: Config, con, run_id: str):
     from .geo import Geocoder
 
@@ -146,12 +158,16 @@ def run(cfg: Config, con, run_id: str):
     vlm = VLM(cfg.llm)
     model = f"{vlm.model}@{VERSION}"
     keep = {r[0] for r in con.execute("SELECT id FROM decision WHERE run=? AND verdict='keep'", (run_id,))}
-    done = {r[0] for r in con.execute("SELECT id FROM caption WHERE model=?", (model,))}
+    from .people import recognized
+
+    names = recognized(con)  # a photo is captioned again when who it shows has changed (P40)
+    done = {r[0]: knew(json.loads(r[1])) for r in con.execute("SELECT id, data FROM caption WHERE model=?", (model,))}
     rows = [dict(r) for r in con.execute(
         "SELECT p.id, p.taken_local, p.lat, p.lon, MIN(f.album) AS album FROM photo p JOIN file f ON f.id = p.id"
         " WHERE f.policy NOT IN ('ignore', 'people', 'reference') GROUP BY p.id ORDER BY p.taken_ts")]
     nude = {r[0] for r in con.execute("SELECT id FROM signal WHERE kind='nudity' AND value >= 1")}
-    todo = [r for r in rows if (not keep or r["id"] in keep) and r["id"] not in done and r["id"] not in nude]
+    todo = [r for r in rows if (not keep or r["id"] in keep) and done.get(r["id"]) != names.get(r["id"], "")
+            and r["id"] not in nude]
     try:  # an unsorted photo that joins an album (the `place` stage) is described with that album's context (P33)
         for r in con.execute("SELECT m.id, p.target FROM proposal p JOIN proposal_member m ON m.pid=p.pid"
                              " WHERE p.run=? AND p.action='add'", (run_id,)):
@@ -177,6 +193,8 @@ def run(cfg: Config, con, run_id: str):
         ctx.append(f"- When: a {dt.strftime('%A')} in {SEASONS[dt.month]} ({dt.strftime('%B')}), {part_of_day(dt.hour)}")
         if r["album"] in trusted:
             ctx.append(f"- The owner's notes for this album: {trusted[r['album']][:500]}")
+        if names.get(r["id"]):
+            ctx.append(RECOGNIZED + names[r["id"]])
         t1 = time.perf_counter()
         try:
             out = vlm.json([image_part(cfg.preview(r["id"])), {"type": "text", "text": INSTRUCTIONS.format(context="\n".join(ctx))}],
@@ -184,7 +202,7 @@ def run(cfg: Config, con, run_id: str):
         except (ValueError, KeyError) as exc:  # one bad answer skips that photo, not the stage
             print(f"captions: skipped {r['id'][:10]}: {exc}")
             continue
-        out["context"], out["geo"], out["month"] = ctx, g, dt.month
+        out["context"], out["geo"], out["month"], out["recognized"] = ctx, g, dt.month, names.get(r["id"], "")
         con.execute("INSERT OR REPLACE INTO caption(id, model, data, seconds) VALUES (?,?,?,?)",
                     (r["id"], model, json.dumps(out, ensure_ascii=False), time.perf_counter() - t1))
         con.commit()

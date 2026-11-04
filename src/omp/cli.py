@@ -22,8 +22,8 @@ def main(argv=None):
     cfg = Config()
     con = connect(cfg.db)
     started = time.perf_counter()
-    stages = ["inventory", "previews", "signals", "orient", "faces", "subjects", "depth", "text", "place", "group", "rank", "judge",
-              "people", "captions", "albums", "report", "plan"] if args.stage == "all" else [args.stage]
+    stages = ["inventory", "previews", "signals", "orient", "faces", "subjects", "depth", "text", "people", "place", "group", "rank",
+              "judge", "captions", "albums", "report", "plan"] if args.stage == "all" else [args.stage]
     for stage in stages:
         if stage == "inventory":
             from . import inventory
