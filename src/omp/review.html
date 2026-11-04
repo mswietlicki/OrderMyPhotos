@@ -184,14 +184,14 @@ function drawUnit() {
       ${u.state === "dismantled" ? `<span class="tag">dismantled</span>` : ""}
       <span style="flex:1"></span>
       <span id="saved" class="muted"></span>
-      ${u.state === "open" ? `<button class="primary" onclick="confirmUnit()" title="Enter">Confirm</button>` : `<button onclick="reopen()">Review again</button>`}
+      ${u.state === "open" ? `<button class="primary" onclick="confirmUnit()" title="Ctrl+Enter">Confirm</button>` : `<button onclick="reopen()">Review again</button>`}
       ${u.state !== "dismantled" ? `<button class="danger" onclick="dismantle()" title="Sort all its photos again">Dismantle</button>` : ""}
     </div>
     <div class="path">${esc(u.key)}</div>
     <div class="summary" id="summary">${summary()}</div>
     ${fresh.length ? section(fresh) : `<p class="muted">Everything here is confirmed.</p>`}
     ${done.length ? `<details class="done" ${fresh.length ? "" : "open"}><summary>Already confirmed (${done.length})</summary>${section(done)}</details>` : ""}
-    <div class="help">Click a photo to keep or archive it · <kbd>O</kbd> take out or put back · <kbd>M</kbd> move · <kbd>Z</kbd> show large · <kbd>←</kbd><kbd>→</kbd><kbd>↑</kbd><kbd>↓</kbd> select · <kbd>Enter</kbd> confirm · every change is saved at once</div>`;
+    <div class="help">Click a photo to keep or archive it · <kbd>O</kbd> take out or put back · <kbd>M</kbd> move · <kbd>Enter</kbd> or <kbd>Z</kbd> show large · <kbd>←</kbd><kbd>→</kbd><kbd>↑</kbd><kbd>↓</kbd> select · <kbd>Ctrl</kbd>+<kbd>Enter</kbd> confirm · every change is saved at once</div>`;
   for (const el of $("main").querySelectorAll(".ph")) {
     el.onclick = e => {
       const i = +el.dataset.i, a = e.target.dataset.a;
@@ -304,7 +304,7 @@ function bigInfo(p) {
     ${p.pipeline && p.pipeline !== p.verdict ? ` · the pipeline said ${p.pipeline}` : ""}${p.rotate ? ` · turned ${p.rotate}°` : ""}
     · <a href="/library/${p.path.split("/").map(encodeURIComponent).join("/")}" target="_blank">original</a></div>
     ${strip(p)}
-    <div class="muted"><kbd>←</kbd><kbd>→</kbd> previous, next · <kbd>Space</kbd> keep or archive · <kbd>O</kbd> take out · <kbd>Esc</kbd> back</div>`;
+    <div class="muted"><kbd>←</kbd><kbd>→</kbd> previous, next · <kbd>Space</kbd> keep or archive · <kbd>O</kbd> take out · <kbd>Enter</kbd> or <kbd>Esc</kbd> back</div>`;
   for (const img of $("bigInfo").querySelectorAll(".strip img")) img.onclick = e => {
     e.stopPropagation();
     setFocus(+img.dataset.i);
@@ -348,8 +348,8 @@ document.addEventListener("keydown", e => {
   else if (e.key === "k" || e.key === "a" || e.key === " ") { e.preventDefault(); toggleVerdict(p); }
   else if (e.key === "o") toggleOut(p);
   else if (e.key === "m") { e.preventDefault(); askMove(p); }
-  else if (e.key === "z" && !big) showBig(p);
-  else if (e.key === "Enter" && !big && cur.state === "open") confirmUnit();
+  else if (e.key === "Enter" && (e.ctrlKey || e.metaKey)) { if (!big && cur.state === "open") confirmUnit(); }  // on purpose only
+  else if (e.key === "z" || e.key === "Enter") { e.preventDefault(); if (big) $("big").close(); else showBig(p); }
 });
 $("bigImg").onclick = () => $("big").close();
 $("search").oninput = drawUnits;
