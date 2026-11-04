@@ -2,10 +2,14 @@
 they are read from the preview cache and sent to 127.0.0.1 only."""
 
 import base64
+import hashlib
 import io
 import json
 import math
+import sqlite3
+import threading
 import time
+from pathlib import Path
 
 import httpx
 from PIL import Image
@@ -33,26 +37,50 @@ def image_part(path, long_side=IMAGE_PX) -> dict:
 
 
 class VLM:
-    def __init__(self, base_url: str, model: str = MODEL, repeatable: bool = False):
+    def __init__(self, base_url: str, model: str = MODEL, repeatable: bool = False, keep: Path | None = None):
         """`repeatable`: the same question gets the same answer, at the cost of recomputing the whole prompt
-        each call. The server's reuse of a cached prompt prefix makes long answers drift (S11, P45)."""
+        each call. The server's reuse of a cached prompt prefix makes long answers drift (S11, P45).
+        `keep` (repeatable only): a file the answers are kept in, by the whole request, so a run that asks the
+        same again gets them back at once and the same (P52: the album sorting after every review round). It's
+        a DB of its own, so it never waits for the stage's open transaction. Thread-safe."""
         self.url = f"{base_url}/v1/chat/completions"
         self.model = model
         self.served = SERVED.get(model, model)
         self.extra = {"chat_template_kwargs": {"enable_thinking": False}} | ({"cache_prompt": False} if repeatable else {})
         self.client = httpx.Client(timeout=600)
-        self.calls, self.seconds, self.prompt_tokens, self.output_tokens = 0, 0.0, 0, 0
+        self.calls, self.seconds, self.prompt_tokens, self.output_tokens, self.kept = 0, 0.0, 0, 0, 0
+        self.lock = threading.Lock()
+        self.keep = None
+        if keep is not None and repeatable:
+            self.keep = sqlite3.connect(keep, timeout=60, check_same_thread=False)
+            self.keep.execute("PRAGMA journal_mode=WAL")
+            self.keep.execute("CREATE TABLE IF NOT EXISTS answer (key TEXT PRIMARY KEY, model TEXT NOT NULL, "
+                              "answer TEXT NOT NULL, created TEXT NOT NULL DEFAULT (datetime('now')))")
 
     def _post(self, body):
+        req = {"model": self.served, **self.extra, **body}
+        key = None
+        if self.keep is not None:
+            key = hashlib.sha256(json.dumps(req, sort_keys=True, ensure_ascii=False).encode()).hexdigest()
+            with self.lock:
+                row = self.keep.execute("SELECT answer FROM answer WHERE key=?", (key,)).fetchone()
+                if row:
+                    self.kept += 1
+                    return json.loads(row[0])
         t0 = time.perf_counter()
         with own_chat():  # while this process asks the chat model, the 4090 isn't borrowed (helper.py)
-            r = post(self.client, self.url, json={"model": self.served, **self.extra, **body})
+            r = post(self.client, self.url, json=req)
         d = r.json()
-        self.calls += 1
-        self.seconds += time.perf_counter() - t0
         u = d.get("usage", {})
-        self.prompt_tokens += u.get("prompt_tokens", 0)
-        self.output_tokens += u.get("completion_tokens", 0)
+        with self.lock:
+            self.calls += 1
+            self.seconds += time.perf_counter() - t0
+            self.prompt_tokens += u.get("prompt_tokens", 0)
+            self.output_tokens += u.get("completion_tokens", 0)
+            if key:
+                self.keep.execute("INSERT OR REPLACE INTO answer(key, model, answer) VALUES (?,?,?)",
+                                  (key, self.model, json.dumps(d, ensure_ascii=False)))
+                self.keep.commit()
         return d
 
     def choice(self, content: list, options: list[str], system: str | None = None) -> dict[str, float]:
@@ -86,4 +114,5 @@ class VLM:
 
     def stats(self) -> str:
         return (f"{self.calls} calls, {self.seconds:.0f} s ({self.seconds / max(self.calls, 1):.1f} s/call),"
-                f" {self.prompt_tokens} prompt + {self.output_tokens} output tokens")
+                f" {self.prompt_tokens} prompt + {self.output_tokens} output tokens"
+                + (f", {self.kept} answers kept from earlier" if self.keep is not None else ""))

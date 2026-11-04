@@ -666,7 +666,8 @@ def run(cfg: Config, con, run_id: str, place_only: bool = False):
     # a birthday party inside a week-long album "clearly deserves its own album"). So is a crowd the album's
     # photos around it don't have, at a place their backgrounds say is another (user: a new place doesn't make
     # an album, but with other things, like the number of people, it may).
-    vlm = VLM(cfg.llm, repeatable=True)  # the same question gets the same answer, so a run repeats (P45, P46)
+    # The same question gets the same answer, so a run repeats (P45, P46); asked once, it's kept (P52).
+    vlm = VLM(cfg.llm, repeatable=True, keep=cfg.db.with_name("answers.db"))
     if os.environ.get("OMP_PROMPT_LOG"):  # every question and answer, to find what differs between two runs (P45)
         prompt_log, post = open(os.environ["OMP_PROMPT_LOG"], "w", encoding="utf-8"), vlm._post
 
