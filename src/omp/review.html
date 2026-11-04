@@ -49,9 +49,11 @@
   .ph img { width: 100%; height: 100%; object-fit: cover; display: block; transition: opacity .15s; }
   .ph.archive img { opacity: .35; filter: grayscale(.6); }
   .ph.archive { outline-color: var(--bad); }
+  .ph.archive::before { content: "archived"; position: absolute; left: 4px; bottom: 4px; z-index: 1; padding: 1px 6px; border-radius: 999px;
+                        background: var(--bad); color: #fff; font-size: 10px; font-weight: 600; }
   .ph.out img { opacity: .2; } .ph.out::after { content: "out"; position: absolute; inset: 0; display: grid; place-items: center; font-weight: 700; color: var(--bad); }
   .ph.moved::after { content: "→ " attr(data-to); position: absolute; left: 0; right: 0; bottom: 0; padding: 2px 4px; font-size: 11px; background: rgba(0,0,0,.6); color: #fff; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
-  .ph.focus { box-shadow: 0 0 0 3px var(--accent); }
+  .ph.focus { box-shadow: 0 0 0 3px var(--bg), 0 0 0 6px var(--accent); }  /* outside the red one, so both show */
   .ph .b { position: absolute; top: 4px; left: 4px; display: flex; gap: 3px; }
   .ph .b span { font-size: 10px; padding: 1px 5px; border-radius: 999px; background: rgba(0,0,0,.6); color: #fff; }
   .ph .b .new { background: var(--accent); } .ph .b .uns { background: var(--warn); }
@@ -68,6 +70,11 @@
   #big[open] { display: flex; flex-direction: column; }
   #bigMain { flex: 1; min-height: 0; display: flex; }
   #bigBox { flex: 1; min-width: 0; position: relative; overflow: hidden; }
+  /* the shown photo's own state, on it: a red frame and a badge when it's archived or taken out */
+  #bigBox.archive, #bigBox.out { box-shadow: inset 0 0 0 4px #ef6b5b; }
+  #bigBadge { position: absolute; top: 14px; left: 14px; z-index: 2; padding: 4px 12px; border-radius: 999px; background: #c0392b;
+              color: #fff; font-weight: 700; font-size: 13px; letter-spacing: .03em; display: none; }
+  #bigBox.archive #bigBadge, #bigBox.out #bigBadge { display: block; }
   /* on-screen controls: previous and next on the photo's edges, close in its corner, actions in the bar */
   #bigBox .nav { position: absolute; top: 50%; transform: translateY(-50%); width: 56px; height: 96px; border: 0; border-radius: 10px;
                  background: rgba(0, 0, 0, .35); color: #fff; font-size: 40px; line-height: 1; cursor: pointer; opacity: .7; z-index: 2; }
@@ -93,7 +100,9 @@
   .err { color: var(--bad); } #bigInfo b.keep { color: var(--ok); } #bigInfo b.archive { color: var(--bad); }
   #big kbd { border: 1px solid var(--line); border-radius: 4px; padding: 0 4px; font-size: 11px; }
   #bigBurst img { width: 100%; height: auto; aspect-ratio: 1; object-fit: cover; border-radius: 6px; cursor: pointer; outline: 2px solid transparent; outline-offset: -2px; flex: none; }
-  #bigBurst img.archive, #bigBurst img.out { opacity: .4; outline-color: var(--bad); } #bigBurst img.cur { outline: 3px solid var(--accent); opacity: 1; }
+  #bigBurst img { border: 3px solid transparent; }
+  #bigBurst img.archive, #bigBurst img.out { opacity: .45; filter: grayscale(.6); border-color: #ef6b5b; }
+  #bigBurst img.cur { outline: 3px solid #6b9cff; outline-offset: 2px; } #bigBurst img.cur.archive, #bigBurst img.cur.out { opacity: .75; }
   #final .card { background: var(--card); border: 1px solid var(--line); border-radius: 10px; padding: 16px; margin-bottom: 14px; max-width: 760px; }
   table { border-collapse: collapse; width: 100%; } td { padding: 4px 6px 4px 0; border-bottom: 1px solid var(--line); } td.n { text-align: right; }
   label.opt { display: block; padding: 8px 10px; border: 1px solid var(--line); border-radius: 8px; margin: 6px 0; cursor: pointer; }
@@ -114,7 +123,7 @@
 </div>
 <section class="main" id="final" hidden></section>
 
-<dialog id="big"><div id="bigMain"><div id="bigBox"><img id="bigImg" alt=""><button class="nav prev" id="bigPrev" title="Previous (←)">‹</button><button class="nav next" id="bigNext" title="Next (→)">›</button><button class="close" id="bigClose" title="Close (Esc)">✕</button></div><div id="bigBurst"></div></div><div id="bigBar"><div class="info" id="bigInfo"></div><div id="bigActs"></div></div></dialog>
+<dialog id="big"><div id="bigMain"><div id="bigBox"><img id="bigImg" alt=""><div id="bigBadge"></div><button class="nav prev" id="bigPrev" title="Previous (←)">‹</button><button class="nav next" id="bigNext" title="Next (→)">›</button><button class="close" id="bigClose" title="Close (Esc)">✕</button></div><div id="bigBurst"></div></div><div id="bigBar"><div class="info" id="bigInfo"></div><div id="bigActs"></div></div></dialog>
 <dialog id="moveDlg">
   <b>Move to</b>
   <p class="muted" style="margin: 4px 0 8px">An album or folder, or type a new album name.</p>
@@ -330,6 +339,8 @@ function bigInfo(p) {
     · <a href="/library/${p.path.split("/").map(encodeURIComponent).join("/")}" target="_blank">original</a></div>
     <div class="muted"><kbd>←</kbd><kbd>→</kbd><kbd>↑</kbd><kbd>↓</kbd> as on the page · right-click or <kbd>Space</kbd> keep or archive · <kbd>O</kbd> take out · <kbd>Enter</kbd> or <kbd>Esc</kbd> close</div>`;
   const out = p.state === "out";
+  $("bigBox").className = out ? "out" : p.verdict === "archive" ? "archive" : "";
+  $("bigBadge").textContent = out ? "Taken out" : "Archived";
   $("bigActs").innerHTML = `<button data-a="verdict" class="on-${p.verdict}" title="Right-click or Space">${p.verdict === "keep" ? "Archive" : "Keep"}</button>
     <button data-a="out" title="O">${out ? "Put back" : "Take out"}</button><button data-a="move" title="M">Move to…</button>`;
   for (const b of $("bigActs").querySelectorAll("button")) b.onclick = () =>
