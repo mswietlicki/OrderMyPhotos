@@ -91,7 +91,7 @@ Run s1 (2026-11-03) did a first pass of every stage below on the B50 and the res
 - [x] `omp serve`: start and pause, the pipeline as a supervised child that resumes after a crash or reboot, progress, steps, skipped photos, timings, machine resources, results, a label API (P44)
 - [x] Runs from a clone of this repo on Mimir (`compose.yaml`, `deploy/`); tested on a copy of s6: redeploy, pause, `kill -9`
 - [x] The review in the app (P47): a wizard over sessions (a root folder each, one at a time), phases that stop for the reviewer, every album and folder one review unit (keep/archive, out, move, rename, dismantle, confirm), a resort loop that leaves confirmed photos alone, the People page saving to the app, the final decision
-- [ ] The People page rebuilt in the app's style (it's the bundle's page, saving to the app)
+- [x] The People page in the app's style (`/people`): a face's photo full screen with the person's faces on the right, right-click takes a face out, saved at once (P47)
 - [x] Apply the plan to a test session's copy after the final decision: moves, turns, deleting the archived photos if decided, a log and undo (P48)
 - [ ] Apply the plan on OneDrive: `mimir-onedrive apply` (S9), server-side moves by item id, the archive, confirmed deletes
 - [x] When `fullrun` and the P45 sorting work are both on master (whoever merges second): albums.py's `vlm = VLM(cfg.llm)` becomes `VLM(cfg.llm, repeatable=True)` and the `:instruct` workaround wrapper under it goes (P46); the `OMP_PROMPT_LOG` wrapper stays
