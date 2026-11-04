@@ -4,6 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>OrderMyPhotos</title>
+<link rel="icon" href="/favicon.svg" type="image/svg+xml">
 <style>
   :root {
     --bg: #f6f7f9; --card: #fff; --fg: #1d2129; --muted: #667085; --line: #e4e7ec; --soft: #f0f3f8;
@@ -17,14 +18,20 @@
   [hidden] { display: none !important; }  /* `hidden` wins over a display set here */
   body { margin: 0; background: var(--bg); color: var(--fg); font: 15px/1.45 system-ui, -apple-system, "Segoe UI", sans-serif; }
   main { max-width: 1100px; margin: 0 auto; padding: 20px 16px 48px; }
-  header { display: flex; flex-wrap: wrap; gap: 12px; align-items: center; justify-content: space-between; margin-bottom: 16px; }
+  /* the app's one header: the views (People, Review, Plan) load under it, in this page */
+  header.app { position: sticky; top: 0; z-index: 20; display: flex; flex-wrap: wrap; gap: 6px 18px; align-items: center;
+               padding: 8px 16px; background: var(--card); border-bottom: 1px solid var(--line); }
+  .brand { display: flex; gap: 8px; align-items: center; font-weight: 700; font-size: 16px; color: var(--fg); text-decoration: none; }
+  .brand img { width: 26px; height: 26px; }
+  nav.views { display: flex; gap: 2px; } nav.views a { padding: 6px 12px; border-radius: 8px; color: var(--muted); text-decoration: none; font-weight: 600; }
+  nav.views a:hover { background: var(--soft); color: var(--fg); } nav.views a.on { background: var(--soft); color: var(--accent); }
   h1 { font-size: 22px; margin: 0; }
   h2 { font-size: 13px; text-transform: uppercase; letter-spacing: .06em; color: var(--muted); margin: 0 0 10px; font-weight: 600; }
   h3 { font-size: 14px; margin: 14px 0 6px; }
   .card { background: var(--card); border: 1px solid var(--line); border-radius: 10px; padding: 16px; margin-bottom: 14px; min-width: 0; }
   .row { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; }
   .badge { display: inline-block; padding: 2px 10px; border-radius: 999px; font-weight: 600; font-size: 13px; background: var(--line); }
-  .badge.running { background: var(--accent); color: #fff; }
+  .badge.running, .badge.starting { background: var(--accent); color: #fff; }
   .badge.stopping, .badge.retrying, .badge.review { background: var(--warn); color: #fff; }
   .badge.finished { background: var(--ok); color: #fff; }
   .badge.failed { background: var(--bad); color: #fff; }
@@ -74,15 +81,16 @@
 </style>
 </head>
 <body>
-<main>
-  <header>
-    <h1>OrderMyPhotos</h1>
-    <div class="row">
-      <span class="muted">Session</span>
-      <select id="session" aria-label="Session"></select>
-      <button id="newSession">New session</button>
-    </div>
-  </header>
+<header class="app" id="appHeader">
+  <a class="brand" href="#/"><img src="/favicon.svg" alt="">OrderMyPhotos</a>
+  <nav class="views"><a href="#/" data-r="progress">Progress</a><a href="#/people" data-r="people">People</a>
+    <a href="#/review" data-r="review">Review</a><a href="#/final" data-r="final">Plan</a></nav>
+  <span style="flex:1"></span>
+  <span id="appState" class="badge"></span>
+  <select id="session" aria-label="Session"></select>
+  <button id="newSession">New session</button>
+</header>
+<main id="progress">
 
   <section class="card" id="noSession" hidden>
     <h2>Start here</h2>
@@ -124,6 +132,7 @@
     </details>
   </div>
 </main>
+<div id="viewHost"></div>
 
 <dialog id="newDialog">
   <h2>New session</h2>
@@ -147,7 +156,7 @@ const fmtTime = t => t ? new Date(typeof t === "number" ? t * 1000 : t.replace("
 const num = n => n == null ? "—" : Number(n).toLocaleString();
 const gib = b => b == null ? "—" : b >= 2 ** 30 ? `${(b / 2 ** 30).toFixed(1)} GiB` : `${Math.round(b / 2 ** 20)} MiB`;
 const mbs = b => b == null ? "—" : `${(b / 1e6).toFixed(1)} MB/s`;
-const PAGES = {people: ["/people", "Open the People page"], review: ["/review", "Open the album review"], final: ["/review#final", "Open the plan"]};
+const PAGES = {people: ["#/people", "Open the People page"], review: ["#/review", "Open the album review"], final: ["#/final", "Open the plan"]};
 let last = null;
 
 async function api(path, body) {
@@ -175,7 +184,7 @@ function actionHtml(s) {
     const note = ph.key === "review" && rv ? `<p class="muted">${num(rv.units)} albums and folders · ${num(rv.unconfirmed)} still to confirm`
       + (rv.to_sort ? ` · ${num(rv.to_sort)} photos taken out, to sort again` : "") + (s.rounds ? ` · round ${s.rounds + 1}` : "") + `</p>` : "";
     return `<p><span class="who you">Your turn</span> <b>${esc(ph.title)}</b>: ${esc(ph.about)}</p>${note}
-      <div class="row"><a class="button primary" href="${href}" target="_blank">${label}</a>
+      <div class="row"><a class="button primary" href="${href}">${label}</a>
       ${ph.key === "final" ? `<button onclick="done('final')">Decide</button>`
         : `<button onclick="finish('${ph.key}', ${left})" title="${left ? "accept the rest as it is, and go on" : "go on"}">Finished, go on</button>`}</div>`;
   }
@@ -191,6 +200,8 @@ function actionHtml(s) {
       + ((st.errors || []).length ? st.errors.map(e => `<div class="error">${esc(e.id.slice(0, 12))}: ${esc(e.error)}</div>`).join("") : "");
   } else if (running) {
     h += `<p class="muted">Stage ${esc(s.stage || "starting")}…</p>`;
+  } else if (s.state === "starting") {
+    h += `<p class="muted">Starting…</p>`;
   } else if (s.state === "retrying") {
     h += `<p class="error">It stopped with exit ${s.last_exit}. Retry ${s.retries} at ${fmtTime(s.next_try)}.</p>`;
   } else if (s.state === "failed") {
@@ -204,8 +215,16 @@ function actionHtml(s) {
   return h;
 }
 
+function stateBadge(s) {  // in the header, on every view
+  const el = $("appState");
+  el.textContent = !s.session ? "" : s.state === "review" ? "waiting for you" : s.state;
+  el.className = "badge " + (s.session ? s.state : "");
+  el.hidden = !s.session;
+}
+async function badge() { try { stateBadge(await api("/api/status")); } catch (e) {} }
 function render(s) {
   last = s;
+  stateBadge(s);
   const sel = $("session");
   if (document.activeElement !== sel) {
     sel.innerHTML = (s.session ? "" : "<option value=''>—</option>") + s.sessions.map(x => `<option value="${x.id}">${esc(x.name)}</option>`).join("");
@@ -267,7 +286,7 @@ function renderDetails(s) {
 
 async function done(key) {
   let body = {};
-  if (key === "final") return location.assign("/review#final");
+  if (key === "final") { location.hash = "#/final"; return; }
   if (!confirm(key === "names" ? "Names saved on the People page? The run goes on with them." : "Go on?")) return;
   act(`/api/phase/${key}/done`, body);
 }
@@ -308,8 +327,66 @@ async function refresh() {
   try { const r = await fetch("/api/log?lines=120"); const pre = $("log"); const atEnd = pre.scrollTop + pre.clientHeight >= pre.scrollHeight - 20;
         pre.textContent = await r.text(); if (atEnd) pre.scrollTop = pre.scrollHeight; } catch (e) {}
 }
-refresh();
-setInterval(refresh, 3000);
+// --- one page: the views load under the header, each in its own shadow root, so their styles and element ids
+// stay apart. A view gets `document` (its root), `window` and `OMP` (its route, and how to go elsewhere). ---
+let view = null;
+function route() {
+  const h = decodeURIComponent(location.hash.replace(/^#\/?/, ""));
+  if (h.startsWith("review/")) return {name: "review", nav: "review", unit: h.slice(7)};
+  if (h === "review") return {name: "review", nav: "review"};
+  if (h === "final") return {name: "review", nav: "final", final: true};
+  if (h === "people") return {name: "people", nav: "people"};
+  return {name: "progress", nav: "progress"};
+}
+function unmountView() {
+  if (view) for (const [t, type, f] of view.listeners) t.removeEventListener(type, f);
+  view = null; window.__v = undefined;
+  $("viewHost").replaceChildren();
+}
+async function showRoute() {
+  const r = route(), hash = location.hash;
+  for (const a of document.querySelectorAll("nav.views a")) a.classList.toggle("on", a.dataset.r === r.nav);
+  unmountView();
+  $("progress").hidden = r.name !== "progress";
+  if (r.name === "progress") { document.title = "OrderMyPhotos"; refresh(); return; }
+  const html = await fetch("/" + r.name).then(x => x.text());
+  if (location.hash !== hash) return;  // gone elsewhere meanwhile
+  const doc = new DOMParser().parseFromString(html, "text/html");
+  const css = [...doc.querySelectorAll("style")].map(x => x.textContent).join("\n").replaceAll(":root", ":host")
+    .replace(/(^|[}\s])body\s*\{/g, "$1:host {");
+  const code = [...doc.querySelectorAll("script")].map(x => x.textContent).join("\n");
+  for (const x of doc.querySelectorAll("script, style")) x.remove();
+  const host = document.createElement("div");
+  $("viewHost").replaceChildren(host);
+  const root = host.attachShadow({mode: "open"});
+  root.innerHTML = `<style>${css}</style>${doc.body.innerHTML}`;
+  const listeners = [];
+  // inside a shadow root an event's target is the host; the view sees the element it happened on
+  const listen = target => (type, f) => {
+    const g = e => f(new Proxy(e, {get: (o, k) => k === "target" ? e.composedPath()[0] : typeof o[k] === "function" ? o[k].bind(o) : o[k]}));
+    target.addEventListener(type, g);
+    listeners.push([target, type, g]);
+  };
+  const vdoc = {
+    addEventListener: listen(document), removeEventListener() {},
+    getElementById: id => root.getElementById(id), querySelector: q => root.querySelector(q), querySelectorAll: q => root.querySelectorAll(q),
+    createElement: t => document.createElement(t), documentElement: host,
+    get activeElement() { return root.activeElement || document.activeElement; },
+    get title() { return document.title; }, set title(t) { document.title = t; },
+  };
+  const vwin = {addEventListener: listen(window), removeEventListener() {}, scrollTo: (...a) => window.scrollTo(...a),
+                set __v(x) { window.__v = x; }};  // what a view's inline buttons call
+  const omp = {route: r, go: h => { location.hash = h; }, replace: h => history.replaceState(null, "", h)};
+  view = {listeners};
+  try { new Function("document", "window", "OMP", code)(vdoc, vwin, omp); }
+  catch (e) { root.innerHTML += `<p style="color:#ef6b5b; padding:16px">${esc(e.message)}</p>`; }
+}
+const shellHeight = () => document.documentElement.style.setProperty("--shell-h", $("appHeader").offsetHeight + "px");
+window.addEventListener("resize", shellHeight);
+window.addEventListener("hashchange", showRoute);
+shellHeight();
+showRoute();
+setInterval(() => { if (!$("progress").hidden) refresh(); else badge(); }, 3000);
 </script>
 </body>
 </html>

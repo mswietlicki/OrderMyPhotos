@@ -14,7 +14,7 @@
   * { box-sizing: border-box; }
   [hidden] { display: none !important; }  /* `hidden` wins over a display set here */
   body { margin: 0; background: var(--bg); color: var(--fg); font: 14px/1.4 system-ui, -apple-system, "Segoe UI", sans-serif; }
-  header { position: sticky; top: 0; z-index: 5; display: flex; gap: 14px; align-items: center; padding: 10px 16px;
+  header { position: sticky; top: var(--shell-h, 0px); z-index: 5; display: flex; gap: 14px; align-items: center; padding: 10px 16px;
            background: var(--card); border-bottom: 1px solid var(--line); flex-wrap: wrap; }
   header a { color: var(--accent); text-decoration: none; }
   .tabs button { border: 0; background: none; color: var(--muted); padding: 4px 8px; border-radius: 6px; cursor: pointer; font: inherit; }
@@ -28,7 +28,7 @@
   .muted { color: var(--muted); } .err { color: var(--bad); }
   .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(330px, 1fr)); gap: 12px; align-items: start; }
   .card { background: var(--card); border: 1px solid var(--line); border-radius: 10px; padding: 10px; display: flex; flex-direction: column; gap: 8px;
-          scroll-margin: 70px 0 24px; }  /* the sticky header doesn't cover a selected card */
+          scroll-margin: calc(var(--shell-h, 0px) + 70px) 0 24px; }  /* the sticky headers don't cover a selected card */
   .card.focus { box-shadow: 0 0 0 3px var(--bg), 0 0 0 6px var(--accent); }
   .card.done { border-color: var(--ok); } .card.ignored { opacity: .55; } .card.unknown { border-style: dashed; }
   .card.sel { background: var(--soft); }
@@ -93,7 +93,6 @@
 </head>
 <body>
 <header>
-  <a href="/">← OrderMyPhotos</a>
   <b>People and pets</b>
   <div class="tabs" id="tabs"><button data-f="all" class="on">All</button><button data-f="todo">Unnamed</button></div>
   <span class="muted" id="sub"></span>
@@ -123,6 +122,9 @@
 // The People page in the web app (P47): the cards come from the session's DB, the state (names, merges,
 // faces taken out) is loaded from the server and saved on every change, the same from any device. The
 // naming rules are the bundle's People page's (P40), unchanged.
+// A view of the app's one page: the shell gives it `document` (its own shadow root), `window` and `OMP` (the
+// route, and how to go elsewhere). Opened on its own, the page sends the browser to its place in the app.
+if (typeof OMP === "undefined") { location.replace("/#/people"); throw new Error("opened outside the app"); }
 const $ = id => document.getElementById(id);
 const esc = s => String(s ?? "").replace(/[&<>"]/g, ch => ({"&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;"}[ch]));
 let DATA = null, cards = [], byId = {}, state = {}, dbLabels = {}, filter = "all", focusId = null, saveTimer = null;
@@ -403,7 +405,7 @@ $("finished").onclick = async () => {
   if (!confirm("Done naming? The run goes on with these names; you can still change them later.")) return;
   if (saveTimer) { clearTimeout(saveTimer); if (!await put()) return; }
   const r = await fetch("/api/phase/names/finish", {method: "POST"});
-  if (r.ok) location.assign("/"); else alert((await r.json().catch(() => ({}))).detail || r.statusText);
+  if (r.ok) OMP.go("#/"); else alert((await r.json().catch(() => ({}))).detail || r.statusText);
 };
 $("clear").onclick = () => { selected.clear(); status(); };
 const mergeIds = () => {

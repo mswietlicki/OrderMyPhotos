@@ -137,6 +137,8 @@ class Runner:
                 nxt = PHASES[self.control["phase"] + 1]["key"]
             self.control.update(phase=PHASE[nxt], wanted="running", retries=0, next_try=0)
             self.save()
+            if not self.alive():
+                self._spawn()
 
     def _spawn(self):
         stages = self.phase["stages"]
@@ -166,6 +168,9 @@ class Runner:
                 c["wanted"] = "finished"
             elif self.phase["kind"] == "review":
                 c["wanted"] = "review"
+            elif c["wanted"] == "running":
+                self.save()
+                self._spawn()  # the next server phase, now: no "stopped" moment in between
         elif c["wanted"] == "running":  # it crashed, or was stopped from outside: try again later
             n = c["retries"] = c["retries"] + 1
             if n > MAX_RETRIES:
@@ -255,8 +260,8 @@ def state() -> str:
     c, alive = runner.control, runner.alive()
     if alive:
         return "running" if c["wanted"] == "running" else "stopping"
-    if c["wanted"] == "running":
-        return "retrying"
+    if c["wanted"] == "running":  # between two phases, or waiting to try again after a failure
+        return "retrying" if c["retries"] else "starting"
     return c["wanted"]
 
 
@@ -316,6 +321,12 @@ async def lifespan(app):
 app = FastAPI(title="OrderMyPhotos", lifespan=lifespan)
 app.include_router(review.router)
 review.current = lambda: runner.session
+
+
+@app.get("/favicon.svg")
+@app.get("/favicon.ico")
+def favicon():
+    return FileResponse(Path(__file__).parent / "favicon.svg", media_type="image/svg+xml", headers={"Cache-Control": "max-age=86400"})
 
 
 def _page(name: str) -> HTMLResponse:

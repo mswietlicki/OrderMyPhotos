@@ -14,7 +14,7 @@
   * { box-sizing: border-box; }
   [hidden] { display: none !important; }  /* `hidden` wins over a display set here (the album list is a grid) */
   body { margin: 0; background: var(--bg); color: var(--fg); font: 14px/1.4 system-ui, -apple-system, "Segoe UI", sans-serif; }
-  header { position: sticky; top: 0; z-index: 5; display: flex; gap: 14px; align-items: center; padding: 10px 16px;
+  header { position: sticky; top: var(--shell-h, 0px); z-index: 5; display: flex; gap: 14px; align-items: center; padding: 10px 16px;
            background: var(--card); border-bottom: 1px solid var(--line); flex-wrap: wrap; }
   header a { color: var(--accent); text-decoration: none; }
   .tabs button { border: 0; background: none; color: var(--muted); padding: 4px 8px; border-radius: 6px; cursor: pointer; font: inherit; }
@@ -46,7 +46,7 @@
   .burst > .lbl { position: absolute; top: -8px; left: 10px; padding: 0 5px; font-size: 11px; line-height: 14px; color: var(--muted); background: var(--bg); }
   .ph { position: relative; width: var(--size, 150px); height: var(--size, 150px); border-radius: 8px; overflow: hidden; cursor: pointer;
         outline: 3px solid transparent; outline-offset: -3px; background: var(--soft);
-        scroll-margin: 70px 0 24px; }  /* the sticky header doesn't cover a selected photo */
+        scroll-margin: calc(var(--shell-h, 0px) + 70px) 0 24px; }  /* the sticky headers don't cover a selected photo */
   .ph img { width: 100%; height: 100%; object-fit: cover; display: block; transition: opacity .15s; }
   .ph.archive img { opacity: .35; filter: grayscale(.6); }
   .ph.archive { outline-color: var(--bad); }
@@ -114,7 +114,6 @@
 </head>
 <body>
 <header>
-  <a href="/">← OrderMyPhotos</a>
   <b>Review</b>
   <div class="tabs" id="tabs"><button data-f="open" class="on">To review</button><button data-f="confirmed">Confirmed</button><button data-f="all">All</button></div>
   <span class="muted" id="counts"></span>
@@ -133,12 +132,15 @@
   <b>Move to</b>
   <p class="muted" style="margin: 4px 0 8px">An album or folder, or type a new album name.</p>
   <input id="moveTo" list="targets" style="width: 420px; max-width: 80vw" autocomplete="off"><datalist id="targets"></datalist>
-  <div style="margin-top: 10px; text-align: right"><button onclick="moveDlg.close()">Cancel</button> <button class="primary" onclick="doMove()">Move</button></div>
+  <div style="margin-top: 10px; text-align: right"><button onclick="__v.closeMove()">Cancel</button> <button class="primary" onclick="__v.doMove()">Move</button></div>
 </dialog>
 
 <script>
 // Every change is saved on the server at once (P47): nothing is kept in the page, so leaving it loses nothing,
 // and the review is the same from any device or browser.
+// A view of the app's one page: the shell gives it `document` (its own shadow root), `window` and `OMP` (the
+// route, and how to go elsewhere). Opened on its own, the page sends the browser to its place in the app.
+if (typeof OMP === "undefined") { location.replace("/#/review"); throw new Error("opened outside the app"); }
 const $ = id => document.getElementById(id);
 const esc = s => String(s ?? "").replace(/[&<>"]/g, c => ({"&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;"}[c]));
 let units = [], targets = [], filter = "open", cur = null, photos = [], focusIdx = -1, moving = null, unitsTimer = null;
@@ -179,7 +181,7 @@ function drawUnits() {
 async function openUnit(key) {
   const d = await api("/api/review/unit?key=" + encodeURIComponent(key));
   cur = d.unit; photos = d.photos; focusIdx = -1;
-  history.replaceState(null, "", "#u=" + encodeURIComponent(key));
+  OMP.replace("#/review/" + encodeURIComponent(key));
   window.scrollTo(0, 0);
   drawUnits(); drawUnit();
 }
@@ -227,8 +229,8 @@ function drawUnit() {
       ${u.state === "dismantled" ? `<span class="tag">dismantled</span>` : ""}
       <span style="flex:1"></span>
       <span id="saved" class="muted"></span>
-      ${u.state === "open" ? `<button class="primary" onclick="confirmUnit()" title="Ctrl+Enter">Confirm</button>` : `<button onclick="reopen()">Review again</button>`}
-      ${u.state !== "dismantled" ? `<button class="danger" onclick="dismantle()" title="Sort all its photos again">Dismantle</button>` : ""}
+      ${u.state === "open" ? `<button class="primary" onclick="__v.confirmUnit()" title="Ctrl+Enter">Confirm</button>` : `<button onclick="__v.reopen()">Review again</button>`}
+      ${u.state !== "dismantled" ? `<button class="danger" onclick="__v.dismantle()" title="Sort all its photos again">Dismantle</button>` : ""}
     </div>
     <div class="path">${esc(u.key)}</div>
     <div class="summary" id="summary">${summary()}</div>
@@ -378,7 +380,7 @@ async function confirmUnit() {
     await api("/api/review/unit/confirm", {key: cur.key});
     await loadUnits();
     const next = units.find(u => u.state === "open");
-    if (next) openUnit(next.key); else { cur = null; $("main").innerHTML = `<p><b>All albums and folders are confirmed.</b> Go back to <a href="/">OrderMyPhotos</a> and press <i>Done, go on</i>.</p>`; drawUnits(); }
+    if (next) openUnit(next.key); else { cur = null; $("main").innerHTML = `<p><b>All albums and folders are confirmed.</b> Go back to <a href="#/">Progress</a> and press <i>Done, go on</i>.</p>`; drawUnits(); }
   } catch (e) { saved(false, e.message); }
 }
 async function dismantle() {
@@ -423,7 +425,7 @@ $("size").oninput = e => document.documentElement.style.setProperty("--size", e.
 $("finished").onclick = async () => {
   const left = units.filter(u => u.state === "open").length;
   if (!confirm(left ? `Accept the ${left} albums and folders not confirmed yet, as they are now, and go on?` : "Go on with the run?")) return;
-  try { await api("/api/phase/review/finish", {}); location.assign("/"); } catch (e) { alert(e.message); }
+  try { await api("/api/phase/review/finish", {}); OMP.go("#/"); } catch (e) { alert(e.message); }
 };
 for (const b of $("tabs").children) b.onclick = () => { filter = b.dataset.f; for (const x of $("tabs").children) x.classList.toggle("on", x === b); drawUnits(); };
 
@@ -448,18 +450,19 @@ async function showFinal() {
       <label class="opt"><input type="radio" name="arch" value="keep" checked> Keep them in <code>Archive/OrderMyPhotos/</code>, where they can be restored</label>
       <label class="opt"><input type="radio" name="arch" value="delete"> Delete them once the plan is applied</label>
       <p class="muted">Applying the plan to the library is a separate step (not built yet); this records your decision.</p>
-      <button class="primary" onclick="finish()">Save the decision</button> <a href="/" style="margin-left:10px">Back</a></div>`;
+      <button class="primary" onclick="__v.finish()">Save the decision</button> <a href="#/" style="margin-left:10px">Back</a></div>`;
 }
 async function finish() {
   const arch = document.querySelector("input[name=arch]:checked").value;
   if (arch === "delete" && !confirm("Delete the archived photos once the plan is applied?")) return;
-  try { await api("/api/phase/final/done", {archived: arch}); location.assign("/"); } catch (e) { alert(e.message); }
+  try { await api("/api/phase/final/done", {archived: arch}); OMP.go("#/"); } catch (e) { alert(e.message); }
 }
 
-if (location.hash === "#final") showFinal();
+// what the inline buttons call (they run outside this view's scope)
+window.__v = {confirmUnit, reopen, dismantle, doMove, finish, closeMove: () => $("moveDlg").close()};
+if (OMP.route.final) showFinal();
 else loadUnits().then(() => {
-  const m = location.hash.match(/^#u=(.+)$/);
-  const key = m ? decodeURIComponent(m[1]) : (units.find(u => u.state === "open") || {}).key;
+  const key = OMP.route.unit || (units.find(u => u.state === "open") || {}).key;
   if (key) openUnit(key);
 }).catch(e => { $("main").innerHTML = `<p>${esc(e.message)}</p>`; });
 </script>
