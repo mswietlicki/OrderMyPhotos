@@ -411,6 +411,39 @@ The user: "as one of the first steps of the run (before sorting), let's create f
   - a named cat gathered 37 boxes;
   - the caption context read "Ania", "the owner".
 
+## P41 — Another event inside an album's time; places from the backgrounds; fixed folder descriptions (2026-11-04, user)
+
+The user, on the s6 review: the week-long album "<name>" (12–19 Nov) is fine, but its Event 11 "is clearly something that deserves its own album. It's a birthday party, it has much more people, a different place. It's fine to join photos before and after this event, but those are clearly something separate."
+
+34 party photos (6 recognized people and many unknown faces) had joined the album only because they were taken inside its time span, with no GPS. Their best face match to the album was 0.21, well below the 0.35 of one person. And because `place` had joined them, they were captioned with the album's name as context, which put its person into the captions ("in <name>'s living room").
+
+- **No join by time for strangers:** the P39 face veto now holds for joins by time too. A session whose people are all strangers to an album is decided as an event.
+- **Places from the backgrounds** (user: "describe a photo's place from the background: inside or outside, the style of the furniture, the colour of the walls, the lights. A new place doesn't mean a new album, but like the GPS position, together with other factors like the number of people, it may indicate a separate event"):
+  - captions gain `indoors` and `setting`, e.g. "apartment kitchen with purple cabinets, blue ambient light";
+  - a session showing a crowd (≥ 4 people, at least twice as many as the album's photos within 12 h) doesn't join by time when the LLM, given both sides' backgrounds, says it's another place. The party: 9 people, P(same place) 0.01;
+  - a new place alone changes nothing. The backgrounds also go into the decisions and "part of that album?", whose wording now says that on a trip the place changes as it goes.
+- **Captions redone when their album changes:** a caption is written again when the album it's described with changed, not only who it shows. The party's 15 kept photos were rewritten ("<friend> z tortem urodzinowym").
+- **Things a re-run showed, fixed:**
+  - **Album summaries** (captions pass 2) were rewritten each run at temperature 0.2. A new wording of the trip album's summary sent 60 of its photos to `Other/2022` and `Random`. They're now at temperature 0 and written again only when the album's captions change.
+  - **An album answered but not offered** silently became `Other/<year>`. Names are now matched without the path, case or Unicode form, and what's still unmatched is counted in the log.
+  - **Hidden review pages:** a photo kept back from captioning for nudity, joining an album, kept its page from the review. It no longer counts as uncaptioned.
+- **Thematic folders keep a fixed description** (user: "a thematic folder is created for a specific type of photos, and that doesn't change"). Pass 2 no longer rewrites them from what a run put in them; only new folders and new albums are described that way. This also saves the calls for library albums, whose descriptions were written and never used.
+- **The pet the user named** (P37, P40):
+  - the decision prompt names it ("a new_folder named "<cat>"") when it is in most of a group's photos;
+  - the pet's folder takes only photos of that pet, checked after every pass;
+  - photos of it during an album of the owner's that shows it too go to that album (the user's week album "is fine" with its cat photos).
+
+  Without these, the first try put accidental shots and receipts in the cat's folder. A check inside every decision moved 72 trip photos to `Other/2022`, so the checks run after the passes instead.
+- **Shopping for a trip is its own event** (user, on the pet-shop trip that joined the camping trip as "getting ready" at 0.75: "own album again"):
+  - "part of that album?" now counts packing and setting off as part of a trip, but not shopping for it or another errand before it;
+  - for messenger photos it says they were received that day with no time, instead of a midnight time;
+  - the first wording ("an errand is an event of its own") split the pet-shop trip into two albums, because it read the other half as the errand.
+- **A group's own new album is offered in pass 2:** "keep it there" named an album the group wasn't offered, and 10 trip photos went to `Other/2022`.
+- **S11 reads English only** (user, 2026-11-04): the album namer got Polish titles, and now gets English ones. Album names stay Polish.
+- *Result on s6:* the party is a new album ("Urodziny <friend>", 34 photos). The album keeps the evening before and the night walk after. The trip is whole, and the pet-shop trip is its own album again (13 photos). Besides that, the changes from the accepted run are:
+  - the cat's own photos are in its folder (11, 5 of them from `Cats`);
+  - new albums' names vary a little.
+
 ## Open — for the user
 
 1. **Language** of titles, descriptions and tags: English, Polish, or both. Tags could carry both; descriptions need one.

@@ -309,6 +309,8 @@ The page itself:
 ### S7 Captions and tags (VLM, kept photos only)
 
 - **One request per photo** with a JSON schema enforced by llama-server's `response_format`. The fields: `title`, `description` (1–3 sentences), `tags[]`, `scene`, `activities[]`, `objects[]`, `text_in_image`, `kind`, `people_count`, and `subjects[]`: each person and animal with what they're doing ("a skier climbing", "a dog catching a ball"), so the description says it and the action becomes a tag (P22). This replaces v1's three chat turns.
+- **The place from the background** (P41): `indoors` (indoors, outdoors, unknown) and `setting`, which says the kind of place and what marks it: wall colours, furniture, light. With GPS, or without it, S11 uses it to tell one place from another.
+- **Captioned again** only when who is in the photo or the album it's described with has changed (P40, P41).
 - **Context block,** computed and not rolling:
   - the album folder name (which often holds the place and people: "`<place> z <name>`");
   - the event summary;
@@ -319,7 +321,7 @@ The page itself:
   The prompt says to use the context only where the image agrees with it.
 - **Two passes, so photos can run in parallel:**
   1. Captions with static context, on several llama.cpp slots in parallel.
-  2. A text-only LLM pass that summarizes each album or event from its captions.
+  2. A text-only LLM pass that summarizes each album or event from its captions. It runs at temperature 0, and is written again only when those captions change (P41).
 
   An optional third pass, also text-only, harmonizes titles inside an album.
 - **Tags:**
@@ -438,13 +440,17 @@ There are two kinds: **event albums** for memories, described here, and **catego
   2. Already in an album → archive the copy.
   3. Downloaded images (memes, wallpapers, art, infographics, screenshots) → a media folder, never an event album (P31).
   4. Messenger photos carry only their arrival day. A real photo joins an album only if it looks like it (P32), otherwise it's decided like a one-photo event, always to a folder.
-  5. **Sessions:** photos taken together (≤ 15 min apart, no jump over 1 km) move as one, and a burst is never split. A session inside an album's time span, at its place, joins that album. Just before or after the span, it joins only with shared people or a matching look (P35).
+  5. **Sessions:** photos taken together (≤ 15 min apart, no jump over 1 km) move as one, and a burst is never split. A session inside an album's time span, at its place, joins that album. Just before or after the span, it joins only with shared people or a matching look (P35). Two kinds of session never join by time; they're decided as events (P41):
+     - one whose people are all strangers to the album;
+     - a crowd (≥ 4 people, at least twice as many as the album's photos around it) at a place that the backgrounds say is another one.
   6. **Events:** sessions ≤ 3 h apart at one place, or ≤ 36 h apart sharing a person the owner doesn't photograph every day, or days away from the rolling base (a trip, unless the people and the subject both change completely, P37). The local LLM decides each event as a whole: a new album (and its name), an album close in time, a thematic folder, or a new thematic folder. It sees what the photos show, when, where and with whom, the reviewer's notes, and the **profiles** of the albums and folders. A person's folder or a pet's album is offered only when that person, or that very animal, is in the photos. Inside an album, text pages go to `Dokumenty/` and a receipt or document to its folder. Full nudity goes to the ` PRIV` sibling (P26).
 
   7. **Three passes** (P38):
      - pass 1 decides every group against the starter folders of `themes.yaml` (or the library's own) and the albums close in time;
-     - pass 2 describes every destination from what it got, renames new albums, and looks again only at groups with a reason: look-alikes elsewhere, a new album of the day, or an album of the library on that day ("is this part of it?");
-     - pass 3 checks each photo in a folder, a burst as one, against what most of the folder shows. A folder of animals takes only animals.
+     - pass 2 describes every new album and new folder from what it got, and renames new albums. Thematic folders keep their fixed description (`themes.yaml`, or the profile written once from the owner's photos in it, P41). It looks again only at groups with a reason: look-alikes elsewhere, a new album of the day, or an album of the library on that day ("is this part of it?");
+     - pass 3 checks each photo in a folder, a burst as one, against the folder's description. A folder of animals takes only animals, and the folder of the pet the user named takes only that pet.
+
+     The pet the user named gets a folder of its own (P37), except during an album of the owner's that shows it too. An album the LLM names is matched by name; one it wasn't offered sends the photos to `Other/<year>` and is counted in the log.
 
      A group that shows people, none of whom is in an album's photos, never joins that album, by look or by the LLM (P39). A burst whose photos were decided apart ends up in one place, an album before a folder. A new folder needs photos from more than one day. New folders that look the same merge. Fine leftovers go to `Other/<year>`, and `Random` is only for photos that make no sense.
 

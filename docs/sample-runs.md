@@ -111,7 +111,7 @@ The first OneDrive sync was still running at the time, so the albums were picked
 
 **Not handled yet:** an exact copy stored in two folders is one photo with one verdict, so it shows up on both albums' pages with the same proposal. Per-file decisions for exact copies (keep the curated location, archive the other) are S1's job, still to build.
 
-**Review bundle:** written at the library root (`OrderMyPhotos/`, 24 MB for 468 photos), and copied with the photos to `work/sample-library/` on the workstation, the way a drive would be handed over. Tested in a browser:
+**Review bundle:** written at the library root (`OrderMyPhotos/`, 24 MB for 468 photos), and copied with the photos to `work/sample-library/` on the workstation, the way a drive would be handed over (deleted 2026-11-04: since s5 the test sets stay on Mimir). Tested in a browser:
 - the index lists 7 albums, all ready;
 - the album pages start from the imported labels;
 - the open view shows the original at full resolution through its relative path;
@@ -387,3 +387,23 @@ The export (`names-s6.json`, 291 entries) was imported with `omp labels --file`,
 - **Captions:** 101 kept photos were written knowing who's in them, e.g. "<nick> i kot <cat> przy ognisku" and "<cat> w trzcinach". 198 photos carry names in all.
 - **The pet rule with the cat's name:** "<cat> przy kiełkach" was still an album, because by look alone the cat wasn't seen on 3 other days of this short set. A new album that is mostly the pet the user named now counts as the owner's pet at home too. Its 5 photos joined the user's album whose photos span 12–19 Nov and already show the cat.
 - **A bug found:** the captions already used `names` for name-like tags, so the new field was overwritten and every caption looked changed. It's renamed `recognized` (read back from the context line for older captions), and nothing is re-captioned without need.
+
+### s6, third review: the party (P41)
+
+The user: the week album is fine, but its Event 11, a birthday party at another place with many more people, "deserves its own album".
+
+**Why it joined:** its 34 photos were inside the album's time span, without GPS, so they joined by time. Their faces were strangers to the album (best match 0.21), but the veto didn't apply to joins by time. Captioned with the album's name as context, the party photos even named the album's person.
+
+**Runs:**
+- **Veto on joins by time** (albums only): the party became a new album, nothing else moved.
+- **From `place`**, captions redone for the 15 party photos whose album changed. That run moved 60 trip photos out of their album. The album summaries were rewritten at temperature 0.2, and an answer naming an album it wasn't offered went to `Other/2022`. Both fixed.
+- **Backgrounds** (the user's suggestion): all 270 kept photos captioned again with `indoors` and `setting`, 20 min. `place` then kept the party out on its own: 9 people, P(same place as the album's photos) 0.01.
+- **The cat's folder:** with the cat named in the prompt, 27 photos went to a new "<cat>" folder, receipts and accidental shots among them. A check inside every decision then sent 72 trip photos to `Other/2022`. The checks now run after the passes.
+
+- **The pet-shop trip** had joined the camping trip as getting ready (0.75), and the user wants it as its own album. Shopping for a trip is no longer part of it. The first wording split the shop into two albums. With the final wording it's one album, and the night's 10 photos briefly went to `Other/2022` until a group's own album was offered too.
+
+**Final s6:**
+- "Urodziny <friend>", 34 photos; the album keeps the evening before and the night walk after;
+- the trip whole, and the pet-shop trip its own album (13 photos);
+- the cat's folder with 11 photos of it, 5 of them from `Cats`;
+- review: 16 of 16 albums ready, 517 photos.

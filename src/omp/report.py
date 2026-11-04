@@ -172,11 +172,12 @@ def run(cfg: Config, con, run_id: str, out: str | None):
                     joining[base][i] = {"from": str(PurePosixPath(files[i]["path"]).parent), "why": why,
                                         "target": pr["target"]}
             joined_pids.add(pr["pid"])
+    nude = {r[0] for r in con.execute("SELECT id FROM signal WHERE kind='nudity' AND value >= 1")}  # never captioned
     taken, rows = set(), []
     for album in sorted(album_files):
         ids = album_files[album] | set(joining[album])
         decided = [i for i in ids if i in dec]
-        uncaptioned = [i for i in decided if dec[i]["verdict"] == "keep" and i not in caps]
+        uncaptioned = [i for i in decided if dec[i]["verdict"] == "keep" and i not in caps and i not in nude]
         ready = len(decided) == len(ids) and not uncaptioned
         slug = album_slug(album, taken)
         row = {"album": album, "slug": slug, "photos": len(ids), "ready": ready, "done": len(decided) - len(uncaptioned)}

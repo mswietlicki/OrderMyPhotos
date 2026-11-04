@@ -3,6 +3,7 @@ rolling) context block. Titles and descriptions come in Polish and English until
 decided (decisions.md, open question 1). Free tags are mapped onto vocab.yaml with Qwen3-Embedding and
 checked against the image with SigLIP 2; what doesn't map goes to review."""
 
+import hashlib
 import json
 import time
 from datetime import datetime
@@ -27,7 +28,7 @@ CATEGORIES = ["none", "documents", "receipts", "labels", "specs", "screens", "ho
 SCHEMA = {
     "type": "object", "additionalProperties": False,
     "required": ["title_pl", "title_en", "description_pl", "description_en", "tags", "scene", "activities",
-                 "objects", "text_in_image", "purpose", "category", "people_count"],
+                 "objects", "text_in_image", "purpose", "category", "people_count", "indoors", "setting"],
     "properties": {
         "title_pl": {"type": "string"}, "title_en": {"type": "string"},
         "description_pl": {"type": "string"}, "description_en": {"type": "string"},
@@ -39,6 +40,8 @@ SCHEMA = {
         "purpose": {"type": "string", "enum": ["memory", "reference", "media", "junk"]},
         "category": {"type": "string", "enum": CATEGORIES},
         "people_count": {"type": "integer"},
+        "indoors": {"type": "string", "enum": ["indoors", "outdoors", "unknown"]},
+        "setting": {"type": "string"},
     },
 }
 SYSTEM = ("You write captions for a private photo library. Describe only what is visible. Be concrete and plain: "
@@ -56,6 +59,11 @@ Write:
 - purpose: memory (people, places, events, scenery), reference (taken to keep information: a document, receipt, label, map, information board, screen), media (meme, screenshot), junk (accidental, nothing recognizable).
 - category: for reference or media photos one of the listed categories, otherwise "none".
 - people_count: number of people visible.
+- indoors: indoors, outdoors, or unknown (a close-up, a screenshot, a document).
+- setting: the place, read from the background, so that photos of one place can be told from another's: the
+  kind of place (kitchen, living room, office, shop, street, forest, beach), then what marks it: the colour of
+  the walls, the style of the furniture, the light (daylight, lamps, coloured lights, fire). English, at most 20
+  words, no people. "unknown" when the background doesn't show the place.
 - Names: when the context says who is in the photo (face recognition) or names an animal, call them by those
   names in the titles and descriptions, in the right Polish forms ("Jan z Filemonem", "Ola i Jan na szczycie
   góry"), where it's clear who is who. Never give anyone else a name."""
@@ -149,6 +157,7 @@ def knew(caption: dict) -> str:
 
 
 RECOGNIZED = "- Recognized in the photo: "
+ALBUM_LINE = "- Album name (the owner's): \"{}\""
 
 
 def run(cfg: Config, con, run_id: str):
@@ -160,23 +169,30 @@ def run(cfg: Config, con, run_id: str):
     keep = {r[0] for r in con.execute("SELECT id FROM decision WHERE run=? AND verdict='keep'", (run_id,))}
     from .people import recognized
 
-    names = recognized(con)  # a photo is captioned again when who it shows has changed (P40)
-    done = {r[0]: knew(json.loads(r[1])) for r in con.execute("SELECT id, data FROM caption WHERE model=?", (model,))}
+    names = recognized(con)
+    done = {r[0]: json.loads(r[1]) for r in con.execute("SELECT id, data FROM caption WHERE model=?", (model,))}
     rows = [dict(r) for r in con.execute(
         "SELECT p.id, p.taken_local, p.lat, p.lon, MIN(f.album) AS album FROM photo p JOIN file f ON f.id = p.id"
         " WHERE f.policy NOT IN ('ignore', 'people', 'reference') GROUP BY p.id ORDER BY p.taken_ts")]
-    nude = {r[0] for r in con.execute("SELECT id FROM signal WHERE kind='nudity' AND value >= 1")}
-    todo = [r for r in rows if (not keep or r["id"] in keep) and done.get(r["id"]) != names.get(r["id"], "")
-            and r["id"] not in nude]
     try:  # an unsorted photo that joins an album (the `place` stage) is described with that album's context (P33)
-        for r in con.execute("SELECT m.id, p.target FROM proposal p JOIN proposal_member m ON m.pid=p.pid"
-                             " WHERE p.run=? AND p.action='add'", (run_id,)):
-            joins = r["target"].removesuffix(" PRIV").removesuffix("/Dokumenty")
-            for row in todo:
-                if row["id"] == r["id"]:
-                    row["album"] = joins
+        joins = {r["id"]: r["target"].removesuffix(" PRIV").removesuffix("/Dokumenty") for r in con.execute(
+            "SELECT m.id, p.target FROM proposal p JOIN proposal_member m ON m.pid=p.pid WHERE p.run=? AND p.action='add'",
+            (run_id,))}
+        for row in rows:
+            row["album"] = joins.get(row["id"], row["album"])
     except Exception:  # noqa: BLE001 - no place stage yet
         pass
+
+    def stale(r):
+        """Captioned again when who it shows (P40) or the album it's described with (P41) has changed, or it
+        has no setting yet (P41)."""
+        c = done.get(r["id"])
+        if c is None or knew(c) != names.get(r["id"], "") or "setting" not in c:
+            return True
+        return bool(c.get("context")) and c["context"][0] != ALBUM_LINE.format(album_title(r["album"]))
+
+    nude = {r[0] for r in con.execute("SELECT id FROM signal WHERE kind='nudity' AND value >= 1")}
+    todo = [r for r in rows if (not keep or r["id"] in keep) and r["id"] not in nude and stale(r)]
     geo = Geocoder(cfg.models)
     trusted = {r["album"]: r["text"] for r in con.execute("SELECT album, text FROM album_context WHERE trusted=1")}
     mapper = TagMapper(cfg)
@@ -184,7 +200,7 @@ def run(cfg: Config, con, run_id: str):
     sig = get_vecs(con, "siglip")
     for r in todo:
         dt = datetime.fromisoformat(r["taken_local"])
-        ctx = [f'- Album name (the owner\'s): "{album_title(r["album"])}"']
+        ctx = [ALBUM_LINE.format(album_title(r["album"]))]
         g = None
         if r["lat"] is not None:
             g = geo.lookup(r["lat"], r["lon"])
@@ -237,19 +253,35 @@ def run(cfg: Config, con, run_id: str):
         con.execute("UPDATE caption SET data=? WHERE id=? AND model=?", (json.dumps(out, ensure_ascii=False), r["id"], model))
     con.commit()
 
-    # Pass 2 (text only): one summary per album from its captions.
+    # Pass 2 (text only): one summary per album from its captions. Written again only when its captions change,
+    # and at temperature 0: the sort shows it next to the album, and a new wording each run moved a trip's
+    # photos out of their album (P41, s6).
     albums = {}
     for r in con.execute("SELECT c.data, MIN(f.album) AS album FROM caption c JOIN file f ON f.id = c.id"
-                         " WHERE c.model=? GROUP BY c.id", (model,)):
+                         " WHERE c.model=? GROUP BY c.id ORDER BY c.id", (model,)):
         albums.setdefault(r["album"], []).append(json.loads(r["data"])["description_en"])
+    had = {}
+    for a, text in con.execute("SELECT album, text FROM album_context WHERE source=?", (f"v2 summary {VERSION}",)):
+        try:
+            had[a] = json.loads(text).get("of")
+        except (ValueError, AttributeError):
+            continue
     for album, descs in albums.items():
+        of = hashlib.sha1("\n".join(descs).encode()).hexdigest()
+        if had.get(album) == of:
+            continue
         d = vlm._post({"messages": [{"role": "system", "content": SYSTEM}, {"role": "user", "content":
             f'Album "{album_title(album)}". Captions of its photos:\n- ' + "\n- ".join(descs) +
             "\n\nWrite a 2-3 sentence summary of the album in Polish, then the same in English, as JSON with keys"
-            ' "pl" and "en". Plain and concrete.'}], "max_tokens": 400, "temperature": 0.2,
+            ' "pl" and "en". Plain and concrete; name each kind of moment, place, person and animal the photos'
+            " show, most common first."}], "max_tokens": 400, "temperature": 0,
             "response_format": {"type": "json_object"}})
+        try:
+            text = json.dumps({**json.loads(d["choices"][0]["message"]["content"]), "of": of}, ensure_ascii=False)
+        except (ValueError, TypeError):
+            continue
         con.execute("INSERT OR REPLACE INTO album_context(album, source, trusted, text) VALUES (?,?,0,?)",
-                    (album, f"v2 summary {VERSION}", d["choices"][0]["message"]["content"]))
+                    (album, f"v2 summary {VERSION}", text))
     con.commit()
     dt_total = time.perf_counter() - t0
     log_timing(con, "captions", run_id, len(todo), dt_total, "4090 qwen3.8-27b")

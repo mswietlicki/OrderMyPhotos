@@ -30,6 +30,7 @@ import math
 import random
 import re
 import time
+import unicodedata
 from pathlib import PurePosixPath
 from collections import Counter, defaultdict
 from datetime import datetime, timedelta
@@ -193,6 +194,8 @@ def km(a, b):
 SESSION_GAP = 15 * 60      # photos this close in time, at one place, were taken together: they move as one (P35)
 SESSION_KM = 1.0
 JOIN_MARGIN = 2 * 3600     # a session this close before or after an album joins it only with people or looks (P35)
+CROWD = 4                  # a session showing this many people, twice the album's around it, at a place the
+                           # backgrounds say is another, is an event of its own, not the album's by time (P41)
 PLACE_KM = 5               # sessions within EVENT_GAP are one event at the same place (or without GPS) ...
 PEOPLE_GAP = 36 * 3600     # ... and within this when they share a person the owner doesn't photograph every day
 RARE_DAYS = 6              # a person seen on at most this many days within +-60 days is "not every day"
@@ -242,6 +245,12 @@ def near_word(a: str, b: str) -> bool:
         return sum(x != y for x, y in zip(a, b)) <= 1
     s, l_ = (a, b) if len(a) < len(b) else (b, a)
     return any(l_[:k] + l_[k + 1:] == s for k in range(len(l_)))
+
+
+def album_key(path: str) -> str:
+    """An album's name as an answer may write it: without its folders, in any case or Unicode form."""
+    name = unicodedata.normalize("NFC", path.strip().rstrip("/").split("/")[-1]).lower()
+    return re.sub(r"\s+", " ", re.sub(r"\s*\(proposed\)$", "", name)).strip()
 
 
 def other_of(ts: float) -> str:
@@ -600,6 +609,49 @@ def run(cfg: Config, con, run_id: str, place_only: bool = False):
 
     # 3. A session during an existing album's event joins it: inside the album's time span at its place, or
     # just before or after it (JOIN_MARGIN) only when it shares people with it or looks like it (P25, P35).
+    # A session of people none of whom is in the album is another event, however close in time (P41; user, s6:
+    # a birthday party inside a week-long album "clearly deserves its own album"). So is a crowd the album's
+    # photos around it don't have, at a place their backgrounds say is another (user: a new place doesn't make
+    # an album, but with other things, like the number of people, it may).
+    vlm = VLM(cfg.llm)
+
+    def backgrounds(xs, n=6):
+        ss = [caps[r["id"]]["setting"] for r in sorted(xs, key=lambda r: r["taken_ts"])
+              if caps.get(r["id"], {}).get("setting") not in (None, "", "unknown")]
+        return ss[::max(1, len(ss) // n)][:n]
+
+    def same_place(xs, ys):
+        """P(yes) that two groups of photos were taken at one place, from what their backgrounds show."""
+        a, b = backgrounds(xs), backgrounds(ys)
+        if not a or not b:
+            return None
+        q = ("The backgrounds of two groups of photos, as described:\nGroup A:\n" + "\n".join(f"  - {x}" for x in a)
+             + "\nGroup B:\n" + "\n".join(f"  - {x}" for x in b) + "\n\nWere both taken at the same place (the same"
+             " room, home, venue or spot)? Answer with one word: yes or no.")
+        ans = vlm.choice([{"type": "text", "text": q}], ["yes", "no"])
+        return ans.get("yes", 0.5) if ans else None
+
+    def people_in(xs):
+        return max((caps.get(r["id"], {}).get("people_count") or 0 for r in xs), default=0)
+
+    elsewhere = []
+
+    def crowd_elsewhere(s, album):
+        n = people_in(s)
+        if n < CROWD:
+            return False
+        t = s[0]["taken_ts"]
+        around = [r for r in album_rows.get(album, []) if abs(r["taken_ts"] - t) <= 12 * 3600] or \
+            sorted(album_rows.get(album, []), key=lambda r: abs(r["taken_ts"] - t))[:10]
+        if n < 2 * max(1, people_in(around)):
+            return False
+        p = same_place(s, around)
+        if p is None or p >= 0.5:
+            return False
+        elsewhere.append(f"{datetime.fromtimestamp(t, tz):%d %b %H:%M} ({len(s)} photos, {n} people,"
+                         f" not at {album.split('/')[-1]}'s place: {p:.2f})")
+        return True
+
     def join_of(s, banned):
         t0s, t1s, c = s[0]["taken_ts"], s[-1]["taken_ts"], centre(s)
         ppl = set().union(*(clusters.get(r["id"], set()) for r in s))
@@ -608,12 +660,14 @@ def run(cfg: Config, con, run_id: str, place_only: bool = False):
         for album, a in (lib.albums.items() if lib else ()):
             if album in banned or not (a["start"] - JOIN_MARGIN <= t1s and t0s <= a["end"] + JOIN_MARGIN):
                 continue
+            if crowd_elsewhere(s, album) or strangers(s, album_faces.get(album)):
+                continue
             inside = a["start"] <= t0s and t1s <= a["end"]
             near = [xy for ts, xy in album_pts.get(album, []) if xy and abs(ts - t0s) <= 3 * 3600]
             place_ok = None if c is None or not near else min(km(c, xy) for xy in near) <= PLACE_KM
             shared = bool(ppl & album_people.get(album, set()))
             look = float((album_mat[album] @ np.stack(vs).T).max()) if album in album_mat and vs else None
-            alike = look is not None and look >= LIKE and not strangers(s, album_faces.get(album))
+            alike = look is not None and look >= LIKE
             if (inside and place_ok is not False) or shared or alike:
                 score = (inside, shared, look or 0.0)
                 if best is None or score > best[0]:
@@ -638,7 +692,7 @@ def run(cfg: Config, con, run_id: str, place_only: bool = False):
         con.commit()
         n = sum(len(v) for v in joins.values()) + sum(len(v) for v in received_joins.values())
         print(f"place: {n} unsorted photos join an existing album, {sum(len(v) for v in copies.values())} are copies;"
-              f" {time.perf_counter() - t0:.1f} s")
+              f" {len(elsewhere)} crowds at another place {elsewhere}; {time.perf_counter() - t0:.1f} s")
         return
 
     # 4. Events: sessions close in time at one place, or sharing people the owner doesn't photograph every
@@ -646,7 +700,6 @@ def run(cfg: Config, con, run_id: str, place_only: bool = False):
     base = Base(rows + out_rows)
     events = events_of(free, clusters, days_of, base, sig)
     geo = Geocoder(cfg.models)
-    vlm = VLM(cfg.llm)
     examples = random.Random(7).sample(lib.names, min(60, len(lib.names))) if lib else []
     try:  # who is in each photo (S8): named people, without the owner
         who = defaultdict(set)
@@ -678,7 +731,7 @@ def run(cfg: Config, con, run_id: str, place_only: bool = False):
     def name_for(ev, kept, d0, data):
         d1 = datetime.fromtimestamp(ev[-1]["taken_ts"], tz)
         step = max(1, len(kept) // 30)
-        lines = [f"  - {c.get('title_pl')}: {c.get('description_en')}"
+        lines = [f"  - {c.get('title_en')}: {c.get('description_en')}"  # S11 reads English only (user)
                  for c in (caps.get(r["id"]) for r in kept[::step][:30]) if c]
         when = (f"{d0:%A %d %B %Y}" if d0.date() == d1.date() else f"{d0:%d %B} – {d1:%d %B %Y}, {len(data['days'])} days") + \
                f", {SEASONS[d0.month]}, {part_of_day(d0.hour)}" + (", away" if data["away"] else "")
@@ -815,6 +868,9 @@ def run(cfg: Config, con, run_id: str, place_only: bool = False):
         c = centre(rs)
         where = (", ".join(p for p, _ in places.most_common(3)) or "no GPS") + \
             (" (away from where the owner's photos are in the weeks around)" if away else "")
+        bg = backgrounds(rs, 4)  # the place without GPS, or a finer one than GPS (P41)
+        if bg:
+            where += "; the backgrounds: " + "; ".join(bg)
         ppl = set().union(*(clusters.get(r["id"], set()) for r in rs))
         names = Counter(short[p] for r in rs for p in clusters.get(r["id"], ()) if p in short)
         lo, hi = int(rs[0]["taken_ts"] // 86400) - 3, int(rs[-1]["taken_ts"] // 86400) + 3
@@ -834,8 +890,15 @@ def run(cfg: Config, con, run_id: str, place_only: bool = False):
                 lines.append(f"  - (no caption; looks like: {top or 'unknown'})")
         note = sorted({n for r in rs for n in notes.get(r["id"], ())})
         days = pet_days(rs)
-        pet = (f"\n- The same animal is in the owner's photos on {days} other days: probably the owner's own pet,"
-               " which gets a folder of its own (a new_folder named after it, like \"Czarny kot\"), not Cats") \
+        # The pet the user named, when most of these photos show it (s6: said for every group the cat was in, it
+        # took 27 photos out of the albums of those days)
+        named = [(n, k) for n, k in Counter(pet_name[r["id"]] for r in rs if r["id"] in pet_name).most_common(1)
+                 if 2 * k >= len(rs)]
+        pet = (f"\n- The owner's own pet {named[0][0]} is in {named[0][1]} of these photos. Photos of just the pet,"
+               f" not of an event or an album of these days, go to its own folder (a new_folder named \"{named[0][0]}\"),"
+               " not Cats") if named else \
+            (f"\n- The same animal is in the owner's photos on {days} other days: probably the owner's own pet,"
+             " which gets a folder of its own (a new_folder named after it, like \"Czarny kot\"), not Cats") \
             if days >= PET_DAYS else ""
         return d0, (f"- {when}\n- {where}\n- {people}\n- {len(rs)} photos. What they show:\n" + "\n".join(lines)
                     + (f"\n- The owner's notes on these photos: {'; '.join(note)}" if note else "") + pet)
@@ -855,6 +918,13 @@ def run(cfg: Config, con, run_id: str, place_only: bool = False):
     animal_mat = np.stack([dino[i] for i in animals]) if animals else None
     animal_day = np.array([int((taken.get(i) or 0) // 86400) for i in animals])
     animal_set = set(animals)
+    try:  # the pets the user named on the People page (P40)
+        pet_name = {r[0]: r[1] or r[2] for r in con.execute(
+            "SELECT m.id, p.short, p.name FROM pet_member m JOIN pet p ON p.pid=m.pid WHERE p.source='user'"
+            " AND p.name IS NOT NULL")}
+    except Exception:  # noqa: BLE001 - no pets named
+        pet_name = {}
+    own_pet, pet_folder_names = set(pet_name), {n.lower() for n in pet_name.values()}
 
     def pet_days(rs):
         own = {int(r["taken_ts"] // 86400) for r in rs}
@@ -864,6 +934,8 @@ def run(cfg: Config, con, run_id: str, place_only: bool = False):
                 close = animal_day[(animal_mat @ dino[r["id"]]) >= PET_LIKE]
                 best = max(best, len(set(close.tolist()) - own))
         return best
+
+    unoffered = Counter()  # albums an answer named that weren't offered to it (P41, s6: 19 photos lost this way)
 
     def decide(rs, away, banned, messenger=False, more=(), no_album=False, proposed=None, refined=None, hint=""):
         """(d0, kind, target, name, why, alternatives) for a group of photos; a new album's target is its
@@ -921,9 +993,17 @@ def run(cfg: Config, con, run_id: str, place_only: bool = False):
         name = re.sub(r"^\d{4}-\d{2}(-\d{2})?\s*", "", name)  # the date goes in front by itself
         if messenger and kind == "new_album":
             kind = "new_folder" if name else "folder"
+        if kind == "album" and target not in allowed_albums | set(new_near):  # the name, written a little differently
+            offered = allowed_albums | set(new_near)
+            for key in (album_key, lambda a: re.sub(r"^\d{4}-\d{2}-\d{2} ", "", album_key(a))):  # then without the date
+                same = [a for a in offered if key(a) == key(target)]
+                if len(same) == 1:
+                    target = same[0]
+                    break
         if kind == "album" and target in new_near:  # joins an album proposed for other photos
             return d0, "new_album", target, target.split("/")[-1][11:], out.get("why", ""), []
         if kind == "album" and target not in allowed_albums:  # not offered (or taken out of): no guessing
+            unoffered[target] += 1
             kind, target = "folder", other
         elif kind == "folder" and target not in allowed_folders:  # a folder named slightly differently
             byname = {f.split("/")[-1].lower(): f for f in allowed_folders}
@@ -994,12 +1074,6 @@ def run(cfg: Config, con, run_id: str, place_only: bool = False):
                 d[4:] = [d0, "new_album", f"Pictures/Albums/{d0:%Y}/{d0:%Y-%m-%d} {name}", name,
                          d[8] + " (one day: an event)", []]
 
-    try:
-        own_pet = {r[0] for r in con.execute("SELECT m.id FROM pet_member m JOIN pet p ON p.pid=m.pid"
-                                             " WHERE p.source='user' AND p.name IS NOT NULL")}
-    except Exception:  # noqa: BLE001 - no pets named
-        own_pet = set()
-
     def pet_moments(decisions, grown):
         """The owner's own pet at home isn't an event (s5: "Kot na blacie", "Koty na drzewie" became albums): a
         new album at home that is mostly the pet the user named, or an animal seen on other days too, with
@@ -1022,6 +1096,38 @@ def run(cfg: Config, con, run_id: str, place_only: bool = False):
         for d in decisions:
             if d[5] == "new_album" and len(held[d[6]]) <= SMALL_EVENT and not novel(held[d[6]]):
                 d[4:] = decide(d[0], d[1], d[2], d[3], more=grown, no_album=True)
+
+    def pet_folder_only(decisions, grown):
+        """The folder of the pet the user named holds photos of that pet, after every pass (s6: accidental shots,
+        a harness and its receipt went there); what doesn't show it, burst by burst, is decided again."""
+        for d in list(decisions):
+            if d[5] not in ("folder", "new_folder") or d[6].split("/")[-1].lower() not in pet_folder_names:
+                continue
+            units = defaultdict(list)
+            for r in d[0]:
+                units[burst_of.get(r["id"], r["id"])].append(r)
+            out_ = [u for u in units.values() if not any(r["id"] in own_pet for r in u)]
+            if not out_:
+                continue
+            d[0] = [r for u in units.values() if u not in out_ for r in u]
+            for u in out_:
+                decisions.append([u, d[1], d[2] | {d[6]}, d[3], *decide(u, d[1], d[2] | {d[6]}, d[3], more=grown,
+                                                                         no_album=not novel(u))])
+        decisions[:] = [d for d in decisions if d[0]]
+
+    pet_shown = {a for a in (lib.albums if lib else ()) if any(r["id"] in own_pet for r in album_rows.get(a, ()))}
+
+    def pet_in_album(decisions):
+        """The owner's pet at home during an album of theirs that shows it too goes to that album, not to the
+        pet's folder (user, s6: the week's album with its cat photos "is fine"; P37 gives the pet a folder)."""
+        for d in decisions:
+            if d[5] not in ("folder", "new_folder") or d[1] or d[3] or d[6].split("/")[-1].lower() not in pet_folder_names:
+                continue
+            t0_, t1_ = min(r["taken_ts"] for r in d[0]), max(r["taken_ts"] for r in d[0])
+            for a in sorted(pet_shown - d[2]):
+                if lib.albums[a]["start"] - JOIN_MARGIN <= t0_ and t1_ <= lib.albums[a]["end"] + JOIN_MARGIN:
+                    d[5:9] = ["album", a, None, d[8] + f" (the owner's pet during {a.split('/')[-1]}, which shows it too)"]
+                    break
 
     def merge_alike_folders(decisions):
         """New folders whose photos look the same are one folder, under the name of the bigger (s5: the owner's
@@ -1056,25 +1162,42 @@ def run(cfg: Config, con, run_id: str, place_only: bool = False):
 
         def shows(xs, n):
             cs = [caps[r["id"]] for r in sorted(xs, key=lambda r: r["taken_ts"]) if r["id"] in caps]
-            return "\n".join(f"  - {c.get('title_en')}: {c.get('description_en', '')[:150]}" for c in cs[::max(1, len(cs) // n)][:n])
+            return "\n".join(f"  - {c.get('title_en')}: {c.get('description_en', '')[:150]}"
+                             + (f" (place: {c['setting']})" if c.get("setting") not in (None, "", "unknown") else "")
+                             for c in cs[::max(1, len(cs) // n)][:n])
 
         def span(x0, x1):
             d0, d1 = datetime.fromtimestamp(x0, tz), datetime.fromtimestamp(x1, tz)
             return f"{d0:%A %d %B %Y %H:%M} – {d1:%A %d %B %H:%M}"
 
+        def sent(xs):  # messenger photos carry only the day they arrived (P32), not a time
+            return all(r["id"] not in camera and MESSENGER.search("/" + r.get("path", "")) for r in xs)
+
         gap = (a0 - s1) / 3600 if s1 < a0 else (s0 - a1) / 3600 if s0 > a1 else 0
         long = f"{gap * 60:.0f} minutes" if gap < 1 else f"{gap:.1f} hours"
         timing = ("taken during the album's time" if not gap else
                   f"taken {long} before the album's first photo" if s1 < a0 else f"taken {long} after the album's last photo")
+        if sent(rs):
+            timing = f"received by a messenger on {datetime.fromtimestamp(s0, tz):%A %d %B %Y} (no time of day)"
+        theirs_when = (f"received by a messenger on {datetime.fromtimestamp(a0, tz):%A %d %B %Y} (no time of day)"
+                       if sent(rows) else f"from {span(a0, a1)}")
         both = mine is not None and theirs is not None and float((mine @ theirs.T).max()) >= FACE_SAME
-        q = (f"An album of the owner's: \"{album.split('/')[-1]}\", photos from {span(a0, a1)}. What they show:\n"
-             f"{shows(rows, 10)}\n\nA group of photos {timing} ({span(s0, s1)}):\n{shows(rs, 12)}\n"
-             + ("\nThe same person (not the owner) is in both.\n" if both else "") +
+        q = (f"An album of the owner's: \"{album.split('/')[-1]}\", photos {theirs_when}. What they show:\n"
+             f"{shows(rows, 10)}\n\nA group of photos {timing}" + ("" if sent(rs) else f" ({span(s0, s1)})")
+             + f":\n{shows(rs, 12)}\n" + ("\nThe same person (not the owner) is in both.\n" if both else "") +
              "\nIs this group part of that album's event: the same outing, trip or occasion (before, during or after it:"
-             " getting ready, the night before, the way back)? A different activity or a different place the same day is"
-             " not. Answer with one word: yes or no.")
+             " packing and setting off, the night before, the way back)? Shopping for a trip, or another errand before"
+             " it, isn't part of the trip. Neither is a different activity at a different place the same day, like a"
+             " party with other people. On a trip or an outing the place changes as it goes. Answer with one word: yes"
+             " or no.")
+        # (user, s6: the pet-shop trip the day before a camping trip is its own album, P41)
         ans = vlm.choice([{"type": "text", "text": q}], ["yes", "no"])
         return ans.get("yes", 0.5) if ans else 0.5
+
+    def fixed(target):
+        """What a thematic folder is for: its starter description (themes.yaml) or the profile written once
+        from the owner's photos in it; None for a folder this run makes."""
+        return profile.get(target) or (profile.get(OTHER_YEAR) if re.match(r"^Pictures/Other/\d{4}$", target) else None)
 
     def refine(decisions, grown):
         """Passes 2 and 3 (P38). Pass 2: every destination is described from what it got (and a new album
@@ -1084,7 +1207,10 @@ def run(cfg: Config, con, run_id: str, place_only: bool = False):
         held = defaultdict(list)
         for d in decisions:
             held[d[6]] += d[0]
-        described = {t_: summary_of(t_, rs) for t_, rs in held.items() if t_ != RANDOM}
+        # A thematic folder is made for one kind of photo, so what it's for doesn't change with what one run put
+        # in it (user, s6): only new folders and new albums are described from what they got.
+        described = {t_: summary_of(t_, rs) for t_, rs in held.items() if t_ != RANDOM and not fixed(t_)
+                     and t_ not in (lib.albums if lib else {})}
         proposed = {t_: s[0] for t_, s in described.items() if re.search(r"^Pictures/Albums/\d{4}/\d{4}-\d{2}-\d{2} ", t_)
                     and t_ not in (lib.albums if lib else {})}
         refined = {t_: s[0] for t_, s in described.items() if t_ not in proposed and not t_.startswith("Pictures/Albums/2")}
@@ -1097,8 +1223,10 @@ def run(cfg: Config, con, run_id: str, place_only: bool = False):
                     s = float(vecs[k] @ vecs[j])
                     if s >= LOOKALIKE:
                         alike.append(f"{e[6]} ({s:.2f})")
-            own = {t_: v for t_, v in proposed.items() if t_ != d[6] and not strangers(d[0], faces_of(held[t_]))}
-            same_day = [t_ for t_ in own if abs(album_day(t_) - d[0][0]["taken_ts"]) <= 86400]
+            # The group's own new album is offered too: "keep it there" names it (s6: 10 trip photos went to
+            # Other/2022 when it wasn't)
+            own = {t_: v for t_, v in proposed.items() if not strangers(d[0], faces_of(held[t_]))}
+            same_day = [t_ for t_ in own if t_ != d[6] and abs(album_day(t_) - d[0][0]["taken_ts"]) <= 86400]
             # Pass 1 stands unless there's a reason to look again: photos that look alike went elsewhere within
             # a day, or a folder's group has a new album of its day to join. (Deciding everything again flipped
             # good answers in s5: a bike ride the user liked as an album went to Sport.)
@@ -1165,13 +1293,14 @@ def run(cfg: Config, con, run_id: str, place_only: bool = False):
         for d in decisions:
             if d[5] in ("folder", "new_folder"):
                 held[d[6]] += d[0]
-        now = {t_: profile.get(t_) or (profile.get(OTHER_YEAR) if re.match(r"^Pictures/Other/\d{4}$", t_) else None)
-                   or summary_of(t_, rs)[0] for t_, rs in held.items()}
+        now = {t_: fixed(t_) or summary_of(t_, rs)[0] for t_, rs in held.items()}
         # A burst is checked, and moves, as one. A folder of animals takes only photos of an animal (s5: the
         # monitor unboxed at home stayed in the cat's folder); the others are asked about.
         beasts = {t_ for t_, rs in held.items() if sum(r["id"] in animal_set for r in rs) >= PET_ALBUM_ANIMALS * len(rs)}
 
         def fits(target, rs):
+            if target.split("/")[-1].lower() in pet_folder_names:  # the folder of the pet the user named (s6: receipts)
+                return any(r["id"] in own_pet for r in rs)
             if target in beasts:
                 return any(r["id"] in animal_set for r in rs)
             ps = []
@@ -1255,6 +1384,8 @@ def run(cfg: Config, con, run_id: str, place_only: bool = False):
     one_day_events(decisions)
     pet_moments(decisions, grown)
     small_albums(decisions, grown)
+    pet_folder_only(decisions, grown)
+    pet_in_album(decisions)
     for rs, away, banned, messenger, d0, kind, target, name, why, alts in decisions:
         counts[kind] += 1
         if messenger or kind in ("folder", "new_folder"):
@@ -1378,6 +1509,8 @@ def run(cfg: Config, con, run_id: str, place_only: bool = False):
           f" {len(persons)} people)")
     print(f"  album folders in the wrong place: {len(relocated)} with {sum(c[2] for c in relocated)} photos,"
           f" {sum(1 for c in relocated if c[3])} of them into an existing album")
+    if unoffered:
+        print(f"  albums answered but not offered (went to Other/<year>): {dict(unoffered.most_common(5))}")
     con.commit()
     dt = time.perf_counter() - t0
     log_timing(con, "albums", run_id, len(rows), dt, "cpu + 4090 qwen3.8-27b")
