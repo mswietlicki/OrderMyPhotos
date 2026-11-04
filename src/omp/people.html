@@ -56,7 +56,20 @@
          background: #000; color: #e6e8eb; overflow: hidden; }
   #big[open] { display: flex; flex-direction: column; }
   #bigMain { flex: 1; min-height: 0; display: flex; }
-  #bigBox { flex: 1; min-width: 0; position: relative; overflow: hidden; cursor: zoom-out; }
+  #bigBox { flex: 1; min-width: 0; position: relative; overflow: hidden; }
+  /* on-screen controls: previous and next on the photo's edges, close in its corner, actions in the bar */
+  #bigBox .nav { position: absolute; top: 50%; transform: translateY(-50%); width: 56px; height: 96px; border: 0; border-radius: 10px;
+                 background: rgba(0, 0, 0, .35); color: #fff; font-size: 40px; line-height: 1; cursor: pointer; opacity: .7; z-index: 2; }
+  #bigBox .nav:hover { opacity: 1; background: rgba(0, 0, 0, .65); } #bigBox .nav:disabled { opacity: .15; cursor: default; }
+  #bigBox .prev { left: 10px; } #bigBox .next { right: 10px; }
+  #bigBox .close { position: absolute; top: 10px; right: 10px; width: 44px; height: 44px; padding: 0; border-radius: 50%; border: 0;
+                   background: rgba(0, 0, 0, .55); color: #fff; font-size: 20px; cursor: pointer; z-index: 2; }
+  #bigBox .close:hover { background: rgba(0, 0, 0, .85); }
+  #bigBar { flex: none; height: 112px; display: flex; background: #15171b; border-top: 1px solid #2c3038; }
+  #bigActs { flex: none; display: flex; gap: 8px; align-items: center; padding: 10px 16px; }
+  #bigActs button { background: #23272e; color: #e6e8eb; border: 1px solid #3a3f48; padding: 7px 14px; border-radius: 8px; cursor: pointer; }
+  #bigActs button:hover { background: #2c323b; } #bigActs button.on-archive { border-color: #ef6b5b; } #bigActs button.on-keep { border-color: #4cc38a; }
+
   #bigImg { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: contain; }
   #faceBox { position: absolute; border: 2px solid #6b9cff; border-radius: 4px; box-shadow: 0 0 0 9999px rgba(0, 0, 0, .35); pointer-events: none; }
   #bigFaces { flex: none; width: 212px; overflow-x: hidden; overflow-y: auto; scrollbar-gutter: stable; padding: 10px;
@@ -64,7 +77,7 @@
               align-items: stretch; font-size: 12px; color: #98a2b3; }
   #bigFaces img { width: 100%; height: auto; aspect-ratio: 1; object-fit: cover; border-radius: 6px; cursor: pointer; outline: 2px solid transparent; outline-offset: -2px; flex: none; }
   #bigFaces img.out { opacity: .35; outline-color: #ef6b5b; } #bigFaces img.cur { outline: 3px solid #6b9cff; opacity: 1; }
-  #bigInfo { flex: none; height: 76px; overflow: auto; padding: 10px 16px; background: #15171b; border-top: 1px solid #2c3038; }
+  #bigBar { height: 76px; } #bigInfo { flex: 1; min-width: 0; overflow: auto; padding: 10px 16px; }
   #bigInfo .muted { color: #98a2b3; font-size: 12px; } #bigInfo b.out { color: #ef6b5b; } #bigInfo b.in { color: #4cc38a; }
   #big kbd { border-color: #2c3038; }
   @media (max-width: 420px) { .faces { grid-template-columns: repeat(4, 1fr); } .fields { grid-template-columns: 1fr; } }
@@ -95,7 +108,7 @@
     <kbd>Enter</kbd> type its name · <kbd>Esc</kbd> back · <kbd>Z</kbd> show its faces large · <kbd>X</kbd> select to merge · every change is saved at once</div>
 </main>
 <div class="bar" id="bar" hidden><span id="barsum"></span><button class="primary" id="merge">Merge into one</button><button id="clear">Clear</button></div>
-<dialog id="big"><div id="bigMain"><div id="bigBox"><img id="bigImg" alt=""><div id="faceBox"></div></div><div id="bigFaces"></div></div><div id="bigInfo"></div></dialog>
+<dialog id="big"><div id="bigMain"><div id="bigBox"><img id="bigImg" alt=""><div id="faceBox"></div><button class="nav prev" id="bigPrev" title="Previous (←)">‹</button><button class="nav next" id="bigNext" title="Next (→)">›</button><button class="close" id="bigClose" title="Close (Esc)">✕</button></div><div id="bigFaces"></div></div><div id="bigBar"><div id="bigInfo"></div><div id="bigActs"></div></div></dialog>
 
 <script>
 // The People page in the web app (P47): the cards come from the session's DB, the state (names, merges,
@@ -337,9 +350,14 @@ function bigInfo() {
   const c = root(big.card), s = st(c), f = big.faces[big.i], out = (s.out || []).includes(f.k);
   $("bigInfo").innerHTML = `<b class="${out ? "out" : "in"}">${out ? "Not them" : "Them"}</b> · <b>${esc(who(s) || (s.me ? "you" : "no name yet"))}</b>
     <span class="muted">· ${c.id} · ${c.pet ? "animal" : "face"} ${big.i + 1} of ${big.faces.length}</span>
-    <div class="muted"><kbd>←</kbd><kbd>→</kbd> previous, next · right-click or <kbd>Space</kbd> not them · <kbd>Enter</kbd> or <kbd>Esc</kbd> back</div>`;
+    <div class="muted"><kbd>←</kbd><kbd>→</kbd> previous, next · right-click or <kbd>Space</kbd> not them · <kbd>Enter</kbd> or <kbd>Esc</kbd> close</div>`;
+  $("bigActs").innerHTML = `<button data-a="out" class="on-${out ? "archive" : "keep"}" title="Right-click or Space">${out ? "It's them" : "Not them"}</button>`;
+  $("bigActs").querySelector("button").onclick = () => toggleOut(big.card, f.k);
+  $("bigPrev").disabled = big.i <= 0; $("bigNext").disabled = big.i >= big.faces.length - 1;
 }
-$("bigBox").onclick = () => $("big").close();
+$("bigClose").onclick = () => $("big").close();
+$("bigPrev").onclick = () => { if (big && big.i > 0) { big.i--; showFace(); } };
+$("bigNext").onclick = () => { if (big && big.i < big.faces.length - 1) { big.i++; showFace(); } };
 $("bigBox").oncontextmenu = e => { e.preventDefault(); if (big) toggleOut(big.card, big.faces[big.i].k); };
 $("big").onclose = () => { big = null; render(); };
 window.addEventListener("resize", () => { if (big) showFace(); });

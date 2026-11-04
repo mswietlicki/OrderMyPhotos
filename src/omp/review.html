@@ -67,14 +67,27 @@
          background: #000; color: #e6e8eb; overflow: hidden; }
   #big[open] { display: flex; flex-direction: column; }
   #bigMain { flex: 1; min-height: 0; display: flex; }
-  #bigBox { flex: 1; min-width: 0; position: relative; overflow: hidden; cursor: zoom-out; }
+  #bigBox { flex: 1; min-width: 0; position: relative; overflow: hidden; }
+  /* on-screen controls: previous and next on the photo's edges, close in its corner, actions in the bar */
+  #bigBox .nav { position: absolute; top: 50%; transform: translateY(-50%); width: 56px; height: 96px; border: 0; border-radius: 10px;
+                 background: rgba(0, 0, 0, .35); color: #fff; font-size: 40px; line-height: 1; cursor: pointer; opacity: .7; z-index: 2; }
+  #bigBox .nav:hover { opacity: 1; background: rgba(0, 0, 0, .65); } #bigBox .nav:disabled { opacity: .15; cursor: default; }
+  #bigBox .prev { left: 10px; } #bigBox .next { right: 10px; }
+  #bigBox .close { position: absolute; top: 10px; right: 10px; width: 44px; height: 44px; padding: 0; border-radius: 50%; border: 0;
+                   background: rgba(0, 0, 0, .55); color: #fff; font-size: 20px; cursor: pointer; z-index: 2; }
+  #bigBox .close:hover { background: rgba(0, 0, 0, .85); }
+  #bigBar { flex: none; height: 112px; display: flex; background: #15171b; border-top: 1px solid #2c3038; }
+  #bigActs { flex: none; display: flex; gap: 8px; align-items: center; padding: 10px 16px; }
+  #bigActs button { background: #23272e; color: #e6e8eb; border: 1px solid #3a3f48; padding: 7px 14px; border-radius: 8px; cursor: pointer; }
+  #bigActs button:hover { background: #2c323b; } #bigActs button.on-archive { border-color: #ef6b5b; } #bigActs button.on-keep { border-color: #4cc38a; }
+
   /* the burst, on the right: always there and as wide, so the photo keeps its size from photo to photo */
   /* the scrollbar's room is kept, so many frames never make it scroll sideways or change its width */
   #bigBurst { flex: none; width: 212px; overflow-x: hidden; overflow-y: auto; scrollbar-gutter: stable; padding: 10px;
               background: #15171b; border-left: 1px solid #2c3038; display: flex; flex-direction: column; gap: 8px;
               align-items: stretch; font-size: 12px; color: #98a2b3; }
   #bigImg { position: absolute; top: 50%; left: 50%; object-fit: contain; }
-  #big .info { flex: none; height: 112px; overflow: auto; padding: 10px 16px; background: #15171b; border-top: 1px solid #2c3038; }
+  #big .info { flex: 1; min-width: 0; overflow: auto; padding: 10px 16px; }
   #big .info .muted { color: #98a2b3; font-size: 12px; } #big a { color: #6b9cff; }
   .muted { color: var(--muted); }
   .err { color: var(--bad); } #bigInfo b.keep { color: var(--ok); } #bigInfo b.archive { color: var(--bad); }
@@ -101,7 +114,7 @@
 </div>
 <section class="main" id="final" hidden></section>
 
-<dialog id="big"><div id="bigMain"><div id="bigBox"><img id="bigImg" alt=""></div><div id="bigBurst"></div></div><div class="info" id="bigInfo"></div></dialog>
+<dialog id="big"><div id="bigMain"><div id="bigBox"><img id="bigImg" alt=""><button class="nav prev" id="bigPrev" title="Previous (←)">‹</button><button class="nav next" id="bigNext" title="Next (→)">›</button><button class="close" id="bigClose" title="Close (Esc)">✕</button></div><div id="bigBurst"></div></div><div id="bigBar"><div class="info" id="bigInfo"></div><div id="bigActs"></div></div></dialog>
 <dialog id="moveDlg">
   <b>Move to</b>
   <p class="muted" style="margin: 4px 0 8px">An album or folder, or type a new album name.</p>
@@ -315,7 +328,14 @@ function bigInfo(p) {
     <div class="muted">${esc(p.taken || "")} · ${esc(p.from)}/${esc(p.name)}${p.why ? " · " + esc(p.why) : ""}${p.unsure ? " · unsure: " + esc(p.unsure) : ""}
     ${p.pipeline && p.pipeline !== p.verdict ? ` · the pipeline said ${p.pipeline}` : ""}${p.rotate ? ` · turned ${p.rotate}°` : ""}
     · <a href="/library/${p.path.split("/").map(encodeURIComponent).join("/")}" target="_blank">original</a></div>
-    <div class="muted"><kbd>←</kbd><kbd>→</kbd><kbd>↑</kbd><kbd>↓</kbd> as on the page · right-click or <kbd>Space</kbd> keep or archive · <kbd>O</kbd> take out · <kbd>Enter</kbd> or <kbd>Esc</kbd> back</div>`;
+    <div class="muted"><kbd>←</kbd><kbd>→</kbd><kbd>↑</kbd><kbd>↓</kbd> as on the page · right-click or <kbd>Space</kbd> keep or archive · <kbd>O</kbd> take out · <kbd>Enter</kbd> or <kbd>Esc</kbd> close</div>`;
+  const out = p.state === "out";
+  $("bigActs").innerHTML = `<button data-a="verdict" class="on-${p.verdict}" title="Right-click or Space">${p.verdict === "keep" ? "Archive" : "Keep"}</button>
+    <button data-a="out" title="O">${out ? "Put back" : "Take out"}</button><button data-a="move" title="M">Move to…</button>`;
+  for (const b of $("bigActs").querySelectorAll("button")) b.onclick = () =>
+    b.dataset.a === "verdict" ? toggleVerdict(p) : b.dataset.a === "out" ? toggleOut(p) : askMove(p);
+  const order = shown().map(el => +el.dataset.i), k = order.indexOf(focusIdx);
+  $("bigPrev").disabled = k <= 0; $("bigNext").disabled = k < 0 || k >= order.length - 1;
   burstPanel(p);
 }
 // The rest of the photo's burst, on the right: kept or archived, the one shown outlined. A click opens a
@@ -364,7 +384,9 @@ document.addEventListener("keydown", e => {
   else if (e.key === "Enter" && (e.ctrlKey || e.metaKey)) { if (!big && cur.state === "open") confirmUnit(); }  // on purpose only
   else if (e.key === "z" || e.key === "Enter") { e.preventDefault(); if (big) $("big").close(); else showBig(p); }
 });
-$("bigBox").onclick = () => $("big").close();
+$("bigClose").onclick = () => $("big").close();
+for (const [id, dir] of [["bigPrev", "left"], ["bigNext", "right"]])
+  $(id).onclick = () => { step(dir); if (photos[focusIdx]) showBig(photos[focusIdx]); };
 $("bigBox").oncontextmenu = e => { e.preventDefault(); if (photos[focusIdx]) toggleVerdict(photos[focusIdx]); };
 // The photo fitted to the frame; a photo turned a quarter is laid out with the sides swapped, then turned.
 function fitBig() {
