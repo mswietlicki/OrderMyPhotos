@@ -955,7 +955,14 @@ The user, with the CPU at 15% while the 4090 did the previews: "could we do both
   - previews at 75 dB PSNR.
 
   It takes ~4 GB of the B50 next to the RAG models (8.2 → 12.4 GB), and only during the preview step.
-- **Not yet:** the vision stages of the signals phase still share work the older way (helper.Share: the B50 from the front, the 4090 from the back). Moving them onto the queue is the next step. Remote workers are built but untested.
+- **The vision stages too (user: "yes"):** helper.Share is a WorkQueue now, with the same interface for the stages (DINOv2, SigLIP 2, Q-ReAlign, orient's views, depth, subjects).
+  - The stage's own device (the B50) takes photos one at a time. The 4090 (while the gate allows) and `OMP_REMOTE_WORKERS` take chunks.
+  - A photo a worker couldn't do comes back to the B50 instead of failing.
+  - Long stages never give a worker up: the 4090 rejoins after someone's chat.
+- **Other machines:** a remote worker gets the files themselves (`{"images": [base64]}`, about 300 KB a preview), so it needs no access to Mimir's disks. `omp worker` accepts `images` as well as `paths`.
+  - Tested with a worker container that had no mounts: on 150 photos, 80 went to it and 70 to the B50.
+  - A real second machine needs the omp-cuda image (or the package and its models), and a firewall rule on Mimir's side for the reply.
+- **The CPU stays out of the vision stages:** SigLIP 2 on 12 cores did 0.7 images/s (B50 17, 4090 27), and the CPU lane already runs faces and nudity.
 
 ## Open — for the user
 
