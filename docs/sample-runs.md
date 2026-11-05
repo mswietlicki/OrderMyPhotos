@@ -509,3 +509,29 @@ The reviewer: "Yes, then s8", a new set of about 1000 photos once s7 was applied
 - 540 unsorted photos named with those days: 424 from Samsung Gallery and 116 WhatsApp images. That's more messenger photos than any earlier set (s7 had 9).
 - 3 of the unsorted photos are byte copies of photos in the test albums.
 - The session `s8` (own library index) was made in the app and started there.
+
+**The run**, from start to the album review, had no photo skipped, no errors and no retries:
+
+| Phase | Time | What came out |
+|---|---|---|
+| Read the photos | 2.0 min | 972 files, 962 photos |
+| Look at every photo | 10.0 min, in lanes | orientation flagged 55 photos and turned 15; 3 text pages, 3 more turned |
+| Find people and pets | 14 s | 637 faces, 457 of them in 30 cards; 163 animals in 39 cards; the owner from front-camera selfies |
+| Bursts and picks | 17.4 min | after the names (8 named, 2 known without a name, P57): 79 events, 213 bursts, 2 copies. The judge took 888 calls for 133 bursts, leaving 597 kept and 365 archived. P55's rule kept no extra photo: every known person already had one in each event |
+| Describe and sort | 28.9 min | captions for 595 photos in 21 min (8.5 s a call, 4 at a time); the 540 unsorted photos in 73 events became 23 new albums, 25 new folders and 99 photos in thematic folders; 101 WhatsApp images, none joining an album by look |
+
+**The review:** all 40 albums and folders were confirmed as proposed, none renamed. One photo was taken out and sorted again.
+
+**The reviewer's picks against the pipeline's** (data only), compared with s7:
+
+| | s7 | s8 |
+|---|---|---|
+| Verdicts changed | 121 (13%) | 54 (5.6%) |
+| Kept → archived | 45 | 34, of them 18 singles and 8 extra frames kept for being different |
+| Archived → kept | 76 | 20, of them 6 for motion blur and 3 for one face fewer |
+| A burst's pick kept by the reviewer | 192 of 214 (90%) | 201 of 207 (97%) |
+
+- Most changes were in the `review` tier (31 of 54). In the `auto` tier, 20 photos kept were archived (most of them singles) and 3 archived were kept.
+- s8 has fewer people photos than s7, so the people rules (P55, P57) had little to do.
+
+**Applied:** the reviewer chose to delete the archived photos. The Apply phase took 2.6 s. It moved 672 photos, turned 10 and deleted 384, with nothing skipped and no errors, leaving 588 of the 972 files.
