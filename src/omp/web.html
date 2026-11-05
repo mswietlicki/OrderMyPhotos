@@ -68,6 +68,10 @@
   #machine td.n { white-space: normal; }
   .scroll { overflow-x: auto; }
   table.lanes td:nth-child(2) { width: 40%; min-width: 140px; }
+  ol.stagelist { list-style: none; padding: 0; margin: 10px 0 0; font-size: 14px; }
+  ol.stagelist li { padding: 2px 0; }
+  ol.stagelist .mark { display: inline-block; width: 1.4em; color: var(--muted); }
+  ol.stagelist li.done .mark { color: var(--ok); } ol.stagelist li.current .mark { color: var(--accent); }
   table.lanes .bar { margin: 4px 0 0; height: 6px; }
   pre { margin: 0; max-height: 380px; overflow: auto; font: 12px/1.4 ui-monospace, Consolas, monospace; white-space: pre-wrap; word-break: break-word; }
   a { color: var(--accent); }
@@ -195,8 +199,8 @@ function actionHtml(s) {
   if (s.lanes && Object.keys(s.lanes).length) {
     h += lanesHtml(s.lanes);
   } else if (st) {
-    const pct = st.total ? 100 * (st.ok + st.failed) / st.total : 0;
-    h += `<div>Stage <b>${esc(s.stage)}</b>, step <b>${esc(st.name)}</b> · ${pct.toFixed(1)} %</div><div class="bar"><div style="width:${pct.toFixed(1)}%"></div></div>
+    const pct = pctOf(st);
+    h += `<div>Stage <b>${esc(s.stage)}</b>, step <b>${esc(st.name)}</b> · ${num(st.ok)} of ${num(st.total)} photos · ${pct.toFixed(1)} %</div><div class="bar"><div style="width:${pct.toFixed(1)}%"></div></div>
       <div class="kpis"><div class="kpi"><div class="label">Photos done</div><div class="big">${num(st.ok)} / ${num(st.total)}</div></div>
       <div class="kpi"><div class="label">Speed, last minute</div><div class="big">${st.recent_rate == null ? "—" : st.recent_rate + "/s"}</div></div>
       <div class="kpi"><div class="label">Left in this step</div><div class="big">${fmtDur(st.eta)}</div></div>
@@ -213,34 +217,61 @@ function actionHtml(s) {
   } else if (s.state === "paused") {
     h += `<p class="muted">Paused. Start goes on where it stopped.</p>`;
   }
+  if (running && !(s.lanes && Object.keys(s.lanes).length) && (ph.stages || []).length > 1) h += stagesHtml(s, ph);
   h += `<div class="row" style="margin-top:12px"><button class="primary" onclick="act('/api/run/start')" ${running ? "disabled" : ""}>${s.state === "idle" ? "Start" : "Continue"}</button>
         <button onclick="act('/api/run/pause')" ${!(running || s.state === "retrying") ? "disabled" : ""}>Pause</button>
         <span class="muted">Start runs every server phase and stops when you're needed.</span></div>`;
   return h;
 }
 
+function pctOf(st) {  // a step's share of its work done, in percent
+  return st && st.total ? Math.min(100, 100 * (st.ok + st.failed) / st.total) : 0;
+}
+
+function stagesHtml(s, ph) {  // the phase's stages: done (its photos and time), the one running (photos, %), still to come
+  const secs = Object.fromEntries((s.stages_done || []).map(d => [d.stage, d.seconds]));
+  const photosOf = name => {  // the largest step of a stage that's done: its photos
+    const xs = (s.steps || []).filter(x => x.name === name || x.name.startsWith(name + ".") || x.name.startsWith(name + " "));
+    return xs.length ? Math.max(...xs.map(x => x.total || x.ok || 0)) : null;
+  };
+  return `<ol class="stagelist">` + ph.stages.map(name => {
+    if (name in secs) {
+      const n = photosOf(name);
+      return `<li class="done"><span class="mark">✓</span>${esc(name)}<span class="muted">${n != null ? ` · ${num(n)} photos` : ""}`
+        + ` · ${fmtDur(secs[name])} · 100 %</span></li>`;
+    }
+    if (name === s.stage) {
+      const st = s.step;
+      return `<li class="current"><span class="mark">▶</span><b>${esc(name)}</b><span class="muted">`
+        + (st ? ` · ${esc(st.name)} · ${num(st.ok)} of ${num(st.total)} photos · ${pctOf(st).toFixed(0)} %` : " · starting") + `</span></li>`;
+    }
+    return `<li><span class="mark">·</span><span class="muted">${esc(name)}</span></li>`;
+  }).join("") + `</ol>`;
+}
+
 function lanesHtml(lanes) {  // a phase that runs its stages side by side, one lane per device (P51)
   const errors = [];
   const rows = Object.entries(lanes).map(([name, l]) => {
     const st = l.state === "running" ? l.step : null, steps = l.steps || [], fin = l.finished || [];
-    let what = esc(st ? st.name : l.current || "starting"), bar = "", n = "", rate = "", left = "", skipped = "";
+    let what = esc(st ? st.name : l.current || "starting"), bar = "", n = "", pc = "", rate = "", left = "", skipped = "";
     if (l.state === "waiting") what = `${esc(l.current)} <span class="muted">waits for ${esc(l.waits_for)}</span>`;
-    else if (l.state === "done") what = `<span class="muted">done</span>`;
+    else if (l.state === "done") { what = `<span class="muted">done</span>`; pc = "100 %"; }
     else if (l.state === "stopped") what = `<span class="muted">stopped</span>`;
     else if (l.state === "failed") what = `<span class="error">failed: ${esc(l.error || "")}</span>`;
     if (st) {
-      const pct = st.total ? 100 * (st.ok + st.failed) / st.total : 0;
+      const pct = pctOf(st);
       bar = `<div class="bar"><div style="width:${pct.toFixed(1)}%"></div></div>`;
       n = `${num(st.ok)} / ${num(st.total)}`;
+      pc = `${pct.toFixed(0)} %`;
       rate = st.recent_rate == null ? "—" : st.recent_rate + "/s";
       left = fmtDur(st.eta);
       skipped = st.failed ? num(st.failed) : "";
       errors.push(...(st.errors || []));
     }
     return `<tr><td><b>${esc(name)}</b> <span class="muted">${fin.length}/${steps.length}</span></td><td>${what}${bar}</td>
-      <td class="n">${n}</td><td class="n">${rate}</td><td class="n">${left}</td><td class="n">${skipped}</td></tr>`;
+      <td class="n">${n}</td><td class="n">${pc}</td><td class="n">${rate}</td><td class="n">${left}</td><td class="n">${skipped}</td></tr>`;
   });
-  return `<div class="scroll"><table class="lanes"><tr><th>Lane</th><th>Step</th><th class="n">Photos</th><th class="n">Last minute</th>`
+  return `<div class="scroll"><table class="lanes"><tr><th>Lane</th><th>Step</th><th class="n">Photos</th><th class="n">Done</th><th class="n">Last minute</th>`
     + `<th class="n">Left</th><th class="n">Skipped</th></tr>${rows.join("")}</table></div>`
     + errors.map(e => `<div class="error">${esc(e.id.slice(0, 12))}: ${esc(e.error)}</div>`).join("");
 }
@@ -277,9 +308,9 @@ function render(s) {
 }
 
 function renderDetails(s) {
-  $("steps").innerHTML = s.steps.length ? "<tr><th>Step</th><th class='n'>Done</th><th class='n'>Skipped</th><th class='n'>Time</th><th class='n'>/s</th></tr>"
-    + s.steps.slice().reverse().map(x => `<tr><td>${esc(x.name)}${x.lane ? ` <span class='muted'>· ${esc(x.lane)}</span>` : ""}${x.stopped ? " <span class='muted'>(stopped)</span>" : ""}</td><td class="n">${num(x.ok)}</td>`
-    + `<td class="n">${num(x.failed)}</td><td class="n">${fmtDur(x.seconds)}</td><td class="n">${x.seconds ? (x.ok / x.seconds).toFixed(1) : "—"}</td></tr>`).join("")
+  $("steps").innerHTML = s.steps.length ? "<tr><th>Step</th><th class='n'>Photos</th><th class='n'>Done</th><th class='n'>Skipped</th><th class='n'>Time</th><th class='n'>/s</th></tr>"
+    + s.steps.slice().reverse().map(x => `<tr><td>${esc(x.name)}${x.lane ? ` <span class='muted'>· ${esc(x.lane)}</span>` : ""}${x.stopped ? " <span class='muted'>(stopped)</span>" : ""}</td><td class="n">${num(x.ok)}${x.total != null ? " of " + num(x.total) : ""}</td>`
+    + `<td class="n">${x.total ? pctOf(x).toFixed(0) + " %" : "—"}</td><td class="n">${num(x.failed)}</td><td class="n">${fmtDur(x.seconds)}</td><td class="n">${x.seconds ? (x.ok / x.seconds).toFixed(1) : "—"}</td></tr>`).join("")
     : "<tr><td class='muted'>None yet</td></tr>";
   const m = s.system || {}, g = m.gpu4090, load = m.b50_load || {}, rows = [];
   rows.push(["Host CPU", m.host_cpu == null ? "—" : `${m.host_cpu} % of ${m.cores} cores` + (m.load ? ` · load ${m.load.map(x => x.toFixed(1)).join(" ")}` : "")]);

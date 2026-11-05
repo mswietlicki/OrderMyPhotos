@@ -1538,11 +1538,12 @@ def run(cfg: Config, con, run_id: str, place_only: bool = False):
                     held[d[6]] += d[0]
                     where_now |= {r["id"]: d[6] for r in d[0]}
             done_now = []
-            with Progress(con, f"albums.round {rounds}", "s11", total=sure.count(False), commit=False) as prog:
+            with Progress(con, f"albums.round {rounds}", "s11", total=sum(len(d[0]) for k, d in enumerate(decisions) if not sure[k]),
+                          commit=False) as prog:  # photos
                 for k, d in enumerate(decisions):
                     if sure[k]:
                         continue
-                    prog.done(str(k))
+                    prog.done(str(k), len(d[0]))
                     ids = {r["id"] for r in d[0]}
                     seen = Counter(where_now[o] for r in d[0] for o, _ in look.get(r["id"], ()) if o not in ids and o in where_now)
                     evidence = ("Photos that look like these, from any folder, are in: "
@@ -1585,9 +1586,9 @@ def run(cfg: Config, con, run_id: str, place_only: bool = False):
     decisions = []  # [photos, away, banned, messenger, d0, kind, target, name, why, alternatives]
     # Photos from an album the reviewer dismantled: "not an album", so they don't make a new one either (P47)
     from_dismantled = {i for i, t in taken_out.items() if unit_of(t) in dismantled}
-    with Progress(con, "albums.events", "s11", total=len(events), commit=False) as prog:  # progress for the app
+    with Progress(con, "albums.events", "s11", total=sum(len(e) for e in events), commit=False) as prog:  # photos, for the app
         for e_n, e in enumerate(events):
-            prog.done(str(e_n))
+            prog.done(str(e_n), len(e))
             away, banned = is_away(e, base), banned_of(e)
             decisions.append([e, away, banned, False, *decide(e, away, banned, no_album=any(r["id"] in from_dismantled for r in e))])
     # Messenger photos that arrived the same day and look alike are one group, decided like an event (user,

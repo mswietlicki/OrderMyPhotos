@@ -80,9 +80,9 @@ def run(cfg: Config, con, run_id: str):
     for i, d in dec.items():
         if d["gid"] is not None:
             bursts.setdefault(d["gid"], []).append(i)
-    to_judge = sum(1 for m in bursts.values() if sum(1 for i in m if dec[i]["features"].get("judge")) >= 2)
-    # Progress over the floor checks and the bursts to compare, for the app
-    with Progress(con, "judge", vlm.model, total=len(floor_ids) + to_judge) as prog:
+    close = [n for m in bursts.values() if (n := min(MAX_CONTENDERS, sum(1 for i in m if dec[i]["features"].get("judge")))) >= 2]
+    # Progress in photos, for the app: each floor check, and the close frames of each burst compared
+    with Progress(con, "judge", vlm.model, total=len(floor_ids) + sum(close)) as prog:
         # 1. Floor candidates: ask whether each is worth keeping.
         p_keep = {}
         for i in floor_ids:
@@ -108,7 +108,7 @@ def run(cfg: Config, con, run_id: str):
             if len(contenders) < 2:
                 continue
             judged += 1
-            prog.done(str(gid))
+            prog.done(str(gid), len(contenders))
             idx = {c: k for k, c in enumerate(contenders)}
             p = {}
             for a, b in itertools.combinations(contenders, 2):

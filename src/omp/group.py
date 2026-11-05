@@ -16,6 +16,7 @@ import numpy as np
 
 from .config import Config
 from .db import get_data, get_vecs, log_timing
+from .runtime import Progress
 
 VERSION = "group@1"
 EVENT_GAP = 2 * 3600          # a gap this long starts a new event
@@ -211,61 +212,63 @@ def run(cfg: Config, con, run_id: str):
     doc_links = []
     events = segment_events(photos)
     n_bursts = 0
-    for e_idx, ev in enumerate(events):
-        ids = [p["id"] for p in ev]
-        add_group("event", ids, None, {"start": ev[0]["taken_ts"], "end": ev[-1]["taken_ts"], "index": e_idx})
-        n = len(ev)
-        if n < 2:
-            continue
-        emb = np.stack([dino[i] for i in ids])
-        sim = emb @ emb.T
-        margin = np.full((n, n), -np.inf)
-        detail = {}
-        for i in range(n):
-            for j in range(i + 1, n):
-                gap = ev[j]["taken_ts"] - ev[i]["taken_ts"]
-                if gap > WINDOW:
-                    break
-                if ids[i] in pages and ids[j] in pages:
-                    # Pages of one document look alike to an image embedding; only retakes of the same page
-                    # (the same text) are a burst. Different pages make a document set instead (P16).
-                    # Until the OCR has read them, two text pages count as different pages: all kept.
-                    a_text, b_text = pages[ids[i]], pages[ids[j]]
-                    if not a_text or not b_text or text_similarity(a_text, b_text) < SAME_TEXT:
-                        if gap <= DOCSET_GAP:
-                            doc_links.append((ids[i], ids[j]))
-                        continue
-                m = sim[i, j] - threshold(gap)
-                if m < -DIAMETER:
-                    continue
-                stats["pairs"] += 1
-                d = haversine((ev[i]["lat"], ev[i]["lon"]), (ev[j]["lat"], ev[j]["lon"]))
-                if gap > GPS_AFTER_S and d is not None and d > GPS_MAX_M:
-                    stats["gps_rejects"] += 1
-                    continue
-                inl = None
-                if gap > VIEW_AFTER_S:
-                    stats["view_checks"] += 1
-                    inl = view.inliers(ids[i], ids[j])
-                    if inl < VIEW_MIN_INLIERS:
-                        stats["view_rejects"] += 1
-                        continue
-                margin[i, j] = margin[j, i] = m
-                detail[(i, j)] = {"sim": round(float(sim[i, j]), 3), "gap": round(gap, 1),
-                                  "thr": round(threshold(gap), 3), "dist_m": None if d is None else round(d),
-                                  "inliers": inl}
-        for c in cluster(n, margin):
-            if len(c) < 2:
+    with Progress(con, "group", "cpu", total=len(photos), commit=False) as prog:  # photos, for the app
+        for e_idx, ev in enumerate(events):
+            prog.done(str(e_idx), len(ev))
+            ids = [p["id"] for p in ev]
+            add_group("event", ids, None, {"start": ev[0]["taken_ts"], "end": ev[-1]["taken_ts"], "index": e_idx})
+            n = len(ev)
+            if n < 2:
                 continue
-            pairs = [(i, j) for k, i in enumerate(c) for j in c[k + 1:]]
-            cohesion = float(np.mean([margin[i, j] for i, j in pairs]))
-            span = ev[c[-1]]["taken_ts"] - ev[c[0]]["taken_ts"]
-            add_group("burst", [ids[i] for i in c], cohesion, {
-                "event": e_idx, "span_s": round(span, 1),
-                "min_margin": round(float(min(margin[i, j] for i, j in pairs)), 3),
-                "pairs": {f"{ids[i][:8]}-{ids[j][:8]}": detail.get((i, j)) for i, j in pairs},
-            })
-            n_bursts += 1
+            emb = np.stack([dino[i] for i in ids])
+            sim = emb @ emb.T
+            margin = np.full((n, n), -np.inf)
+            detail = {}
+            for i in range(n):
+                for j in range(i + 1, n):
+                    gap = ev[j]["taken_ts"] - ev[i]["taken_ts"]
+                    if gap > WINDOW:
+                        break
+                    if ids[i] in pages and ids[j] in pages:
+                        # Pages of one document look alike to an image embedding; only retakes of the same page
+                        # (the same text) are a burst. Different pages make a document set instead (P16).
+                        # Until the OCR has read them, two text pages count as different pages: all kept.
+                        a_text, b_text = pages[ids[i]], pages[ids[j]]
+                        if not a_text or not b_text or text_similarity(a_text, b_text) < SAME_TEXT:
+                            if gap <= DOCSET_GAP:
+                                doc_links.append((ids[i], ids[j]))
+                            continue
+                    m = sim[i, j] - threshold(gap)
+                    if m < -DIAMETER:
+                        continue
+                    stats["pairs"] += 1
+                    d = haversine((ev[i]["lat"], ev[i]["lon"]), (ev[j]["lat"], ev[j]["lon"]))
+                    if gap > GPS_AFTER_S and d is not None and d > GPS_MAX_M:
+                        stats["gps_rejects"] += 1
+                        continue
+                    inl = None
+                    if gap > VIEW_AFTER_S:
+                        stats["view_checks"] += 1
+                        inl = view.inliers(ids[i], ids[j])
+                        if inl < VIEW_MIN_INLIERS:
+                            stats["view_rejects"] += 1
+                            continue
+                    margin[i, j] = margin[j, i] = m
+                    detail[(i, j)] = {"sim": round(float(sim[i, j]), 3), "gap": round(gap, 1),
+                                      "thr": round(threshold(gap), 3), "dist_m": None if d is None else round(d),
+                                      "inliers": inl}
+            for c in cluster(n, margin):
+                if len(c) < 2:
+                    continue
+                pairs = [(i, j) for k, i in enumerate(c) for j in c[k + 1:]]
+                cohesion = float(np.mean([margin[i, j] for i, j in pairs]))
+                span = ev[c[-1]]["taken_ts"] - ev[c[0]]["taken_ts"]
+                add_group("burst", [ids[i] for i in c], cohesion, {
+                    "event": e_idx, "span_s": round(span, 1),
+                    "min_margin": round(float(min(margin[i, j] for i, j in pairs)), 3),
+                    "pairs": {f"{ids[i][:8]}-{ids[j][:8]}": detail.get((i, j)) for i, j in pairs},
+                })
+                n_bursts += 1
     # Document sets: connected pages, in shooting order.
     parent = {}
     def root(x):

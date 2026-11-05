@@ -15,6 +15,7 @@ from PIL import Image
 
 from .config import Config
 from .db import get_data, get_vecs, log_timing
+from .runtime import Progress
 from .evaluate import latest_labels
 
 VERSION = "rank@1"
@@ -239,115 +240,118 @@ def run(cfg: Config, con, run_id: str):
         "SELECT m.id FROM grp_member m JOIN grp g ON g.gid=m.gid WHERE g.run=? AND g.kind='copy' AND m.ord > 0", (run_id,))}
     exact = exact_copies(con, run_id)  # copy -> the photo it duplicates (P54)
 
-    def decide(id_, gid, verdict, rank, score, reasons, tier, floor=None, protected=None, extra=None):
-        x = feats[id_]
-        f = {k: (round(v, 4) if isinstance(v, float) else v) for k, v in x.items()}
-        f.update(extra or {})
-        tx = texts.get(id_)
-        if tx:
-            f["rotate"] = tx["rotate"] or None
-            if tx["mostly_text"]:
-                f["text_page"] = True
-                if tx["blocks"] is None:
-                    f["ocr_needed"] = True  # tagged until the OCR post-process reads it
-                if policy_of.get(id_) == "cull" and verdict == "keep":
-                    f["place"] = f"{album_of.get(id_)}/{DOCS_FOLDER}"  # an album's text pages go to its subfolder
-        if not (tx and tx["mostly_text"]) and orient.get(id_):  # a turned photo (P36); text pages keep the text stage's
-            f["rotate"] = orient[id_]
-        if id_ in nude:
-            f["nudity"] = nude[id_]  # "full" or "partial": a tag in the plan (P53)
-        if id_ in docset_of:
-            f["docset"] = list(docset_of[id_])
-            reasons = reasons + [f"page {docset_of[id_][0]} of a document set of {docset_of[id_][1]}"]
-        con.execute(
-            "INSERT OR REPLACE INTO decision(id, run, gid, verdict, rank, score, floor, protected, tier, reasons, features)"
-            " VALUES (?,?,?,?,?,?,?,?,?,?,?)",
-            (id_, run_id, gid, verdict, rank, score, json.dumps(floor) if floor else None, protected, tier,
-             json.dumps(reasons), json.dumps(f)))
+    # Progress in photos, for the app: each photo is decided once, in decide()
+    with Progress(con, "rank", "rules", total=len(feats), commit=False) as prog:
+        def decide(id_, gid, verdict, rank, score, reasons, tier, floor=None, protected=None, extra=None):
+            x = feats[id_]
+            f = {k: (round(v, 4) if isinstance(v, float) else v) for k, v in x.items()}
+            f.update(extra or {})
+            tx = texts.get(id_)
+            if tx:
+                f["rotate"] = tx["rotate"] or None
+                if tx["mostly_text"]:
+                    f["text_page"] = True
+                    if tx["blocks"] is None:
+                        f["ocr_needed"] = True  # tagged until the OCR post-process reads it
+                    if policy_of.get(id_) == "cull" and verdict == "keep":
+                        f["place"] = f"{album_of.get(id_)}/{DOCS_FOLDER}"  # an album's text pages go to its subfolder
+            if not (tx and tx["mostly_text"]) and orient.get(id_):  # a turned photo (P36); text pages keep the text stage's
+                f["rotate"] = orient[id_]
+            if id_ in nude:
+                f["nudity"] = nude[id_]  # "full" or "partial": a tag in the plan (P53)
+            if id_ in docset_of:
+                f["docset"] = list(docset_of[id_])
+                reasons = reasons + [f"page {docset_of[id_][0]} of a document set of {docset_of[id_][1]}"]
+            con.execute(
+                "INSERT OR REPLACE INTO decision(id, run, gid, verdict, rank, score, floor, protected, tier, reasons, features)"
+                " VALUES (?,?,?,?,?,?,?,?,?,?,?)",
+                (id_, run_id, gid, verdict, rank, score, json.dumps(floor) if floor else None, protected, tier,
+                 json.dumps(reasons), json.dumps(f)))
+            prog.done(id_)
 
-    def protection(x):
-        if day_count.get(x["day"], 0) <= 1:
-            return "only photo of its day"
-        return None
+        def protection(x):
+            if day_count.get(x["day"], 0) <= 1:
+                return "only photo of its day"
+            return None
 
-    # The extra-frame model: features of every non-best frame, labels where the user gave them.
-    scored, train_X, train_y, train_album = {}, [], [], []
-    for gid, members, cohesion in bursts:
-        sc = burst_scores(members, feats)
-        order = sorted(members, key=lambda i: -sc[i]["score"])
-        scored[gid] = (sc, order)
-        for pos, i in enumerate(order[1:], 1):
-            lab = labels.get(i, {}).get("verdict")
-            if lab:
-                train_X.append(extra_vec(i, order[0], pos, len(members), sc, feats, dino))
-                train_y.append(int(lab == "keep"))
-                train_album.append(album_of.get(i))
-    model = ExtraModel(train_X, train_y, train_album) if len(train_y) >= MIN_TRAIN else None
+        # The extra-frame model: features of every non-best frame, labels where the user gave them.
+        scored, train_X, train_y, train_album = {}, [], [], []
+        for gid, members, cohesion in bursts:
+            sc = burst_scores(members, feats)
+            order = sorted(members, key=lambda i: -sc[i]["score"])
+            scored[gid] = (sc, order)
+            for pos, i in enumerate(order[1:], 1):
+                lab = labels.get(i, {}).get("verdict")
+                if lab:
+                    train_X.append(extra_vec(i, order[0], pos, len(members), sc, feats, dino))
+                    train_y.append(int(lab == "keep"))
+                    train_album.append(album_of.get(i))
+        model = ExtraModel(train_X, train_y, train_album) if len(train_y) >= MIN_TRAIN else None
 
-    for gid, members, cohesion in bursts:
-        sc, order = scored[gid]
-        best = order[0]
-        kept, p_extra = [best], {}
-        for pos, i in enumerate(order[1:], 1):
-            if sc[i]["hard"]:
-                continue
-            p = model.p(extra_vec(i, best, pos, len(members), sc, feats, dino), album_of.get(i)) if model else None
-            if p is not None:
-                p_extra[i] = p
-                if p >= KEEP_P and not any(float(dino[i] @ dino[k]) >= SAME for k in kept[1:]):
+        for gid, members, cohesion in bursts:
+            sc, order = scored[gid]
+            best = order[0]
+            kept, p_extra = [best], {}
+            for pos, i in enumerate(order[1:], 1):
+                if sc[i]["hard"]:
+                    continue
+                p = model.p(extra_vec(i, best, pos, len(members), sc, feats, dino), album_of.get(i)) if model else None
+                if p is not None:
+                    p_extra[i] = p
+                    if p >= KEEP_P and not any(float(dino[i] @ dino[k]) >= SAME for k in kept[1:]):
+                        kept.append(i)
+                    continue
+                similar = any(float(dino[i] @ dino[k]) >= KEEP_DIVERSE for k in kept)
+                worse = sc[i]["rel_sharp"] < KEEP_SOFT and sc[i]["score"] < sc[best]["score"] - KEEP_CLOSE
+                if not similar and not worse:
                     kept.append(i)
-                continue
-            similar = any(float(dino[i] @ dino[k]) >= KEEP_DIVERSE for k in kept)
-            worse = sc[i]["rel_sharp"] < KEEP_SOFT and sc[i]["score"] < sc[best]["score"] - KEEP_CLOSE
-            if not similar and not worse:
-                kept.append(i)
-        close = [i for i in order[1:] if sc[best]["score"] - sc[i]["score"] <= CLOSE and not sc[i]["hard"]]
-        best_floor = floor_check(feats[best], cam_median[feats[best]["camera"]])
-        whole_bad = bool(best_floor) and not protection(feats[best])
-        for rank, i in enumerate(order):
-            x = feats[i]
-            reasons = list(sc[i]["reasons"])
-            floor = floor_check(x, cam_median[x["camera"]])
-            keep = i in kept and not whole_bad
-            if i == best:
-                reasons.insert(0, "best of burst" if not close else f"best of burst, close call with {len(close)} other(s)")
-            elif i in kept and i in p_extra:
-                reasons.insert(0, f"also kept: you'd likely keep it too ({p_extra[i]:.0%})" if p_extra[i] >= MAYBE_P
-                               else f"kept, but maybe redundant ({p_extra[i]:.0%} that you'd keep it)")
-            elif i in kept:
-                reasons.insert(0, "also kept: visibly different and not clearly worse")
-            elif i in p_extra:
-                reasons.insert(0, f"likely redundant ({p_extra[i]:.0%} that you'd keep it)")
-            elif not reasons:
-                reasons.append(f"weaker than the best frame (score {sc[i]['score'] - sc[best]['score']:+.2f})")
-            if whole_bad:
-                reasons.append("whole burst below the quality floor")
-            maybe = i in kept and i in p_extra and p_extra[i] < MAYBE_P
-            tier = "auto" if (not close and cohesion is not None and cohesion > 0.1 and not floor and not maybe) else "review"
-            decide(i, gid, "keep" if keep else "archive", rank, sc[i]["score"], reasons, tier, floor,
-                   protection(x) if not keep else None,
-                   {"judge": i in close or (i == best and bool(close)), "rel_sharp": round(sc[i]["rel_sharp"], 3),
-                    "suspect": suspect(x), "p_extra": round(p_extra[i], 3) if i in p_extra else None, "maybe": maybe})
+            close = [i for i in order[1:] if sc[best]["score"] - sc[i]["score"] <= CLOSE and not sc[i]["hard"]]
+            best_floor = floor_check(feats[best], cam_median[feats[best]["camera"]])
+            whole_bad = bool(best_floor) and not protection(feats[best])
+            for rank, i in enumerate(order):
+                x = feats[i]
+                reasons = list(sc[i]["reasons"])
+                floor = floor_check(x, cam_median[x["camera"]])
+                keep = i in kept and not whole_bad
+                if i == best:
+                    reasons.insert(0, "best of burst" if not close else f"best of burst, close call with {len(close)} other(s)")
+                elif i in kept and i in p_extra:
+                    reasons.insert(0, f"also kept: you'd likely keep it too ({p_extra[i]:.0%})" if p_extra[i] >= MAYBE_P
+                                   else f"kept, but maybe redundant ({p_extra[i]:.0%} that you'd keep it)")
+                elif i in kept:
+                    reasons.insert(0, "also kept: visibly different and not clearly worse")
+                elif i in p_extra:
+                    reasons.insert(0, f"likely redundant ({p_extra[i]:.0%} that you'd keep it)")
+                elif not reasons:
+                    reasons.append(f"weaker than the best frame (score {sc[i]['score'] - sc[best]['score']:+.2f})")
+                if whole_bad:
+                    reasons.append("whole burst below the quality floor")
+                maybe = i in kept and i in p_extra and p_extra[i] < MAYBE_P
+                tier = "auto" if (not close and cohesion is not None and cohesion > 0.1 and not floor and not maybe) else "review"
+                decide(i, gid, "keep" if keep else "archive", rank, sc[i]["score"], reasons, tier, floor,
+                       protection(x) if not keep else None,
+                       {"judge": i in close or (i == best and bool(close)), "rel_sharp": round(sc[i]["rel_sharp"], 3),
+                        "suspect": suspect(x), "p_extra": round(p_extra[i], 3) if i in p_extra else None, "maybe": maybe})
 
-    for id_, x in feats.items():
-        if id_ in in_burst:
-            continue
-        if id_ in exact:  # the same pixels saved again: archived, never shown for review (P54)
-            decide(id_, None, "archive", 0, 0.0, ["an exact copy of a photo that is kept"], "auto",
-                   extra={"exact_copy": True, "copy_of": exact[id_]})
-            continue
-        if id_ in copies:
-            decide(id_, None, "archive", 0, 0.0, ["a copy of the same photo in another folder"], "review")
-            continue
-        floor = floor_check(x, cam_median[x["camera"]])
-        prot = protection(x)
-        hint = suspect(x)
-        if floor and not prot:
-            decide(id_, None, "archive", 0, 0.0, ["bad on its own"] + floor, "review", floor, None,
-                   {"floor_vlm": True, "suspect": hint})
-        else:
-            decide(id_, None, "keep", 0, 0.0, ["single"] + (floor or []), "auto" if not (floor or hint) else "review",
-                   floor or None, prot, {"floor_vlm": bool(floor), "suspect": hint})
+        for id_, x in feats.items():
+            if id_ in in_burst:
+                continue
+            if id_ in exact:  # the same pixels saved again: archived, never shown for review (P54)
+                decide(id_, None, "archive", 0, 0.0, ["an exact copy of a photo that is kept"], "auto",
+                       extra={"exact_copy": True, "copy_of": exact[id_]})
+                continue
+            if id_ in copies:
+                decide(id_, None, "archive", 0, 0.0, ["a copy of the same photo in another folder"], "review")
+                continue
+            floor = floor_check(x, cam_median[x["camera"]])
+            prot = protection(x)
+            hint = suspect(x)
+            if floor and not prot:
+                decide(id_, None, "archive", 0, 0.0, ["bad on its own"] + floor, "review", floor, None,
+                       {"floor_vlm": True, "suspect": hint})
+            else:
+                decide(id_, None, "keep", 0, 0.0, ["single"] + (floor or []), "auto" if not (floor or hint) else "review",
+                       floor or None, prot, {"floor_vlm": bool(floor), "suspect": hint})
     con.commit()
     dt = time.perf_counter() - t0
     log_timing(con, "rank", run_id, len(feats), dt, "cpu")

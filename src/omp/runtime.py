@@ -209,8 +209,9 @@ class Progress:
         else:
             self.done(id_)
 
-    def done(self, id_: str):
-        self.ok += 1
+    def done(self, id_: str, n: int = 1):
+        """One item done; `n`: the photos it stands for (a burst, an event), so every step counts photos."""
+        self.ok += n
         self.streak = 0
         self.tick()
 

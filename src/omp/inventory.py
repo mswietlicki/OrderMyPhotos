@@ -252,7 +252,7 @@ def run(cfg: Config, con, run_id: str):
             first[r["id"]] = (r["path"], r["mtime"])
     items = list(first.items())
     batches = [items[i : i + 200] for i in range(0, len(items), 200)]
-    with Progress(con, "inventory.meta", "exiftool", total=len(batches)) as prog, \
+    with Progress(con, "inventory.meta", "exiftool", total=len(items)) as prog, \
             worker_pool(max(1, cfg.workers // 2), threads=True) as pool:
         for batch, metas in zip(batches, pool.map(run_exiftool, [[cfg.root / p for _, (p, _) in b] for b in batches])):
             by_path = {Path(m["SourceFile"]).relative_to(cfg.root).as_posix(): m for m in metas}
@@ -260,7 +260,7 @@ def run(cfg: Config, con, run_id: str):
                 row = photo_row(by_path.get(rel, {}), rel, mtime, tz)
                 cols = ",".join(row)
                 con.execute(f"INSERT OR REPLACE INTO photo(id,{cols}) VALUES (?{',?' * len(row)})", (id_, *row.values()))
-            prog.done(batch[0][0])
+            prog.done(batch[0][0], len(batch))  # photos
 
     # v1 traces: burst records and album context.
     for full, rel in v1:

@@ -30,7 +30,22 @@ def lock(cfg: Config):
     return f
 
 
+# Quick stages without one loop to follow: a step over all photos, done when the stage is, so the app shows
+# every step in photos and percent. The others count their own photos as they go.
+WHOLE = {"people", "place", "plan"}
+
+
 def run_stage(stage, cfg, con, args):
+    if stage in WHOLE:
+        n = con.execute("SELECT count(*) FROM photo").fetchone()[0]
+        with runtime.Progress(con, stage, "cpu", total=n, commit=False) as prog:
+            _run_stage(stage, cfg, con, args)
+            prog.done(stage, n)
+    else:
+        _run_stage(stage, cfg, con, args)
+
+
+def _run_stage(stage, cfg, con, args):
     if stage == "inventory":
         from . import inventory
         inventory.run(cfg, con, args.run)

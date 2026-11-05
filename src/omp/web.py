@@ -313,6 +313,7 @@ def status() -> dict:
                     "apply": {"possible": can_apply, "why_not": why_not}},
         "phase": runner.phase["key"] if cur < len(PHASES) else None, "phases": phases, "rounds": c["rounds"],
         "wanted": c["wanted"], "stage": st.get("stage") if alive else None, "step": step, "lanes": lanes,
+        "stages_done": st.get("done", []) if alive and st.get("run") == s.run_id else [],  # [{stage, seconds}]
         "steps": st.get("steps", []) if st.get("run") == s.run_id else [], "started": c.get("started"), "pid": c.get("pid"),
         "retries": c["retries"], "next_try": c["next_try"] if out["state"] == "retrying" else None,
         "last_exit": c["last_exit"], "error": st.get("error") if st.get("state") == "failed" else None,
