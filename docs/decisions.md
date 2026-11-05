@@ -853,6 +853,18 @@ The user asked for a full analysis of how their picks differ from the pipeline's
   - Both looked promising on the 14–17 bursts where the user passed over the pick, but they move more frames the wrong way across all bursts.
   - The smile term stays. Without it the verdicts changed by one photo.
 
+## P57 — A card left without a name is someone the user knows; strangers and false faces are hidden (2026-11-05, user)
+
+The user, naming s8: "Sometimes I do not remember a person's name but I still want them to be saved. So if I do not check 'I don't know them' but also do not give a name, still treat them as a known person." And: "Hide faces I marked as unknown, or not a person."
+
+- **Known without a name:** once the People page has been used (any label from it in `name_label`), a card with no name that isn't marked "I don't know them" or "Not a person" is a person the user knows.
+  - The page saves nothing for such a card, so the `people` stage reads it from the missing label and keeps `known` in the person's `data`. Before the page is used, nobody is known.
+  - It counts like a named person in P55's rule: each event keeps the best photo of them ("the only photos of someone you know in this event").
+  - Captions, tags and album names need a name, so nothing changes there. Neither does the owner: the owner's other cards are still found by face, because unnamed cards carry no label.
+  - On s7 it changes nothing, since every card there was named or marked: 7 named (the owner among them) and 5 strangers.
+  - The page counts the cards "known without a name", so a stranger left unmarked shows up there.
+- **Hidden:** cards marked "I don't know them" ("Not an animal of ours" for animals) or "Not a person" leave the All and Unnamed views. They go to a Hidden tab that shows their count, where the mark can be undone.
+
 ## Open — for the user
 
 1. ~~**Language** of titles, descriptions and tags.~~ Resolved by P42: both languages; S11 reads English only.

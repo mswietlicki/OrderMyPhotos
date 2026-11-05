@@ -308,10 +308,16 @@ def run(cfg: Config, con, run_id: str):
         owners = {c for c, m in clusters.items() if c == core or c not in named
                   and float(np.median((vecs(m) @ ref.T).max(axis=1))) >= OWNER_SAME}
 
+    # P57: once the user has been through the People page, a card they left without a name, and didn't mark
+    # "I don't know them", is still someone they know: "Sometimes I do not remember a person's name but I still want
+    # them to be saved". Only "?" makes a stranger. The page saves nothing for such a card, so it's read here: a
+    # cluster with no label after the review is known.
+    reviewed = con.execute("SELECT 1 FROM name_label WHERE source LIKE 'people-page:%' LIMIT 1").fetchone() is not None
+
     # Store: one person per cluster, the faces pointing at it.
     con.execute("DELETE FROM person WHERE run=?", (run_id,))
     con.execute("UPDATE face SET person=NULL")
-    n_named = 0
+    n_named = n_known = 0
     for c, m in sorted(clusters.items(), key=lambda kv: -len(kv[1])):
         name = names.get(c, (None, 0))[0]
         sh = short.get(name, Counter()).most_common(1)[0][0] if name in short else (name.split()[0] if name else None)
@@ -322,9 +328,11 @@ def run(cfg: Config, con, run_id: str):
             name = lab["name"] or (lab["who"] if not lab["who"].startswith(("@", "?")) else None)
             sh = lab["nick"] or (name.split()[0] if name else None)
         n_named += bool(name or sh)
+        known = bool(name or sh) or c in owners or (not named[c]["who"].startswith("?") if c in named else reviewed)
+        n_known += known and not (name or sh) and c not in owners
         cur = con.execute("INSERT INTO person(run, name, short, source, owner, faces, photos, data) VALUES (?,?,?,?,?,?,?,?)",
                           (run_id, name, sh, source.get(c), int(c in owners), len(m),
-                           len({r["id"] for r in m}), json.dumps({"cluster": c})))
+                           len({r["id"] for r in m}), json.dumps({"cluster": c, "known": known})))
         con.executemany("UPDATE face SET person=? WHERE fid=?", [(cur.lastrowid, r["fid"]) for r in m])
     con.commit()
     n_pets = pets(cfg, con, run_id)
@@ -333,7 +341,7 @@ def run(cfg: Config, con, run_id: str):
     dt = time.perf_counter() - t0
     log_timing(con, "people", run_id, len(rows), dt, "cpu + 4090 qwen3.8-27b")
     con.commit()
-    print(f"people: {len(rows)} faces, {len(clusters)} clusters of {MIN_CLUSTER}+, {n_named} named"
+    print(f"people: {len(rows)} faces, {len(clusters)} clusters of {MIN_CLUSTER}+, {n_named} named, {n_known} known without a name"
           f" ({sum(bool(lab['name'] or lab['nick'] or not lab['who'].startswith(('@', '?'))) for lab in named.values())} by the user, {sum(1 for s in source.values() if s == 'people-folder')} from People folders,"
           f" {sum(1 for s in source.values() if s == 'album-names')} from album names); owner {how}"
           f"{f' ({len(owners)} clusters)' if owners else ''};"

@@ -159,7 +159,8 @@ details { margin-top: 14px; } summary { cursor: pointer; color: var(--muted); ma
 titles use the names ("Jan z Filemonem"). One person split into several cards: tick them and press Merge (or type their Ids
 above); the same full name on two cards merges them too. Click a face that isn't them to take it out. Mark yourself with
 "This is me": you're never named in album names. "I don't know them" keeps a stranger out of the names; they still count
-as someone else when photos are sorted.</p>
+as someone else when photos are sorted. A card you leave without a name is still someone you know: their photos are kept
+like a named person's.</p>
 <datalist id="known"></datalist>
 <div class="grid" id="people"></div>
 <h2>Animals <small id="petsub"></small></h2>

@@ -303,12 +303,14 @@ class ExtraModel:
 
 
 def keep_people(con, run_id: str, feats: dict, event_of: dict) -> list[str]:
-    """Every named person keeps at least one photo of each event (P55). The user, on a burst the floor had archived:
-    "a keep because this is the only photos of her in this outfit". When all of a person's photos in an event would
-    go to the archive, the best of them (a burst's pick first, then by quality and aesthetics) is kept and protected,
-    so the judge's floor check doesn't archive it either."""
+    """Every person the user knows keeps at least one photo of each event (P55). The user, on a burst the floor had
+    archived: "a keep because this is the only photos of her in this outfit". When all of a person's photos in an
+    event would go to the archive, the best of them (a burst's pick first, then by quality and aesthetics) is kept and
+    protected, so the judge's floor check doesn't archive it either. Known: named, the owner, or a card the user left
+    without a name and didn't mark "I don't know them" (P57)."""
     try:
-        names = {r[0]: r[1] or "the owner" for r in con.execute("SELECT pid, short FROM person WHERE short IS NOT NULL OR owner=1")}
+        names = {r[0]: r[1] or ("the owner" if r[2] else "someone you know") for r in con.execute(
+            "SELECT pid, short, owner, data FROM person") if r[1] or r[2] or json.loads(r[3] or "{}").get("known")}
     except Exception:  # noqa: BLE001 - no people stage yet
         return []
     photos = {}

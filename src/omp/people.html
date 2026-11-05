@@ -94,7 +94,7 @@
 <body>
 <header>
   <b>People and pets</b>
-  <div class="tabs" id="tabs"><button data-f="all" class="on">All</button><button data-f="todo">Unnamed</button></div>
+  <div class="tabs" id="tabs"><button data-f="all" class="on">All</button><button data-f="todo">Unnamed</button><button data-f="hidden" id="hiddenTab">Hidden</button></div>
   <span class="muted" id="sub"></span>
   <span style="flex:1"></span>
   <span id="saved" class="muted"></span>
@@ -111,7 +111,8 @@
     them join them on the next run; name one here only if it's a pet seen in a single photo.</p><div class="grid" id="once"></div></details>
   <div class="help">Give each person a full name and a nickname: album names use the nickname, or the first name, and photo titles use the
     names. One person split over several cards: select them and Merge; the same full name on two cards merges them too. "This is me" marks you;
-    "I don't know them" keeps a stranger out of the names.<br>
+    "I don't know them" keeps a stranger out of the names. A card you leave without a name is still someone you know: their photos
+    are kept like a named person's. Cards marked "I don't know them" or "Not a person" go to Hidden, where you can undo it.<br>
     Click a face to see its photo · right-click a face that isn't them to take it out · <kbd>←</kbd><kbd>→</kbd><kbd>↑</kbd><kbd>↓</kbd> select a card ·
     <kbd>Enter</kbd> type its name · <kbd>Esc</kbd> back · <kbd>Z</kbd> show its faces large · <kbd>X</kbd> select to merge · every change is saved at once</div>
 </main>
@@ -181,7 +182,10 @@ function status() {
   const roots = cards.filter(c => root(c) === c);
   const named = roots.filter(c => !c.pet && who(st(c))).length, pets = roots.filter(c => c.pet && who(st(c))).length;
   const unknown = roots.filter(c => !c.pet && !who(st(c)) && st(c).unknown).length;
-  $("sub").textContent = `${roots.filter(c => !c.pet).length} people, ${named} named` + (unknown ? `, ${unknown} not known` : "")
+  // P57: a card with no name that isn't marked "I don't know them" (or "Not a person") is someone you know
+  const nameless = roots.filter(c => !c.pet && !who(st(c)) && !st(c).me && !st(c).unknown && !st(c).ignore).length;
+  $("sub").textContent = `${roots.filter(c => !c.pet).length} people, ${named} named` + (nameless ? `, ${nameless} known without a name` : "")
+    + (unknown ? `, ${unknown} not known` : "")
     + (DATA.unclustered ? ` · ${DATA.unclustered} more faces (small, unsure, or seen only once or twice) aren't shown` : "");
   $("petsub").textContent = DATA.pets.length ? `${roots.filter(c => c.pet).length} found, ${pets} named` : "none found";
   const seen = {};
@@ -197,8 +201,13 @@ function status() {
     el.querySelector(".pick").checked = selected.has(c.id);
     const others = w ? seen[w].filter(i => i !== c.id) : [];
     el.querySelector(".same").textContent = others.length ? `the same person as ${others.join(", ")}` : "";
-    el.hidden = filter === "todo" && (!!w || !!s.ignore || !!s.unknown);
+    // marked "I don't know them" / "Not an animal of ours" or "Not a person": out of the way, under Hidden, where
+    // the mark can still be undone
+    const off = !!s.ignore || (!w && !!s.unknown);
+    el.hidden = filter === "hidden" ? !off : off || (filter === "todo" && !!w);
   }
+  const hiddenN = roots.filter(c => st(c).ignore || (!who(st(c)) && st(c).unknown)).length;
+  $("hiddenTab").textContent = hiddenN ? `Hidden (${hiddenN})` : "Hidden";
   const n = selected.size, kinds = new Set([...selected].map(i => byId[i].pet));
   $("bar").hidden = !n;
   $("barsum").textContent = kinds.size > 1 ? "people and animals can't be merged together" : `${n} selected: ${[...selected].join(", ")}`;
