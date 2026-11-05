@@ -101,81 +101,54 @@ def gate(base: str) -> Gate:
 
 
 class Share:
-    """A stage's photos from both ends: iterate it for (id, None) to do here, or (id, result) done on the 4090."""
+    """A stage's photos as a work queue (workqueue.py, P60). Iterate it for (id, None): a photo to do here, on the
+    stage's own device (the B50), one at a time; or (id, result): one a worker did. The workers take chunks of
+    CHUNK as fast as each can: the 4090 while it may be borrowed (the gate), and OMP_REMOTE_WORKERS, which get the
+    previews' bytes. A photo a worker couldn't do comes back to be done here. Before P60 the B50 took from the
+    front and the 4090 from the back of a list (P49)."""
 
     def __init__(self, cfg, engine: str, ids: list[str]):
-        self.cfg, self.ids = cfg, list(ids)
-        self.lo, self.hi, self.back, self.busy = 0, len(self.ids), [], 0
-        self.lock, self.results, self.closed = threading.Lock(), queue.Queue(), False
-        self.url = f"{cfg.llm}/upstream/{WORKER}/v1/{engine}"
-        self.remote, self.seconds = 0, 0.0
-        if ENABLED and len(self.ids) > 2 * CHUNK:
-            threading.Thread(target=self._helper, daemon=True).start()
+        from . import workqueue
+
+        self.q = workqueue.WorkQueue(list(ids))
+        path_of = lambda i: str(cfg.preview(i))  # noqa: E731
+        self.workers = []
+        if ENABLED and len(ids) > 2 * CHUNK:
+            g = gate(cfg.llm)
+            self.workers.append(workqueue.HttpWorker(self.q, "4090", f"{cfg.llm}/upstream/{WORKER}/v1/{engine}", path_of,
+                                                     CHUNK, 1, allowed=g.allowed, backoff=g.backoff, give_up=None))
+        for name, url in workqueue.remotes():
+            self.workers.append(workqueue.HttpWorker(self.q, name, f"{url}/v1/{engine}", path_of, CHUNK, 1,
+                                                     send="bytes", give_up=None))
+
+    @property
+    def remote(self) -> int:
+        return sum(self.q.done_by.values())
 
     def note(self) -> str:
-        return f" + 4090 ({self.remote} photos)" if self.remote else ""
+        return "".join(f" + {k} ({v} photos)" for k, v in self.q.done_by.items())
 
     def __iter__(self):
         try:
             while True:
-                while not self.results.empty():
-                    yield self.results.get_nowait()
-                with self.lock:
-                    if self.back:  # a chunk the 4090 gave back
-                        i = self.back.pop()
-                    elif self.lo < self.hi:
-                        i, self.lo = self.ids[self.lo], self.lo + 1
-                    else:
-                        i = None
-                    busy = self.busy
-                if i is not None:
-                    yield i, None
-                elif busy:  # the last chunk is still on the 4090
+                try:
+                    name, i, x = self.q.out.get_nowait()
+                    self.q.note(name)
+                    yield i, x
+                    continue
+                except queue.Empty:
+                    pass
+                got = self.q.take(1, cpu=True)
+                if got:
+                    yield got[0], None
+                elif self.q.busy:  # the last chunks are still with a worker
                     try:
-                        yield self.results.get(timeout=1)
+                        name, i, x = self.q.out.get(timeout=1)
+                        self.q.note(name)
+                        yield i, x
                     except queue.Empty:
                         pass
                 else:
                     break
-            while not self.results.empty():
-                yield self.results.get_nowait()
         finally:
-            self.closed = True
-
-    def _helper(self):
-        gate_, client = gate(self.cfg.llm), httpx.Client(timeout=900)
-        while not self.closed:
-            with self.lock:
-                if self.hi - self.lo <= CHUNK:  # the rest is the B50's
-                    return
-            if not gate_.allowed():
-                self._sleep(30)
-                continue
-            with self.lock:
-                n = min(CHUNK, self.hi - self.lo - CHUNK)
-                if n <= 0:
-                    return
-                batch, self.hi, self.busy = self.ids[self.hi - n:self.hi], self.hi - n, self.busy + 1
-            try:
-                t0 = time.perf_counter()
-                r = client.post(self.url, json={"paths": [str(self.cfg.preview(i)) for i in batch]})
-                r.raise_for_status()
-                out = r.json()["results"]
-                for i, x in zip(batch, out, strict=True):
-                    self.results.put((i, x))
-                self.remote += len(batch)
-                self.seconds += time.perf_counter() - t0
-            except (httpx.HTTPError, ValueError, KeyError) as exc:
-                with self.lock:
-                    self.back.extend(batch)  # the B50 does them
-                print(f"4090 worker: {type(exc).__name__} {str(exc)[:120]}; the B50 goes on alone for now")
-                gate_.backoff()
-                self._sleep(60)
-            finally:
-                with self.lock:
-                    self.busy -= 1
-
-    def _sleep(self, seconds):
-        end = time.monotonic() + seconds
-        while time.monotonic() < end and not self.closed:
-            time.sleep(1)
+            self.q.stop = True

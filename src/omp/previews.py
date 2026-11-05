@@ -178,7 +178,7 @@ def run(cfg: Config, con, run_id: str, force=False):
         if local.url:
             workers.append(workqueue.HttpWorker(q, "b50", f"{local.url}/v1/previews", path_of, CHUNK, IN_FLIGHT))
     for name, url in workqueue.remotes():
-        workers.append(workqueue.HttpWorker(q, name, f"{url}/v1/previews", path_of, CHUNK, IN_FLIGHT))
+        workers.append(workqueue.HttpWorker(q, name, f"{url}/v1/previews", path_of, CHUNK, IN_FLIGHT, send="bytes"))
     # The CPU's slots. With GPU workers, few: they decode on the same cores, and a photo on the CPU path takes ~2.9 s of
     # CPU against ~0.3 s for a GPU worker's decoding. With 14 slots the full run went from 19 to 13 photos/s, the 4090
     # starved of decoding (P60)

@@ -12,10 +12,15 @@ future we could even use different machines in the local network"). P60.
   - another machine: just a URL. It must read the originals at the same paths, and only returns results.
 - **An item a GPU worker can't do** (`{"error"}`) goes to the CPU (`cpu_only`): the CPU path is the reference
   and marks what it must (a truncated JPEG, say).
-- **A worker that keeps failing** gives its chunks back, and stops after GIVE_UP seconds; the others go on.
-  Results come out of `out`, for the stage's thread to write.
+- **A worker that keeps failing** gives its chunks back. It stops after `give_up` seconds for a short step (the
+  previews); for the long vision stages it waits for as long as it takes (the 4090 back from someone's chat).
+- **Another machine** doesn't share Mimir's disks: it gets the files themselves (`send="bytes"`, base64), which is
+  cheap for previews (~300 KB a photo).
+- Results come out of `out`, for the stage's thread to write. `busy` counts the items workers have in hand, so a
+  consumer knows whether more results will come.
 """
 
+import base64
 import os
 import queue
 import subprocess
@@ -32,23 +37,36 @@ class WorkQueue:
         self.items, self.cpu_only = deque(items), deque()
         self.lock, self.out, self.stop = threading.Lock(), queue.Queue(), False
         self.done_by: dict[str, int] = {}
+        self.busy = 0  # items a worker has taken and not answered yet
 
     def take(self, n: int, cpu: bool = False) -> list:
+        """The next `n` items; `cpu`: for the stage's own device, which gets what the workers couldn't do first."""
         with self.lock:
             chunk = []
             while cpu and self.cpu_only and len(chunk) < n:
                 chunk.append(self.cpu_only.popleft())
             while self.items and len(chunk) < n:
                 chunk.append(self.items.popleft())
+            if not cpu:
+                self.busy += len(chunk)
             return chunk
 
     def give_back(self, chunk: list):
         with self.lock:
             self.items.extendleft(reversed(chunk))
+            self.busy -= len(chunk)
 
-    def to_cpu(self, item):
+    def to_cpu(self, item, taken: bool = False):
+        """An item for the stage's own device; `taken`: one a worker had in hand."""
         with self.lock:
             self.cpu_only.append(item)
+            self.busy -= taken
+
+    def answer(self, name: str, item, result):
+        """A worker's result for an item it had in hand."""
+        with self.lock:
+            self.busy -= 1
+        self.out.put((name, item, result))
 
     def note(self, name: str, n: int = 1):
         with self.lock:
@@ -60,9 +78,10 @@ class HttpWorker:
     `allowed()` says so. `path_of(item)` is what's sent; each result goes out as (name, item, result)."""
 
     def __init__(self, q: WorkQueue, name: str, url: str, path_of, chunk: int = 24, slots: int = 3, allowed=None,
-                 backoff=None):
+                 backoff=None, send: str = "paths", give_up: float | None = GIVE_UP):
         self.q, self.name, self.url, self.path_of, self.chunk = q, name, url, path_of, chunk
         self.allowed, self.backoff = allowed or (lambda: True), backoff or (lambda: None)
+        self.send, self.give_up = send, give_up
         self.unavailable, self.retired = 0.0, False
         self.threads = [threading.Thread(target=self._run, daemon=True, name=f"{name}-{k}") for k in range(slots)]
         for t in self.threads:
@@ -84,12 +103,16 @@ class HttpWorker:
                 time.sleep(0.5)  # nothing left, or given back later by a failing worker
                 continue
             try:
-                r = client.post(self.url, json={"paths": [self.path_of(it) for it in chunk]})
+                if self.send == "bytes":  # another machine: the files themselves
+                    body = {"images": [base64.b64encode(open(self.path_of(it), "rb").read()).decode() for it in chunk]}
+                else:
+                    body = {"paths": [self.path_of(it) for it in chunk]}
+                r = client.post(self.url, json=body)
                 r.raise_for_status()
                 results = r.json()["results"]
                 if len(results) != len(chunk):
                     raise ValueError(f"{len(results)} results for {len(chunk)} photos")
-            except (httpx.HTTPError, ValueError, KeyError) as exc:
+            except (httpx.HTTPError, ValueError, KeyError, OSError) as exc:
                 self.q.give_back(chunk)
                 print(f"workqueue: {self.name} {type(exc).__name__} {str(exc)[:120]}; trying again")
                 self.backoff()
@@ -98,14 +121,14 @@ class HttpWorker:
             self.unavailable = 0.0
             for it, x in zip(chunk, results):
                 if "error" in x:
-                    self.q.to_cpu(it)
+                    self.q.to_cpu(it, taken=True)
                 else:
-                    self.q.out.put((self.name, it, x))
+                    self.q.answer(self.name, it, x)
 
     def _wait(self, why: str):
-        if self.unavailable >= GIVE_UP and not self.retired:
+        if self.give_up is not None and self.unavailable >= self.give_up and not self.retired:
             self.retired = True
-            print(f"workqueue: {self.name} unavailable for {GIVE_UP} s ({why}); the others go on without it")
+            print(f"workqueue: {self.name} unavailable for {self.give_up:.0f} s ({why}); the others go on without it")
             return
         end = time.monotonic() + 15
         while time.monotonic() < end and not self.q.stop:
@@ -160,8 +183,8 @@ class Local:
 
 
 def remotes() -> list[tuple[str, str]]:
-    """OMP_REMOTE_WORKERS="name=http://host:port,...": `omp worker`s on other machines (they must read the
-    originals at the same paths)."""
+    """OMP_REMOTE_WORKERS="name=http://host:port,...": `omp worker`s on other machines. They get the files in the
+    request (send="bytes"), so they need no access to Mimir's disks."""
     out = []
     for part in os.environ.get("OMP_REMOTE_WORKERS", "").split(","):
         if "=" in part:

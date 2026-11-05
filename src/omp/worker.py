@@ -4,6 +4,8 @@ and the depth service's model (P52): the same engines as on the B50, plus the pr
 works the chat model is evicted, and the chat model comes back on its next request.
 
 POST /v1/<engine>  {"paths": [preview, ...]}  ->  {"results": [result or {"error"}, ...], "seconds", "device"}
+                   {"images": [base64, ...]}: the files themselves, from a machine that doesn't share our disks
+                   (workqueue.py, P60)
 GET  /health
 
 It reads the previews from the sessions' cache, mounted read-only at the same path as in the app, and only
@@ -32,9 +34,16 @@ def health():
 
 
 @app.post("/v1/{name}")
-def run(name: str, paths: list[str] = Body(..., embed=True)):
+def run(name: str, paths: list[str] | None = Body(None), images: list[str] | None = Body(None)):
     if name not in ENGINES:
         raise HTTPException(404, f"no engine {name!r}")
+    if images is not None:  # the engines open their input with Image.open, which takes a file object too
+        import base64
+        import io
+
+        paths = [io.BytesIO(base64.b64decode(b)) for b in images]
+    if paths is None:
+        raise HTTPException(422, "paths or images")
     with locks[name]:
         if name not in loaded:
             loaded[name] = ENGINES[name](vision.device())
