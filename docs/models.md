@@ -89,6 +89,33 @@ What the literature and the culling tools say about choosing the best of a serie
 - **Face angle and face size:** no effect.
 - Pose measures from the keypoints didn't predict the picks (sample-runs.md, s7 analysis).
 
+## Bursts, events and albums: what the research says (2026-11-05)
+
+How others group a personal library into bursts, events and albums, and how that compares with `group.py` and S11. Today: bursts are DINOv2 similarity with a threshold that rises with the time gap (0.70 to 0.90 within an hour), with GPS and a viewpoint check (SIFT) for longer gaps. A group event breaks at a fixed 2 h gap. S11 builds sessions and events from time, place and people, and away-from-the-rolling-base trips.
+
+- **Adaptive time gaps** ([PhotoTOC](https://typeset.io/pdf/phototoc-automatic-clustering-for-browsing-personal-274halnisp.pdf), Platt et al., Microsoft Research):
+  - A gap is an event boundary when it's much longer than the gaps around it, compared on log time. Its [patent](https://image-ppubs.uspto.gov/dirsearch-public/print/downloadPdf/7076503) gives the rule: log X = log 17 + the mean log gap of the 20 gaps around it.
+  - A fixed threshold fails because a wedding's events are minutes apart and a holiday's hours apart.
+  - People also differ in how fine their events are: a several-day trip as one event or one per day ([adaptive event clustering](https://koreascience.or.kr/article/CFKO200625752346270.page)). That's what the reviewer's albums show, and what P37–P41 learnt.
+  - **A candidate for `group`'s fixed 2 h event gap**, to measure against the s7 albums.
+- **Sub-events** ([Stopwatch HMM](https://data.vision.ee.ethz.ch/cvl/datasets_extra/pec/), Bossard et al., ICCV 2013): an event is a sequence of sub-events, with transitions that depend on the time gap. The PEC dataset has 807 collections in 14 kinds of social event, and recognising the kind is still hard (56%). It's the reviewer's rule (P41) that an event with other people, at another place, inside a long album is an album of its own.
+- **Place:**
+  - [PhotoCompas](https://bibbase.org/network/publication/naaman-song-paepcke-garciamolina-automaticorganizationfordigitalphotographswithgeographiccoordinates) (Naaman et al., JCDL 2004) groups by time and GPS into a hierarchy of place names (reverse geocoding).
+  - Google and Apple find trips as [time away from home](https://5minutephotos.substack.com/p/trips-with-the-new-apple-photos). Apple's misfires on former homes, which is why the reviewer dropped "home" for a rolling base (P38).
+  - Open-source photo apps use DBSCAN on GPS (5 km), falling back to months.
+- **Near-duplicates are a matter of degree:**
+  - [California-ND](https://www.scitepress.org/Papers/2014/47377/) (Vonikakis et al., 2014) is a personal travel collection where 10 people marked near-duplicates, kept as a probability rather than yes or no; people disagree on them.
+  - Patents keep "series" (several shots of one scene) apart from duplicates.
+  - The usual design is a cheap hash pass for copies, then DINOv2 embeddings with a threshold for bursts. DINOv2 tells a burst from different photos better than CLIP. That is `group`'s: copies (P54), then bursts.
+  - DINOHash (2025, DINOv2 tuned for perceptual hashing) could replace pHash + DINOv2 for the copy check if needed.
+- **Albums as summaries:**
+  - an album is chosen for quality, diversity and coverage of people, events and places ([Sinha et al., WWW 2011](https://archives.iw3c2.org/www2011/proceedings/companion/p127.pdf));
+  - what matters depends on the kind of event ([Wang et al., CVPR 2016](https://openaccess.thecvf.com/content_cvpr_2016/html/Wang_Event-Specific_Image_Importance_CVPR_2016_paper.html));
+  - one patent picks a photo per group of people.
+  - So: every person at every event (P55), and a few per sub-event rather than many of one moment.
+- **Memories with LLMs:** recent work answers questions over a personal archive with an LLM that retrieves by time and place: [Memory-QA](https://aclanthology.org/2025.emnlp-main.1234.pdf) (EMNLP 2025), [OmniQuery](https://dl.acm.org/doi/10.1145/3706598.3713448), and [OpenLifelogQA](https://arxiv.org/pdf/2508.03583), 18 months of lifelog with 27k event descriptions and a Qwen baseline. That's S11's captions, places and events, reused later for search ("when were we at the lake with …").
+- **Not found:** a published method for building albums from VLM captions like S11's, or a benchmark of DINOv2 against CLIP for bursts in personal photos. Thresholds stay tuned on the reviewer's own albums.
+
 ## VLM: judge (S5) and captions (S7)
 
 | Model | Why | Fit | Status |
