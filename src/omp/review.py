@@ -88,6 +88,9 @@ def placements(session) -> dict:
                              " ON m.pid=p.pid WHERE p.run=? AND p.action IN ('add', 'create', 'theme', 'copy')", (run,)):
             prop[r["id"]] = r
     status = {r["key"]: dict(r) for r in con.execute("SELECT * FROM review_unit")} if _has(con, "review_unit") else {}
+    from .db import exact_copies
+
+    exact = exact_copies(con, run) if _has(con, "grp") else {}
     con.close()
 
     photos = {}
@@ -99,6 +102,8 @@ def placements(session) -> dict:
         kind, value = word.get(i, (None, ""))
         if pr is not None and pr["action"] == "copy" and kind not in ("move", "place"):
             continue  # an exact copy of a photo in an album: archived as a copy, nothing to review
+        if i in exact and kind not in ("move", "place"):
+            continue  # the same pixels as a photo that's kept, saved again: archived, nothing to review (P54)
         state, target = "open", None
         if kind in ("move", "place") and value and not value.startswith("new:"):
             target, state = value, "confirmed"
@@ -128,7 +133,7 @@ def placements(session) -> dict:
                      "incoming": own != unit, "verdict": verdict.get(i) or (d["verdict"] if d else "keep"),
                      "pipeline": d["verdict"] if d else None, "gid": d["gid"] if d else None,
                      "best": bool(d and d["rank"] == 1), "tier": d["tier"] if d else None,
-                     "rotate": feat.get("rotate") or 0, "why": why, "unsure": unsure}
+                     "rotate": feat.get("rotate") or 0, "nudity": feat.get("nudity"), "why": why, "unsure": unsure}
     units = defaultdict(lambda: Counter())
     existing = {f["album"] for f in files.values() if f["policy"] in ("cull", "describe")}
     for p in photos.values():

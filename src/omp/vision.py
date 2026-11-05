@@ -339,19 +339,9 @@ def run_iqa(cfg: Config, con, run_id: str):
     free()
 
 
-# --- Nudity: full nudity goes to the album's " PRIV" sibling; partial nudity is fine anywhere (P26) ---
+# --- Nudity: the detector here, the rules and tags in nudity.py (P26, P53) ---
 
-NUDITY = "nudenet@3.4.2"
-# Full nudity, as the user put it (2026-11-03): exposed genitals or anus, or a bare body (bare buttocks and
-# bare breasts together). Topless, shirtless, swimwear or underwear alone are partial nudity and stay put.
-FULL = {"FEMALE_GENITALIA_EXPOSED", "MALE_GENITALIA_EXPOSED", "ANUS_EXPOSED"}
-BARE = ({"BUTTOCKS_EXPOSED"}, {"FEMALE_BREAST_EXPOSED"})
-NUDITY_SCORE = 0.5     # detector score for a part to count
-
-
-def full_nudity(detections) -> bool:
-    parts = {d["class"] for d in detections if d["score"] >= NUDITY_SCORE}
-    return bool(parts & FULL) or all(parts & group for group in BARE)
+from .nudity import NUDITY, NUDITY_SCORE, full_nudity  # noqa: E402
 
 
 def run_nudity(cfg: Config, con, run_id: str):

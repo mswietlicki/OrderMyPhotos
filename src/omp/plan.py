@@ -2,11 +2,13 @@
 as a list of moves in the bundle (`OrderMyPhotos/plan.json`).
 
 - A kept photo goes to the album or folder S11 proposed for it, or stays, or goes to its album's
-  `Dokumenty/` or ` PRIV` sibling (P24, P26).
+  `Dokumenty/` (P24).
 - An archived or bad one, and a copy of a photo that's already in an album, goes to
   `Archive/OrderMyPhotos/<its path>`.
 - The reviewer's verdicts win over the pipeline's.
 - A proposed turn (P36) is listed apart: on apply it's a lossless EXIF Orientation change, not a move.
+- So are the tags that come from a detector rather than a caption: nudity and full nudity (P53, which
+  replaced P26's move to the album's ` PRIV` sibling). They're written with the photo's other metadata (S9).
 
 Applying it is a move per photo, in place: nothing is copied (user, 2026-11-03: "do the moving in place as
 not to extend disk space"). For a test, `python3 -m omp.plan --links <library> <out>` builds the resulting
@@ -34,7 +36,9 @@ def run(cfg, con, run_id: str):
     for r in con.execute("SELECT m.id, p.action, p.target, p.data FROM proposal p JOIN proposal_member m ON m.pid=p.pid"
                          " WHERE p.run=?", (run_id,)):
         prop[r[0]] = (r[1], r[2], json.loads(r[3] or "{}").get("why", ""))
-    moves, rotations, counts, taken = [], [], Counter(), defaultdict(int)
+    from .nudity import TAGS
+
+    moves, rotations, tags, counts, taken = [], [], [], Counter(), defaultdict(int)
 
     def to(folder, name):
         """A free name in the folder: a second photo with the same name gets _1, _2, ..."""
@@ -52,6 +56,8 @@ def run(cfg, con, run_id: str):
         action, target, why = prop.get(id_, (None, None, ""))
         if v in ("archive", "bad") or (action == "copy" and policy == "unsorted"):
             dst, why = f"{ARCHIVE}/{path}", ("a copy of a photo in " + (target or "an album")) if action == "copy" else v
+            if f.get("exact_copy") and v != "bad":
+                why = "an exact copy of a photo that's kept"  # P54
             counts["archive"] += 1
         elif action in ("create", "add", "theme"):
             dst = to(target, p.name)
@@ -66,11 +72,14 @@ def run(cfg, con, run_id: str):
             moves.append({"from": path, "to": dst, "why": why})
         if f.get("rotate") and v == "keep":
             rotations.append({"path": dst or path, "degrees": f["rotate"]})
+        if f.get("nudity") in TAGS and v == "keep":
+            tag, pl = TAGS[f["nudity"]]
+            tags.append({"path": dst or path, "tags": [tag], "pl": [pl], "why": "nudity detector"})
     out = cfg.bundle / "plan.json"
     out.write_text(json.dumps({"run": run_id, "generated": datetime.now().isoformat(timespec="seconds"),
-                               "counts": dict(counts), "moves": moves, "rotations": rotations},
+                               "counts": dict(counts), "moves": moves, "rotations": rotations, "tags": tags},
                               ensure_ascii=False, indent=1), encoding="utf-8")
-    print(f"plan: {len(moves)} moves ({dict(counts)}), {len(rotations)} turns -> {out}")
+    print(f"plan: {len(moves)} moves ({dict(counts)}), {len(rotations)} turns, {len(tags)} tagged -> {out}")
 
 
 def links(library: str, out: str) -> None:

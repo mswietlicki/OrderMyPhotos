@@ -19,9 +19,10 @@
   header a { color: var(--accent); text-decoration: none; }
   .tabs button { border: 0; background: none; color: var(--muted); padding: 4px 8px; border-radius: 6px; cursor: pointer; font: inherit; }
   .tabs button.on { background: var(--soft); color: var(--fg); font-weight: 600; }
-  .layout { display: grid; grid-template-columns: 300px 1fr; min-height: calc(100vh - 52px); }
-  @media (max-width: 800px) { .layout { grid-template-columns: 1fr; } aside { max-height: 40vh; } }
-  aside { border-right: 1px solid var(--line); overflow: auto; background: var(--card); }
+  /* the album list and the album's photos scroll apart, each in its own pane under the headers */
+  .layout { display: grid; grid-template-columns: 300px 1fr; height: calc(100vh - var(--shell-h, 0px) - var(--rev-h, 53px)); }
+  aside { border-right: 1px solid var(--line); overflow: auto; background: var(--card); min-height: 0; }
+  @media (max-width: 800px) { .layout { grid-template-columns: 1fr; height: auto; } aside { max-height: 40vh; } section.main { overflow: visible; } }
   aside input { margin: 10px; width: calc(100% - 20px); }
   .unit { padding: 8px 12px; border-bottom: 1px solid var(--line); cursor: pointer; }
   .unit:hover { background: var(--soft); } .unit.sel { background: var(--soft); box-shadow: inset 3px 0 var(--accent); }
@@ -29,7 +30,9 @@
   .unit .s { color: var(--muted); font-size: 12px; }
   .dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; margin-right: 6px; vertical-align: middle; }
   .dot.open { background: var(--warn); } .dot.confirmed { background: var(--ok); } .dot.dismantled { background: var(--muted); }
-  section.main { padding: 14px 18px 60px; min-width: 0; }
+  section.main { padding: 14px 18px 60px; min-width: 0; min-height: 0; overflow: auto; }
+  #unitActs { display: flex; gap: 8px; align-items: center; }
+  #unitActs:not(:empty) { padding-right: 14px; margin-right: 0; border-right: 1px solid var(--line); }
   .head { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
   .head input.name { font-size: 18px; font-weight: 650; border: 1px solid transparent; background: none; color: var(--fg); padding: 4px 6px; border-radius: 6px; min-width: 240px; }
   .head input.name:hover, .head input.name:focus { border-color: var(--line); background: var(--card); }
@@ -46,7 +49,7 @@
   .burst > .lbl { position: absolute; top: -8px; left: 10px; padding: 0 5px; font-size: 11px; line-height: 14px; color: var(--muted); background: var(--bg); }
   .ph { position: relative; width: var(--size, 150px); height: var(--size, 150px); border-radius: 8px; overflow: hidden; cursor: pointer;
         outline: 3px solid transparent; outline-offset: -3px; background: var(--soft);
-        scroll-margin: calc(var(--shell-h, 0px) + 70px) 0 24px; }  /* the sticky headers don't cover a selected photo */
+        scroll-margin: 8px 0 24px; }  /* in the photos' own pane; on a phone the headers are above it */
   .ph img { width: 100%; height: 100%; object-fit: cover; display: block; transition: opacity .15s; }
   .ph.archive img { opacity: .35; filter: grayscale(.6); }
   .ph.archive { outline-color: var(--bad); }
@@ -118,6 +121,7 @@
   <div class="tabs" id="tabs"><button data-f="open" class="on">To review</button><button data-f="confirmed">Confirmed</button><button data-f="all">All</button></div>
   <span class="muted" id="counts"></span>
   <span style="flex:1"></span>
+  <span id="unitActs" title="This album or folder"></span>
   <button class="primary" id="finished" title="Accept everything not confirmed yet as it is, and go on">Finished</button>
   <label class="muted">size <input type="range" id="size" min="90" max="280" value="150" style="vertical-align: middle; padding: 0"></label>
 </header>
@@ -182,6 +186,7 @@ async function openUnit(key, step = false) {  // step: an album picked from the 
   const d = await api("/api/review/unit?key=" + encodeURIComponent(key));
   cur = d.unit; photos = d.photos; focusIdx = -1;
   (step ? OMP.push : OMP.replace)("#/review/" + encodeURIComponent(key));
+  $("main").scrollTop = 0;
   window.scrollTo(0, 0);
   drawUnits(); drawUnit();
 }
@@ -220,7 +225,18 @@ function summary() {
     + (fresh && fresh < photos.length ? ` · ${fresh} to check` : "");
 }
 
+// Confirm / Review again and Dismantle act on the open album or folder; they sit in the header, next to Finished
+function unitActs() {
+  const u = cur;
+  $("unitActs").innerHTML = !u ? "" : (u.state === "open"
+      ? `<button class="primary" onclick="__v.confirmUnit()" title="Confirm this album or folder (Ctrl+Enter)">Confirm</button>`
+      : `<button onclick="__v.reopen()" title="Open this album or folder for review again">Review again</button>`)
+    + (u.state !== "dismantled" ? `<button class="danger" onclick="__v.dismantle()" title="Sort all its photos again">Dismantle</button>` : "");
+  revHeight();
+}
+
 function drawUnit() {
+  unitActs();
   const u = cur, fresh = photos.filter(p => p.state !== "confirmed"), done = photos.filter(p => p.state === "confirmed");
   const nameOnly = u.kind === "album" && /^\d{4}-\d{2}-\d{2} /.test(u.name) ? u.name.slice(11) : u.name;
   $("main").innerHTML = `<div class="head">
@@ -229,8 +245,6 @@ function drawUnit() {
       ${u.state === "dismantled" ? `<span class="tag">dismantled</span>` : ""}
       <span style="flex:1"></span>
       <span id="saved" class="muted"></span>
-      ${u.state === "open" ? `<button class="primary" onclick="__v.confirmUnit()" title="Ctrl+Enter">Confirm</button>` : `<button onclick="__v.reopen()">Review again</button>`}
-      ${u.state !== "dismantled" ? `<button class="danger" onclick="__v.dismantle()" title="Sort all its photos again">Dismantle</button>` : ""}
     </div>
     <div class="path">${esc(u.key)}</div>
     <div class="summary" id="summary">${summary()}</div>
@@ -346,7 +360,7 @@ function bigInfo(p) {
     <b>${esc(c.title_en || p.name)}</b>${c.title_pl ? ` <span class="muted">· ${esc(c.title_pl)}</span>` : ""}
     <div>${esc(c.description_en || "")}</div>
     <div class="muted">${esc(p.taken || "")} · ${esc(p.from)}/${esc(p.name)}${p.why ? " · " + esc(p.why) : ""}${p.unsure ? " · unsure: " + esc(p.unsure) : ""}
-    ${p.pipeline && p.pipeline !== p.verdict ? ` · the pipeline said ${p.pipeline}` : ""}${p.rotate ? ` · turned ${p.rotate}°` : ""}
+    ${p.pipeline && p.pipeline !== p.verdict ? ` · the pipeline said ${p.pipeline}` : ""}${p.rotate ? ` · turned ${p.rotate}°` : ""}${p.nudity ? ` · tagged ${p.nudity === "full" ? "full nudity" : "nudity"}` : ""}
     · <a href="/library/${p.path.split("/").map(encodeURIComponent).join("/")}" target="_blank">original</a></div>
     <div class="muted"><kbd>←</kbd><kbd>→</kbd><kbd>↑</kbd><kbd>↓</kbd> as on the page · right-click or <kbd>Space</kbd> keep or archive · <kbd>O</kbd> take out · <kbd>Enter</kbd> or <kbd>Esc</kbd> close</div>`;
   const out = p.state === "out";
@@ -380,7 +394,7 @@ async function confirmUnit() {
     await api("/api/review/unit/confirm", {key: cur.key});
     await loadUnits();
     const next = units.find(u => u.state === "open");
-    if (next) openUnit(next.key); else { cur = null; $("main").innerHTML = `<p><b>All albums and folders are confirmed.</b> Go back to <a href="#/">Progress</a> and press <i>Done, go on</i>.</p>`; drawUnits(); }
+    if (next) openUnit(next.key); else { cur = null; unitActs(); $("main").innerHTML = `<p><b>All albums and folders are confirmed.</b> Go back to <a href="#/">Progress</a> and press <i>Done, go on</i>.</p>`; drawUnits(); }
   } catch (e) { saved(false, e.message); }
 }
 async function dismantle() {
@@ -419,6 +433,10 @@ function fitBig() {
 }
 window.addEventListener("resize", () => { if ($("big").open) fitBig(); });
 $("search").oninput = drawUnits;
+// the review header's height, under which the two panes fit the window (it wraps on a narrow one)
+function revHeight() { document.documentElement.style.setProperty("--rev-h", document.querySelector("header").offsetHeight + "px"); }
+window.addEventListener("resize", revHeight);
+revHeight();
 $("size").oninput = e => document.documentElement.style.setProperty("--size", e.target.value + "px");
 // Finished: everything not confirmed yet is accepted as it is, and the run goes on (to sorting the photos taken
 // out, or to the plan); the wizard shows it.
@@ -433,7 +451,7 @@ for (const b of $("tabs").children) b.onclick = () => { filter = b.dataset.f; fo
 let applyHere = false;  // a session on a copy: the plan is applied here, after the decision
 async function showFinal() {
   // the final decision is a page of its own: none of the review's controls
-  for (const id of ["layout", "tabs", "counts", "finished"]) $(id).hidden = true;
+  for (const id of ["layout", "tabs", "counts", "finished", "unitActs"]) $(id).hidden = true;
   $("size").parentElement.hidden = true;
   $("final").hidden = false;
   document.querySelector("header b").textContent = "Final decision";

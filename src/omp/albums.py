@@ -58,7 +58,6 @@ CATEGORY_FOLDERS = {        # S3b: where reference photos go (decisions.md open 
     "specs": "Pictures/Info/Hardware", "screens": "Pictures/Info/Ekrany",
     "to_remember": "Pictures/Info/Notatki", "memes": "Pictures/Other/Meme",
 }
-# decisions.md P26: full nudity goes to the album's private sibling, "<album> PRIV" (the user's convention)
 # These stay with their event when it's a trip (a dinner on holiday belongs to the holiday).
 STAY_WITH_TRIP = {"food", "maps_topos", "shopping"}
 # Thematic folders (P29): the user's own, plus three fallbacks, so that no photo stays unsorted.
@@ -444,23 +443,10 @@ def run(cfg: Config, con, run_id: str, place_only: bool = False):
     con.execute("DELETE FROM proposal_member WHERE pid IN (SELECT pid FROM proposal WHERE run=?)", (run_id,))
     con.execute("DELETE FROM proposal WHERE run=?", (run_id,))
 
-    nude = {r[0] for r in con.execute("SELECT id FROM signal WHERE kind='nudity' AND value >= 1")}
-
-    def add(action, target, name, members, data):
-        # Full nudity goes to the album's " PRIV" sibling (P26), as its own proposal.
-        if target and action in ("add", "create") and any(r["id"] in nude for r in members):
-            private = [r for r in members if r["id"] in nude]
-            members = [r for r in members if r["id"] not in nude]
-            base = target[:-len("/Dokumenty")] if target.endswith("/Dokumenty") else target
-            _add(action, f"{base} PRIV", f"{name} PRIV" if name else None, private,
-                 {"n": len(private), "why": "full nudity: the album's private sibling"})
-            if not members:
-                return
-        _add(action, target, name, members, data)
-
     unsure_of = {}  # photo -> what the sure-first loop wasn't sure of (P45), shown on the review pages
 
-    def _add(action, target, name, members, data):
+    def add(action, target, name, members, data):
+        # A photo with nudity goes where the others go, tagged (P53; P26 sent full nudity to "<album> PRIV").
         if any(r["id"] in unsure_of for r in members):
             data = {**data, "unsure": {r["id"]: unsure_of[r["id"]] for r in members if r["id"] in unsure_of}}
         ts = [r["taken_ts"] for r in members]
@@ -480,11 +466,10 @@ def run(cfg: Config, con, run_id: str, place_only: bool = False):
             d0 = datetime.fromtimestamp(min(r["taken_ts"] for r in members), tz)
             add("create", f"Pictures/Albums/{d0:%Y}/{d0:%Y-%m-%d} {name}", name, members,
                 {"n": len(members), "why": "a new album you named in review", "moved": True})
-        else:  # a target path: a confirmed place is taken as given, its PRIV or Dokumenty part too; a photo
-            # moved by hand still goes to the album's private part when it shows full nudity (P26)
+        else:  # a target path: a confirmed place is taken as given, its PRIV or Dokumenty part too
             album = re.match(r"^Pictures/Albums/\d{4}/", target)
             new = album and target.removesuffix(" PRIV").removesuffix(f"/{DOCS_FOLDER}") not in known
-            (_add if confirmed else add)("create" if new else "add" if album else "theme", target,
+            add("create" if new else "add" if album else "theme", target,
                                         target.rsplit("/", 1)[-1][11:] if new else None, members,
                                         {"n": len(members), "why": "confirmed in review" if confirmed else "moved here in review",
                                          "moved": True})

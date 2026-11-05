@@ -173,6 +173,8 @@ The albums come from the **OneDrive manifest** (names, content hashes, capture t
 
 ## P26 — Full nudity goes to the album's " PRIV" sibling (2026-11-03, user)
 
+*Superseded in part by P53 (2026-11-05): photos with nudity are tagged, not moved. The detector and its rules stay.*
+
 The user wants photos with nudity marked as "Nudity" and placed in a separate, attached private album: "I care only about full nudity, partial nudity is fine for all albums", "do not add any blur, just move to the PRIV album". The library already has the convention, sibling albums like `<date> <name>` and `<date> <name> PRIV`. So:
 - A local **NudeNet** detector (v3.4.2, 320n ONNX, CPU) finds body parts as exposed or covered. **Full nudity** means exposed genitals or anus, or bare buttocks and bare breasts together. Topless, shirtless, swimwear or underwear alone count as partial and are left alone. A general NSFW classifier was considered and dropped, because it can't tell full from partial nudity.
 - A flagged photo in an album is proposed into `<album> PRIV`; one that's already in a PRIV album isn't. A flagged unsorted photo goes to the PRIV sibling of the album it joins, or of the new album.
@@ -787,6 +789,39 @@ The user: "The server will be restricted to only work regarding this OrderMyPhot
   - Previews decoded at a reduced size: the sharpness is measured on the full image, so it would change.
   - The album sorting in parallel: each question depends on the answers before it.
   - The neighbour table already goes in chunks (~1–2 min for the library).
+
+## P53 — Nudity is tagged, not moved; the review's album list and photos scroll apart (2026-11-05, user)
+
+The user, after s7 showed one photo going to an album's ` PRIV` sibling while the rest of its burst stayed: "I changed my mind. Let's not move nude photos to PRIV, just mark them with nudity or full-nudity tags." This replaces P26's move.
+
+- **Nothing is moved for nudity.** A photo goes wherever the sorting puts it, and its burst stays together. `rank` no longer sends an album's photo to `<album> PRIV`, and `albums` no longer splits a proposal into a PRIV one. The user's own existing PRIV albums are albums like any other.
+- **Two tags, from the NudeNet detector** (`nudity.py`; the rules of P26 are unchanged):
+  - `People/Full nudity` (*Pełna nagość*): exposed genitals or anus, or bare breasts and bare buttocks together;
+  - `People/Nudity` (*Nagość*): bare breasts or bare buttocks alone.
+  - Shirtless, swimwear, underwear, a bare belly or armpits get no tag.
+- **Where the tag is:**
+  - the photo's decision (`features.nudity`), shown in the review's large view as "tagged nudity" or "tagged full nudity";
+  - and `plan.json`: a `tags` list next to `rotations`, for the kept photos.
+  - Like the rotations, the tags are written into the files with the rest of the metadata (S9), not by moving anything.
+- **Captions:** a photo with full nudity still gets no VLM caption (P26), so no description of it ends up in its metadata. Its tag is in the plan.
+- **On s7:** 53 photos are tagged nudity and 1 full nudity. The full one is archived as a weaker frame of its burst, so it has no tag in the plan unless it's kept. The one PRIV place s7 had was removed from its decision. No PRIV album was proposed.
+- **The review page** (user: "make Album photos scroll separately from album list, and Confirm/Dismantle buttons … next to Finished but album-specific"):
+  - the album list and the open album's photos are two panes that scroll on their own, sized to the window under the headers;
+  - the open album's Confirm (or Review again) and Dismantle are in the header, next to Finished;
+  - a phone keeps the one scroll.
+
+## P54 — An exact copy is archived without review, and the album's own file is the one kept (2026-11-05, user, measured)
+
+The user, reviewing s7: "I see duplicates of photos in albums. The duplicate is correctly archived, but I think I should not see it at all. If the photo is an exact duplicate (even if the name is different), it should be archived and not shown for review: there is nothing to review, only one copy should remain."
+
+- **Byte copies** were already one photo (same hash, one tile). These were **pixel copies**: the same frame saved again, under another name or with other metadata, so different bytes.
+  - s7 had 58, each a Samsung Gallery file and its copy in one of the user's albums.
+  - Each pair had the same capture time, pHash distance 0, the same size in pixels and DINOv2 cosine 1.0000.
+- **Exact copy** (`group.py`): a copy pair (same capture time to 0.01 s, in two folders) with pHash distance 0, the same width and height, and DINOv2 ≥ 0.999. Its group records `exact`. Groups from earlier runs count as exact when their pHash distance is 0.
+- **The kept one is the file already in an album.** The group puts it first. Before, the earlier of the two in the photo list was kept, and in 19 of s7's 58 pairs that was the phone's copy, with the album's own file archived.
+- **Rank** archives the second as `exact_copy` (tier `auto`, `copy_of` the kept photo). The review doesn't show it unless the reviewer moved or placed it by hand. The plan archives it as "an exact copy of a photo that's kept".
+- **Near copies** (a resized or re-compressed version, pHash ≤ 8) are still shown archived, since they may differ.
+- **Tested** on a scratch copy of s7: all 58 pairs were exact, with the album's file first. 41 album files were kept with their copy archived; in 17 both were archived, the frame not being the burst's pick.
 
 ## Open — for the user
 

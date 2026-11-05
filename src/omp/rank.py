@@ -212,7 +212,9 @@ def run(cfg: Config, con, run_id: str):
     policy_of = {}
     for r in con.execute("SELECT id, policy FROM file ORDER BY path"):
         policy_of.setdefault(r["id"], r["policy"])
-    nude = {r[0] for r in con.execute("SELECT id FROM signal WHERE kind='nudity' AND value >= 1")}
+    from .nudity import levels
+
+    nude = levels(con)  # tagged, not moved (P53)
     docset_of = {}
     for g in con.execute("SELECT gid FROM grp WHERE run=? AND kind='docset'", (run_id,)):
         members = [r[0] for r in con.execute("SELECT id FROM grp_member WHERE gid=? ORDER BY ord", (g["gid"],))]
@@ -231,8 +233,11 @@ def run(cfg: Config, con, run_id: str):
     bursts = [(g["gid"], [r[0] for r in con.execute("SELECT id FROM grp_member WHERE gid=? ORDER BY ord", (g["gid"],))],
                g["cohesion"]) for g in con.execute("SELECT gid, cohesion FROM grp WHERE run=? AND kind='burst'", (run_id,))]
     in_burst = {i for _, m, _ in bursts for i in m}
+    from .db import exact_copies
+
     copies = {r[0] for r in con.execute(
         "SELECT m.id FROM grp_member m JOIN grp g ON g.gid=m.gid WHERE g.run=? AND g.kind='copy' AND m.ord > 0", (run_id,))}
+    exact = exact_copies(con, run_id)  # copy -> the photo it duplicates (P54)
 
     def decide(id_, gid, verdict, rank, score, reasons, tier, floor=None, protected=None, extra=None):
         x = feats[id_]
@@ -250,10 +255,7 @@ def run(cfg: Config, con, run_id: str):
         if not (tx and tx["mostly_text"]) and orient.get(id_):  # a turned photo (P36); text pages keep the text stage's
             f["rotate"] = orient[id_]
         if id_ in nude:
-            f["nudity"] = True
-            album = album_of.get(id_) or ""
-            if policy_of.get(id_) == "cull" and not album.endswith(" PRIV"):
-                f["place"] = f"{album} PRIV"  # the album's private sibling, the user's own convention (P26)
+            f["nudity"] = nude[id_]  # "full" or "partial": a tag in the plan (P53)
         if id_ in docset_of:
             f["docset"] = list(docset_of[id_])
             reasons = reasons + [f"page {docset_of[id_][0]} of a document set of {docset_of[id_][1]}"]
@@ -329,6 +331,10 @@ def run(cfg: Config, con, run_id: str):
 
     for id_, x in feats.items():
         if id_ in in_burst:
+            continue
+        if id_ in exact:  # the same pixels saved again: archived, never shown for review (P54)
+            decide(id_, None, "archive", 0, 0.0, ["an exact copy of a photo that is kept"], "auto",
+                   extra={"exact_copy": True, "copy_of": exact[id_]})
             continue
         if id_ in copies:
             decide(id_, None, "archive", 0, 0.0, ["a copy of the same photo in another folder"], "review")

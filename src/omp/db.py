@@ -190,3 +190,17 @@ def log_timing(con, stage, run, items, seconds, device=None):
         "INSERT INTO timing(stage, run, items, seconds, device) VALUES (?,?,?,?,?)",
         (stage, run, items, seconds, device),
     )
+
+
+def exact_copies(con, run: str) -> dict[str, str]:
+    """Photo id -> the photo it's an exact copy of (P54): the second member of a copy group with the same
+    pixels. Older runs' groups didn't record "exact", so it's read from their pHash distance of 0 too."""
+    out = {}
+    for g in con.execute("SELECT gid, data FROM grp WHERE run=? AND kind='copy'", (run,)).fetchall():
+        d = json.loads(g[1] or "{}")
+        if not d.get("exact", d.get("phash") == 0):
+            continue
+        ms = [r[0] for r in con.execute("SELECT id FROM grp_member WHERE gid=? ORDER BY ord", (g[0],))]
+        for m in ms[1:]:
+            out[m] = ms[0]
+    return out

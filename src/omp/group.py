@@ -27,6 +27,9 @@ GPS_AFTER_S = 60
 VIEW_AFTER_S = 120            # longer gaps need a same-viewpoint check
 VIEW_MIN_INLIERS = 30
 COPY_SIM, COPY_PHASH = 0.97, 8
+# An exact copy (P54): the same pixels saved again (another name, other metadata or encoding): identical pHash,
+# the same size in pixels and DINOv2 alike to 0.999. On s7 all 58 copies were this, at cosine 1.0000.
+EXACT_SIM = 0.999
 SAME_TEXT = 0.7               # text pages are one burst only if this share of words matches (retakes)
 DOCSET_GAP = 30 * 60          # different pages shot within this of each other form a document set
 
@@ -156,8 +159,9 @@ def _cluster_part(part, margin):
 def run(cfg: Config, con, run_id: str):
     t0 = time.perf_counter()
     photos = [dict(r) for r in con.execute(
-        "SELECT p.id, p.taken_ts, p.lat, p.lon, MIN(f.path) AS path, MIN(f.album) AS album"
-        " FROM photo p JOIN file f ON f.id = p.id WHERE f.policy NOT IN ('ignore', 'people', 'reference') GROUP BY p.id ORDER BY p.taken_ts")]
+        "SELECT p.id, p.taken_ts, p.lat, p.lon, p.width, p.height, MIN(f.path) AS path, MIN(f.album) AS album,"
+        " MIN(f.policy) AS policy FROM photo p JOIN file f ON f.id = p.id WHERE f.policy NOT IN ('ignore', 'people', 'reference')"
+        " GROUP BY p.id ORDER BY p.taken_ts")]
     dino = get_vecs(con, "dino")
     phash = get_data(con, "phash")
     photos = [p for p in photos if p["id"] in dino]
@@ -180,7 +184,9 @@ def run(cfg: Config, con, run_id: str):
         for k, id_ in enumerate(ids):
             con.execute("INSERT INTO grp_member(gid, id, ord) VALUES (?,?,?)", (cur.lastrowid, id_, k))
 
-    # Copies: the same frame saved twice (same capture second or no usable time, near-identical pixels).
+    # Copies: the same frame saved twice (same capture second or no usable time, near-identical pixels). The one
+    # already in one of the user's albums comes first and is kept; the other is archived as its copy (P54).
+    in_album = lambda p: p["policy"] in ("cull", "describe")  # noqa: E731
     by_id = {p["id"]: p for p in photos}
     seen = set()
     for i, a in enumerate(photos):
@@ -190,9 +196,12 @@ def run(cfg: Config, con, run_id: str):
             if a["album"] == b["album"]:
                 continue  # two files of one folder with the same second are a camera burst, not a copy
             ph = bin(int(phash[a["id"]]["phash"], 16) ^ int(phash[b["id"]]["phash"], 16)).count("1")
-            if float(dino[a["id"]] @ dino[b["id"]]) >= COPY_SIM and ph <= COPY_PHASH:
-                add_group("copy", [a["id"], b["id"]], None, {"phash": ph})
-                seen.add(b["id"])
+            sim = float(dino[a["id"]] @ dino[b["id"]])
+            if sim >= COPY_SIM and ph <= COPY_PHASH:
+                keep, copy = (b, a) if in_album(b) and not in_album(a) else (a, b)
+                exact = ph == 0 and sim >= EXACT_SIM and (a["width"], a["height"]) == (b["width"], b["height"])
+                add_group("copy", [keep["id"], copy["id"]], None, {"phash": ph, "exact": exact})
+                seen.add(copy["id"])
     photos = [p for p in photos if p["id"] not in seen]
 
     try:
