@@ -900,6 +900,33 @@ A session's DB belongs to the session, and sessions get deleted (the tests were 
   - **Duplicates don't count as rejections:** recording the other storage's outcome (its duplicates) leaves the library seeing all 583 as kept.
   - 2 of the 379 were exact copies of kept photos. They're recorded as duplicates, and archived again by the session's own P54.
 
+## P59 — Previews with the 4090: Pillow decodes, the GPU resizes and measures (2026-11-05, user, measured)
+
+The user, during the full run: "could the previews be done on GPU?", then "could the 4090 do decoding, sharpness and encoding? Qwen is not needed now".
+
+A photo took ~2.9 s of one core: 56% the sharpness filters, 18% the decode, 15% the resize and two JPEG saves. JPEGs are 98.8% of the library.
+
+- **The engine:** JPEGs up to 25 MP go to `omp worker`'s `previews` engine on the 4090 (gpu_previews.py), in chunks of 24, 3 at once.
+  - Pillow decodes there on 16 threads, as previews.decode does, so the pixels are the same.
+  - The GPU does the resize with Pillow's own steps and coefficients (reduce, then Lanczos, rounded between passes; within one level of Pillow), the luminance by Pillow's "L" formula, the eight sharpness tile means (sharpness.py: OpenCV's filters, border and INTER_AREA weights without OpenCV, since the worker has none), and the exposure with OpenCV's integer formulas.
+  - Pillow encodes the JPEGs. The stage hashes the thumbnail's pixels, as on the CPU.
+  - The worker reads the originals from the library roots, mounted read-only (mimir changelog). It only returns results.
+- **The CPU's share:** everything else, plus whatever Pillow can't decode outright (cut short, a broken stretch, not an image). The CPU path decodes a truncated or broken JPEG as far as it goes and marks it.
+- **Measured against the CPU** on 60 library photos:
+  - sharpness within 4e-6 (float rounding);
+  - exposure identical;
+  - dhash identical, phash identical in 59 (one at distance 2);
+  - previews at 74 dB PSNR (worst 49);
+  - float16 grid entries that differ: median 1.8%, on near-zero tiles.
+
+  So the ~86,000 photos already done on the CPU weren't redone.
+- **Speed:** from 7 to ~19 photos/s, with the CPU at ~20% and the 4090 at 30–50%. The worker's GIL is the limit.
+  - The JSON encoding was one cause: FastAPI's encoder walked each ~23 MB response in Python. Now the tiles travel as bytes and the response is `json.dumps`'d.
+  - Decoding in processes rather than threads would go further.
+- **Rejected:** decoding with nvJPEG (torchvision). It took 59 ms a photo on this card in batches, mostly on one CPU thread. It also decoded a truncated JPEG without an error, so the photo would have gone unmarked. And its pixels aren't Pillow's, which would have meant redoing every photo for consistency.
+- **Rejected:** the sharpness filters on the B50 (built and checked). The upload alone took 24 ms a photo, so one process could do at most ~11 photos/s.
+- `OMP_PREVIEWS_4090=0` puts everything back on the CPU.
+
 ## Open — for the user
 
 1. ~~**Language** of titles, descriptions and tags.~~ Resolved by P42: both languages; S11 reads English only.
