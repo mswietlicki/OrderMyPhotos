@@ -167,10 +167,11 @@ def sleep(seconds: float):
 
 class Progress:
     """`with Progress(con, stage, model) as prog:`, then `with prog.item(id_):` around each photo's work,
-    or `prog.done(id_)` / `prog.fail(id_, error)` for results coming back from a process pool."""
+    or `prog.done(id_)` / `prog.fail(id_, error)` for results coming back from a process pool.
+    `commit=False`: only the progress, for a stage that commits its own work when it's whole (the albums)."""
 
-    def __init__(self, con, stage: str, model: str, total: int | None = None, every=None, seconds=None):
-        self.con, self.stage, self.model, self.total = con, stage, model, total
+    def __init__(self, con, stage: str, model: str, total: int | None = None, every=None, seconds=None, commit=True):
+        self.con, self.stage, self.model, self.total, self.commit = con, stage, model, total, commit
         self.every, self.seconds = every or COMMIT_EVERY, seconds or COMMIT_SECONDS
         self.ok = self.failed = self.streak = self.pending = 0
         self.last = self.reported = time.monotonic()
@@ -187,7 +188,8 @@ class Progress:
     def __exit__(self, *exc):
         global _graceful
         _graceful -= 1
-        self.con.commit()
+        if self.commit:
+            self.con.commit()
         self._report()
         add_step({"name": self.stage, "ok": self.ok, "failed": self.failed, "total": self.total,
                   "seconds": round(time.time() - self.started, 1), "stopped": exc[0] is not None})
@@ -226,7 +228,7 @@ class Progress:
     def tick(self):
         self.pending += 1
         now = time.monotonic()
-        if _stop or self.pending >= self.every or now - self.last >= self.seconds:
+        if self.commit and (_stop or self.pending >= self.every or now - self.last >= self.seconds):
             self.con.commit()
             self.pending, self.last = 0, now
         if now - self.reported >= REPORT_SECONDS:

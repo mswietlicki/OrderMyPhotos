@@ -15,7 +15,7 @@ import yaml
 
 from .config import PACKAGE_DIR, Config
 from .db import get_data, get_vecs, log_timing
-from .runtime import imap
+from .runtime import Progress, imap
 from .text import OCR_TAG, ocr_needed
 from .vlm import VLM, image_part
 
@@ -234,17 +234,19 @@ def run(cfg: Config, con, run_id: str):
         return out, time.perf_counter() - t1
 
     # Several photos at once: the chat model serves 4 requests together (P52).
-    for (r, dt, ctx, g), res, exc in imap(ask, prepared()):
-        if isinstance(exc, (ValueError, KeyError)):  # one bad answer skips that photo, not the stage
-            print(f"captions: skipped {r['id'][:10]}: {exc}")
-            continue
-        if exc:
-            raise exc
-        out, seconds = res
-        out["context"], out["geo"], out["month"], out["recognized"] = ctx, g, dt.month, names.get(r["id"], "")
-        con.execute("INSERT OR REPLACE INTO caption(id, model, data, seconds) VALUES (?,?,?,?)",
-                    (r["id"], model, json.dumps(out, ensure_ascii=False), seconds))
-        con.commit()
+    with Progress(con, "captions", model, total=len(todo)) as prog:
+        for (r, dt, ctx, g), res, exc in imap(ask, prepared()):
+            if isinstance(exc, (ValueError, KeyError)):  # one bad answer skips that photo, not the stage
+                prog.fail(r["id"], f"{type(exc).__name__}: {exc}")
+                continue
+            if exc:
+                raise exc
+            out, seconds = res
+            out["context"], out["geo"], out["month"], out["recognized"] = ctx, g, dt.month, names.get(r["id"], "")
+            con.execute("INSERT OR REPLACE INTO caption(id, model, data, seconds) VALUES (?,?,?,?)",
+                        (r["id"], model, json.dumps(out, ensure_ascii=False), seconds))
+            con.commit()
+            prog.done(r["id"])
 
     # Tags: re-mapped for every caption on each run (cheap), so vocabulary edits apply without new VLM calls.
     month = {r["id"]: int(r["taken_local"][5:7]) for r in rows}

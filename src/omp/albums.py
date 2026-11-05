@@ -44,6 +44,7 @@ from .db import get_vecs
 from .library import library_for
 from .people import MIN_SCORE as FACE_SCORE, MIN_SIZE as FACE_SIZE
 from .profiles import DEFAULT_FOLDERS, OTHER_YEAR, album_summary, folder_profiles
+from .runtime import Progress
 from .vlm import VLM
 
 VERSION = "albums@1"
@@ -1552,22 +1553,24 @@ def run(cfg: Config, con, run_id: str, place_only: bool = False):
                     held[d[6]] += d[0]
                     where_now |= {r["id"]: d[6] for r in d[0]}
             done_now = []
-            for k, d in enumerate(decisions):
-                if sure[k]:
-                    continue
-                ids = {r["id"] for r in d[0]}
-                seen = Counter(where_now[o] for r in d[0] for o, _ in look.get(r["id"], ()) if o not in ids and o in where_now)
-                evidence = ("Photos that look like these, from any folder, are in: "
-                            + ", ".join(f"{t.split('/')[-1]} ({n})" for t, n in seen.most_common(4)) + ".") if seen else ""
-                scored = []
-                for c in candidates(k, d, held, seen):
-                    key = (k, c, len(held.get(c[1], ())), evidence)
-                    if key not in asked:
-                        asked[key] = score(c, d, held, evidence)
-                    scored.append((asked[key], c))
-                last[k] = ranked(scored)
-                if last[k] and is_sure(scored):
-                    done_now.append(k)
+            with Progress(con, f"albums.round {rounds}", "s11", total=sure.count(False), commit=False) as prog:
+                for k, d in enumerate(decisions):
+                    if sure[k]:
+                        continue
+                    prog.done(str(k))
+                    ids = {r["id"] for r in d[0]}
+                    seen = Counter(where_now[o] for r in d[0] for o, _ in look.get(r["id"], ()) if o not in ids and o in where_now)
+                    evidence = ("Photos that look like these, from any folder, are in: "
+                                + ", ".join(f"{t.split('/')[-1]} ({n})" for t, n in seen.most_common(4)) + ".") if seen else ""
+                    scored = []
+                    for c in candidates(k, d, held, seen):
+                        key = (k, c, len(held.get(c[1], ())), evidence)
+                        if key not in asked:
+                            asked[key] = score(c, d, held, evidence)
+                        scored.append((asked[key], c))
+                    last[k] = ranked(scored)
+                    if last[k] and is_sure(scored):
+                        done_now.append(k)
             for k in done_now:  # placed together at the end of the round, so the order of the groups doesn't matter
                 p, c = last[k][0]
                 place(decisions[k], c, f"sure in round {rounds}: {p:.2f}")
@@ -1597,9 +1600,11 @@ def run(cfg: Config, con, run_id: str, place_only: bool = False):
     decisions = []  # [photos, away, banned, messenger, d0, kind, target, name, why, alternatives]
     # Photos from an album the reviewer dismantled: "not an album", so they don't make a new one either (P47)
     from_dismantled = {i for i, t in taken_out.items() if unit_of(t) in dismantled}
-    for e in events:
-        away, banned = is_away(e, base), banned_of(e)
-        decisions.append([e, away, banned, False, *decide(e, away, banned, no_album=any(r["id"] in from_dismantled for r in e))])
+    with Progress(con, "albums.events", "s11", total=len(events), commit=False) as prog:  # progress for the app
+        for e_n, e in enumerate(events):
+            prog.done(str(e_n))
+            away, banned = is_away(e, base), banned_of(e)
+            decisions.append([e, away, banned, False, *decide(e, away, banned, no_album=any(r["id"] in from_dismantled for r in e))])
     # Messenger photos that arrived the same day and look alike are one group, decided like an event (user,
     # s5: the railway-bridge photos someone sent are an event); a single one is decided on its own, to a folder.
     by_day = defaultdict(list)

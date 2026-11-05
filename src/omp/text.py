@@ -21,7 +21,7 @@ from PIL import Image, ImageOps
 
 from .config import Config
 from .db import get_data, log_timing
-from .runtime import check, post
+from .runtime import Progress, post
 from .vlm import VLM, image_part
 
 MODEL = "unlimited-ocr-2"
@@ -213,27 +213,28 @@ def run(cfg: Config, con, run_id: str):
         return ans.get("yes", 0.5) if ans else 0.5
 
     n_none = n_pages = turned = 0
-    for i in todo:
-        check()  # a stop ends it between photos
-        img = Image.open(cfg.preview(i)).convert("RGB")
-        # Asked "upright?", a photo without text gets a "no" and a rotation: so first, is there text at all?
-        if p_yes(img, HAS_TEXT) < 0.4:
-            n_none += 1
-            con.execute("INSERT OR REPLACE INTO text(id, model, rotate, chars, mostly_text, text, blocks)"
-                        " VALUES (?,?,0,0,0,'','[]')", (i, model))
-            con.commit()  # not held across the next VLM calls: other lanes write too (P51)
-            continue
-        mostly = p_yes(img, MOSTLY_TEXT) >= 0.5
-        rotate = 0
-        if mostly and p_yes(img, UPRIGHT) < 0.5:
-            scores = {deg: p_yes(img.rotate(-deg, expand=True), UPRIGHT) for deg in TURNS}
-            best = max(scores, key=scores.get)
-            rotate = best if scores[best] >= 0.5 else 0
-        n_pages += mostly
-        turned += bool(rotate)
-        con.execute("INSERT OR REPLACE INTO text(id, model, rotate, chars, mostly_text) VALUES (?,?,?,NULL,?)",
-                    (i, model, rotate, int(mostly)))
-        con.commit()
+    with Progress(con, "text", model, total=len(todo)) as prog:  # progress for the app
+        for i in todo:
+            prog.done(i)  # a stop ends it between photos
+            img = Image.open(cfg.preview(i)).convert("RGB")
+            # Asked "upright?", a photo without text gets a "no" and a rotation: so first, is there text at all?
+            if p_yes(img, HAS_TEXT) < 0.4:
+                n_none += 1
+                con.execute("INSERT OR REPLACE INTO text(id, model, rotate, chars, mostly_text, text, blocks)"
+                            " VALUES (?,?,0,0,0,'','[]')", (i, model))
+                con.commit()  # not held across the next VLM calls: other lanes write too (P51)
+                continue
+            mostly = p_yes(img, MOSTLY_TEXT) >= 0.5
+            rotate = 0
+            if mostly and p_yes(img, UPRIGHT) < 0.5:
+                scores = {deg: p_yes(img.rotate(-deg, expand=True), UPRIGHT) for deg in TURNS}
+                best = max(scores, key=scores.get)
+                rotate = best if scores[best] >= 0.5 else 0
+            n_pages += mostly
+            turned += bool(rotate)
+            con.execute("INSERT OR REPLACE INTO text(id, model, rotate, chars, mostly_text) VALUES (?,?,?,NULL,?)",
+                        (i, model, rotate, int(mostly)))
+            con.commit()
     con.commit()
     t1 = time.perf_counter()
     log_timing(con, "text.check", run_id, len(todo), t1 - t0, "4090 qwen3.8-27b")

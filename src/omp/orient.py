@@ -23,7 +23,7 @@ from PIL import Image
 
 from .config import Config
 from .db import get_vecs, log_timing, put_signal
-from .runtime import check
+from .runtime import Progress
 from .vision import SIGLIP, device, free, load_preview, open_preview
 from .vlm import VLM, image_part
 
@@ -87,15 +87,16 @@ def run(cfg: Config, con, run_id: str):
     # 1. The screen, trained on the library's own photos turned four ways.
     train = random.Random(13).sample(sorted(stored), min(TRAIN, len(stored)))
     X, y = [], []
-    for i in train:
-        check()  # a stop ends it between photos
-        try:
-            img = load_preview(cfg, i, 1024)
-        except (FileNotFoundError, OSError):
-            continue
-        for k, v in enumerate(views(img, stored[i])):
-            X.append(v)
-            y.append(k)
+    with Progress(con, "orient.train", MODEL, total=len(train)) as prog:  # progress for the app
+        for i in train:
+            prog.done(i)
+            try:
+                img = load_preview(cfg, i, 1024)
+            except (FileNotFoundError, OSError):
+                continue
+            for k, v in enumerate(views(img, stored[i])):
+                X.append(v)
+                y.append(k)
     clf = LogisticRegression(C=2.0, max_iter=3000).fit(np.array(X), np.array(y))
     t1 = time.perf_counter()
 
@@ -111,25 +112,26 @@ def run(cfg: Config, con, run_id: str):
     # for the VLM, so the chat model is asked in one stretch at the end (P51).
     flagged = []
     share = Share(cfg, "orient", todo)
-    for i, r in share:
-        check()
-        if r is None:
-            try:
-                img = load_preview(cfg, i, 1024)
-            except (FileNotFoundError, OSError):
+    with Progress(con, "orient.screen", MODEL, total=len(todo)) as prog:
+        for i, r in share:
+            prog.done(i)
+            if r is None:
+                try:
+                    img = load_preview(cfg, i, 1024)
+                except (FileNotFoundError, OSError):
+                    continue
+                V = views(img, stored[i])
+            elif "error" in r:  # the 4090 couldn't read it either
                 continue
-            V = views(img, stored[i])
-        elif "error" in r:  # the 4090 couldn't read it either
-            continue
-        else:
-            V = [stored[i]] + [np.asarray(v, dtype=np.float32) for v in r["views"]]
-        turn, margin = turn_of(V)
-        data = {"screen": turn, "margin": round(margin, 2)}
-        if turn and margin >= SCREEN:
-            flagged.append((i, turn, data))
-            continue
-        put_signal(con, i, "orient", MODEL, value=0, data=data)
-        con.commit()
+            else:
+                V = [stored[i]] + [np.asarray(v, dtype=np.float32) for v in r["views"]]
+            turn, margin = turn_of(V)
+            data = {"screen": turn, "margin": round(margin, 2)}
+            if turn and margin >= SCREEN:
+                flagged.append((i, turn, data))
+                continue
+            put_signal(con, i, "orient", MODEL, value=0, data=data)
+            con.commit()
     del engine
     free()
 
@@ -141,16 +143,17 @@ def run(cfg: Config, con, run_id: str):
         return ans.get("yes", 0.5) if ans else 0.5
 
     turned = 0
-    for i, turn, data in flagged:
-        check()
-        img, fix = load_preview(cfg, i, 1024), 0
-        now, back = p_upright(img), p_upright(img.rotate(turn, expand=True))  # rotate(turn): undo it
-        data |= {"vlm_as_is": round(now, 3), "vlm_turned_back": round(back, 3)}
-        if back >= 0.5 > now:
-            fix = (360 - turn) % 360  # degrees clockwise that make it upright
-            turned += 1
-        put_signal(con, i, "orient", MODEL, value=fix, data=data)
-        con.commit()
+    with Progress(con, "orient.check", MODEL, total=len(flagged)) as prog:
+        for i, turn, data in flagged:
+            prog.done(i)
+            img, fix = load_preview(cfg, i, 1024), 0
+            now, back = p_upright(img), p_upright(img.rotate(turn, expand=True))  # rotate(turn): undo it
+            data |= {"vlm_as_is": round(now, 3), "vlm_turned_back": round(back, 3)}
+            if back >= 0.5 > now:
+                fix = (360 - turn) % 360  # degrees clockwise that make it upright
+                turned += 1
+            put_signal(con, i, "orient", MODEL, value=fix, data=data)
+            con.commit()
     flagged = len(flagged)
     t2 = time.perf_counter()
     log_timing(con, "orient", run_id, len(todo), t2 - t0, f"{dev}{share.note()} + 4090 qwen3.8-27b")
