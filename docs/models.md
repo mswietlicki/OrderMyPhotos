@@ -69,7 +69,12 @@ What the literature and the culling tools say about choosing the best of a serie
 - **[FGAesthetics / FGAesQ](https://arxiv.org/abs/2603.03907)** (CVPR 2026): fine-grained aesthetics within series of near-identical photos, 10,028 series ranked pairwise, burst photos among them.
   - FGAesQ, a CLIP ViT-B/16 model, picks the better of a natural pair 78% of the time, against 71% for Q-Align (8B).
   - The [weights are on Hugging Face](https://huggingface.co/yzc002/FGAesQ), with no licence stated.
-  - **A candidate for bursts:** small, made for exactly this, and to be measured against the s7 picks.
+  - **Measured on s7, and not used.** Scored over every pair in 156 bursts where the reviewer kept some frames and archived others, on the CPU (the B50 gets its boolean masks wrong):
+    - the reviewer kept FGAesQ's top frame in 70% of them, and rank's pick in 92%;
+    - it ordered 62% of kept/archived pairs right, against 75% for rank's order and 68% for sharpness alone;
+    - in the 12 bursts where the reviewer passed over rank's pick, its top frame was a kept one in 4;
+    - blended into rank's order it changes nothing at a small weight and loses at full weight (92% → 83%).
+    - It correlates with sharpness at only 0.22: it judges something else, but not what this reviewer picks by. Its weights (no licence) were removed again.
 - **[HumanAesExpert](https://arxiv.org/abs/2503.23907)** (2025): aesthetics of photos of people. Its scores cover the face (brightness, clarity, skin, structure, contour), outfit, body shape, looks and environment, but not pose or expression.
   - [HumanAesExpert-1B](https://huggingface.co/KlingTeam/HumanAesExpert-1B) is MIT, 0.9B parameters (InternViT-300M + Qwen2-0.5B).
   - A candidate for people frames, also to be measured on s7.
