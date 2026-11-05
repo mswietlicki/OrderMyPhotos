@@ -1,0 +1,4 @@
+# docker/Dockerfile.cuda: packages NudeNet and InsightFace would pull in that the 4090 image replaces:
+# onnxruntime-gpu instead of onnxruntime, opencv-python-headless instead of opencv-python.
+onnxruntime; sys_platform == "never"
+opencv-python; sys_platform == "never"
