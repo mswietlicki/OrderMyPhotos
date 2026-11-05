@@ -147,7 +147,7 @@
 if (typeof OMP === "undefined") { location.replace("/#/review"); throw new Error("opened outside the app"); }
 const $ = id => document.getElementById(id);
 const esc = s => String(s ?? "").replace(/[&<>"]/g, c => ({"&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;"}[c]));
-let units = [], targets = [], filter = "open", cur = null, photos = [], focusIdx = -1, moving = null, unitsTimer = null;
+let units = [], targets = [], targetOf = {}, filter = "open", cur = null, photos = [], focusIdx = -1, moving = null, unitsTimer = null;
 
 async function api(path, body) {
   const r = await fetch(path, body === undefined ? {} : {method: "POST", headers: {"Content-Type": "application/json"}, body: JSON.stringify(body)});
@@ -166,7 +166,15 @@ async function loadUnits() {
   units = d.units; targets = d.targets;
   const p = d.pending;
   $("counts").textContent = `${p.unconfirmed} to review · ${p.units - p.unconfirmed} confirmed` + (p.to_sort ? ` · ${p.to_sort} photos to sort again` : "");
-  $("targets").innerHTML = targets.map(t => `<option value="${esc(t)}">`).join("");
+  // Move to offers names, not paths: an album by its folder name, a folder with its parent ("2022 (Other)")
+  targetOf = {};
+  for (const t of targets) {
+    const parts = t.split("/"), name = parts.at(-1), album = t.startsWith("Pictures/Albums/");
+    let label = album ? name : `${name} (${parts.slice(1, -1).join("/") || parts[0]})`;
+    if (label in targetOf) label = `${name} (${parts.slice(0, -1).join("/")})`;
+    targetOf[label] = t;
+  }
+  $("targets").innerHTML = Object.keys(targetOf).sort((a, b) => a.localeCompare(b)).map(n => `<option value="${esc(n)}">`).join("");
   drawUnits();
 }
 const refreshUnits = () => { clearTimeout(unitsTimer); unitsTimer = setTimeout(() => loadUnits().catch(() => {}), 1200); };
@@ -329,7 +337,8 @@ function toggleOut(p) {
 function askMove(p) { moving = p; $("moveTo").value = ""; $("moveDlg").showModal(); $("moveTo").focus(); }
 async function doMove() {
   let t = $("moveTo").value.trim(); if (!t) return;
-  if (!targets.includes(t) && !t.includes("/")) t = "new:" + t;  // a new album, dated by its photos
+  if (targetOf[t]) t = targetOf[t];
+  else if (!targets.includes(t) && !t.includes("/")) t = "new:" + t;  // a new album, dated by its photos
   $("moveDlg").close();
   const p = moving;
   try {
