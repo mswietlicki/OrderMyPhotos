@@ -988,6 +988,32 @@ The vision phase of the full run started CPU-bound (89–94%). NudeNet and Insig
   The CPU is still at ~90%, now mostly the 4090 worker preparing images (12.6 cores against the app's 8). The 4090 itself sits at ~10%.
 - **Next:** the VLM lane (orient, then text) asks Qwen on the 4090. While it does, the gate keeps the worker off the 4090 (P51), so the other stages lose it until the VLM lane is done.
 
+## P62 — Depth: the work beside the model, side by side (2026-11-06, user, measured)
+
+The user: "what about signals.depth?" It had become the vision phase's longest stage: 8.3 photos/s, ~5 h left.
+
+A photo took ~170 ms on the 4090, of which the model took 10:
+
+| Part | Time |
+|---|---|
+| the PNG at zlib's default level | 97 ms |
+| the 768 px JPEG that matches what the B50's service is sent | 36 ms |
+| the image processor | 26 ms |
+
+The B50's service (mimir `stacks/depth`) did the same work one image at a time. Its `async def` endpoint ran synchronous work, which blocked the event loop.
+
+- **PNG at zlib level 1**, in both: lossless, the same pixels, 7% bigger files, 21 ms instead of 97.
+- **The B50's service** (`mimir/depth-anything-v2:2`) takes requests side by side: a plain `def` endpoint, with the forward pass under a lock. The stage sends it 2 requests besides its own, through a work-queue worker for the service's multipart API (`depth.service_worker`, `OMP_DEPTH_SERVICE_SLOTS`). helper.Share takes such `extra` workers.
+- **The 4090's engine** takes a chunk on 4 threads (`OMP_DEPTH_THREADS`), with the forward pass under a lock.
+- **Checked:** identical depth pixels on 20 previews between service images 1 and 2, and on 40 between the 4090 engine's chunk and one photo at a time.
+
+  | | One at a time | Side by side |
+  |---|---|---|
+  | B50 service | 9.7 images/s | 25.6 (3 at once) |
+  | 4090 engine | 9.5 | 34.5 (a chunk on 4 threads) |
+
+- **On the full run:** depth went from 8.3 to 31.9 photos/s (~73 min left instead of ~5 h). SigLIP 2 fell from 17.6 to 12.8, sharing the B50 (72%) and the CPU (92%) with depth, so the B50's lane (SigLIP, DINOv2, Q-ReAlign, subjects) is now the longest.
+
 ## Open — for the user
 
 1. ~~**Language** of titles, descriptions and tags.~~ Resolved by P42: both languages; S11 reads English only.
