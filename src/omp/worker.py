@@ -1,5 +1,6 @@
 """`omp worker`: the 4090's share of the vision stages (P49). DINOv2, SigLIP 2 and Q-ReAlign, orient's turned views
-and the depth service's model (P52): the same engines as on the B50, as an HTTP service that llama-swap starts on demand as `omp-vision-cuda`: while it
+and the depth service's model (P52): the same engines as on the B50, plus the previews of JPEG originals
+(gpu_previews.py), as an HTTP service that llama-swap starts on demand as `omp-vision-cuda`: while it
 works the chat model is evicted, and the chat model comes back on its next request.
 
 POST /v1/<engine>  {"paths": [preview, ...]}  ->  {"results": [result or {"error"}, ...], "seconds", "device"}
@@ -15,10 +16,10 @@ import time
 
 from fastapi import Body, FastAPI, HTTPException
 
-from . import depth, orient, subjects, vision
+from . import depth, gpu_previews, orient, subjects, vision
 
 ENGINES = {"dino": vision.Dino, "siglip": vision.Siglip, "iqa": vision.Iqa, "orient": orient.Views, "depth": depth.Depth,
-           "subjects": subjects.Subjects}
+           "subjects": subjects.Subjects, "previews": gpu_previews.Previews}
 app = FastAPI(title="omp worker")
 loaded: dict = {}
 locks = {name: threading.Lock() for name in ENGINES}  # several lanes ask at once: one load, one call at a time
@@ -37,6 +38,8 @@ def run(name: str, paths: list[str] = Body(..., embed=True)):
         if name not in loaded:
             loaded[name] = ENGINES[name](vision.device())
         engine, out, t0 = loaded[name], [], time.perf_counter()
+        if hasattr(engine, "batch"):  # an engine that takes the chunk at once (previews: nvJPEG decodes in batches)
+            return {"results": engine.batch(paths), "seconds": round(time.perf_counter() - t0, 3), "device": vision.device()}
         for path in paths:
             try:
                 out.append(engine(path))
