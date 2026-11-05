@@ -29,6 +29,20 @@ CHAT = "qwen3.8-27b"
 IDLE = float(os.environ.get("OMP_4090_IDLE", "900"))   # seconds without a chat token before the 4090 is borrowed
 ENABLED = os.environ.get("OMP_4090", "1") != "0"
 CHUNK = int(os.environ.get("OMP_4090_CHUNK", "24"))     # photos per request: a chat waits at most for one chunk
+# onnxruntime threads for a stage's own CPU work while workers help (faces, nudity, P61): by default a CPU session takes
+# every core, which the GPU workers need to prepare their images (the vision phase sat at 98% CPU, the 4090 at 7%)
+LOCAL_ORT_THREADS = int(os.environ.get("OMP_LOCAL_ORT_THREADS", "4"))
+
+
+def ort_options(threads: int | None):
+    """onnxruntime SessionOptions with `threads` intra-op threads, or None for its default."""
+    if not threads:
+        return None
+    import onnxruntime
+
+    so = onnxruntime.SessionOptions()
+    so.intra_op_num_threads, so.inter_op_num_threads = threads, 1
+    return so
 COUNTERS = ("llamacpp:tokens_predicted_total", "llamacpp:prompt_tokens_total")
 OWN_GRACE = 60   # seconds after this process's own chat calls before the 4090 may be borrowed
 

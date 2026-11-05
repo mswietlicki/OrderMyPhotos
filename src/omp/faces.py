@@ -43,15 +43,19 @@ def run(cfg: Config, con, run_id: str, det_size=1024):
     expressions(cfg, con, run_id)
 
 
-def analysis(models_dir, device: str = "cpu", det_size=1024):
-    """InsightFace buffalo_l, on the CPU or on the 4090 (CUDA, without TF32, so it stays close to the CPU's)."""
+def analysis(models_dir, device: str = "cpu", det_size=1024, threads: int | None = None):
+    """InsightFace buffalo_l, on the CPU (with `threads` onnxruntime threads, or all cores) or on the 4090 (CUDA, without
+    TF32, so it stays close to the CPU's)."""
     from insightface.app import FaceAnalysis
+
+    from .helper import ort_options
 
     cuda = device == "cuda"
     providers = [("CUDAExecutionProvider", {"use_tf32": 0}), "CPUExecutionProvider"] if cuda else ["CPUExecutionProvider"]
+    extra = {"sess_options": ort_options(threads)} if threads and not cuda else {}
     app = FaceAnalysis(name="buffalo_l", root=str(Path(models_dir) / "insightface"),
                        allowed_modules=["detection", "landmark_2d_106", "landmark_3d_68", "recognition"],
-                       providers=providers)
+                       providers=providers, **extra)
     app.prepare(ctx_id=0 if cuda else -1, det_thresh=0.5, det_size=(det_size, det_size))
     return app
 
@@ -93,13 +97,13 @@ class Faces:
 
 def detect(cfg: Config, con, run_id: str, det_size=1024):
     """The faces of every preview: here on the CPU, and on the 4090 through the work queue (helper.Share, P61)."""
-    from .helper import Share
+    from .helper import ENABLED, LOCAL_ORT_THREADS, Share
 
     done = {r[0] for r in con.execute("SELECT id FROM signal WHERE kind='faces' AND model=?", (MODEL,))}
     ids = [r[0] for r in con.execute("SELECT id FROM signal WHERE kind='sharp' ORDER BY id") if r[0] not in done]
     if not ids:
         return
-    app = analysis(cfg.models, "cpu", det_size)
+    app = analysis(cfg.models, "cpu", det_size, threads=LOCAL_ORT_THREADS if ENABLED else None)
     t0 = time.perf_counter()
     total = 0
     with Progress(con, "signals.faces", MODEL, total=len(ids)) as prog:
