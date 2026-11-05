@@ -82,6 +82,9 @@ class Session:
     library_index: str = "self"      # manifest: S11 knows the whole OneDrive library; self: only this root
     created: float = field(default_factory=time.time)
     run: str | None = None           # the run id its DB rows carry, when it isn't the session's id (an adopted DB)
+    # The user said this storage may hold photos another storage already keeps (a backup). Otherwise such a copy is
+    # archived here as a duplicate: one photo, one storage (P58).
+    keep_duplicates: bool = False
 
     @property
     def run_id(self) -> str:
@@ -104,7 +107,7 @@ class Session:
         c = self.config()
         return {"OMP_ROOT": str(c.root), "OMP_DB": str(c.db), "OMP_CACHE": str(c.cache), "OMP_BUNDLE": str(c.bundle),
                 "OMP_STATUS": str(self.dir / "status.json"), "OMP_LIBRARY_INDEX": self.library_index,
-                "OMP_RUN": self.run_id}
+                "OMP_RUN": self.run_id, "OMP_KEEP_DUPLICATES": "1" if self.keep_duplicates else "0"}
 
     def save(self):
         self.dir.mkdir(parents=True, exist_ok=True)
@@ -146,7 +149,7 @@ def set_active(id_: str):
     _write(ACTIVE, {"id": id_, "since": time.time()})
 
 
-def create(name: str, root: str, library_index: str | None = None) -> Session:
+def create(name: str, root: str, library_index: str | None = None, keep_duplicates: bool = False) -> Session:
     path = Path(root)
     if not path.is_absolute() or not allowed(path):
         raise ValueError(f"the root must be inside one of {', '.join(map(str, ROOTS)) or '(no roots configured)'}")
@@ -159,7 +162,7 @@ def create(name: str, root: str, library_index: str | None = None) -> Session:
         id_ = f"{base}-{n}"
     onedrive = str(path.resolve()).startswith("/srv/mimir/onedrive")
     s = Session(id=id_, name=name.strip() or id_, root=str(path),
-                library_index=library_index or ("manifest" if onedrive else "self"))
+                library_index=library_index or ("manifest" if onedrive else "self"), keep_duplicates=bool(keep_duplicates))
     s.save()
     return s
 

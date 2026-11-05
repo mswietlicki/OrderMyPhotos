@@ -14,6 +14,12 @@ archived in future sessions."
 - **Archived before:** a later session archives a photo whose latest confirmed outcome is "archived", without
   asking again (rank.py). A photo counts as archived when none of its copies in that session was kept: an exact
   copy archived next to a kept original is a duplicate, not a rejected photo.
+- **Kept before**, in the same library: kept again (user: "yes, keep them"), out of the judge's reach. A copy of it
+  saved again in the new session is still archived as a duplicate.
+- **Kept in another library** (a copy of a library photo found on a drive or share): archived as a duplicate
+  (user: "if those are duplicates of kept photos then those also should be archived as duplicates"), as long as the
+  catalog still has the photo in that library. A photo archived as a duplicate counts as neither kept nor archived
+  there, so it never makes the original look rejected.
 - Test sets (copies in OMP_APPLY_ROOTS, P48) neither write nor read the catalog: they're experiments, and they
   must run like fresh sessions.
 
@@ -63,7 +69,7 @@ CREATE TABLE IF NOT EXISTS outcome (    -- the confirmed plan of a session, per 
   path TEXT NOT NULL,
   id TEXT NOT NULL,
   library TEXT NOT NULL,
-  verdict TEXT NOT NULL,           -- keep | archive
+  verdict TEXT NOT NULL,           -- keep | archive | duplicate (archived because the same photo is kept)
   dest TEXT,                       -- where the plan moves it; NULL when it stays
   why TEXT,
   at REAL NOT NULL,
@@ -75,6 +81,8 @@ CREATE INDEX IF NOT EXISTS outcome_id ON outcome(id);
 META = ["taken_local", "taken_ts", "time_source", "utc_offset", "make", "model", "lens", "iso", "exposure", "fnumber",
         "focal", "focal35", "lat", "lon", "alt", "width", "height", "orientation", "motion_photo", "meta"]
 ARCHIVE = "Archive/OrderMyPhotos/"
+# plan.py's reasons for archiving a photo because the same photo is kept (P54, copies): duplicates, not rejections
+DUPLICATE = ("an exact copy of a photo", "a copy of a photo")
 ONEDRIVE = Path("/srv/mimir/onedrive")
 
 
@@ -181,7 +189,9 @@ def record_outcome(cfg, con, session: str, final: dict) -> str:
             continue  # not judged, as in the plan
         m = moves.get(p)
         verdict = "archive" if m and m["to"].startswith(ARCHIVE) else "keep"
-        counts[verdict] += 1
+        if verdict == "archive" and (m.get("why") or "").startswith(DUPLICATE):
+            verdict = "duplicate"  # archived because the same photo is kept: not a judgement on the photo
+        counts[verdict] = counts.get(verdict, 0) + 1
         rows.append((session, _in(prefix, p), i, lib, verdict, _in(prefix, m["to"]) if m else None,
                      m.get("why") if m else None, now))
     with cat:
@@ -191,23 +201,58 @@ def record_outcome(cfg, con, session: str, final: dict) -> str:
                     " ON CONFLICT(session) DO UPDATE SET outcome_at=excluded.outcome_at, archived=excluded.archived",
                     (session, lib + (f"/{prefix}" if prefix else ""), str(cfg.root), now, final.get("archived")))
     cat.close()
-    return f"catalog: the outcome of {session} saved: {counts['keep']} kept, {counts['archive']} archived ({final.get('archived')})"
+    return (f"catalog: the outcome of {session} saved: {counts['keep']} kept, {counts['archive']} archived,"
+            f" {counts.get('duplicate', 0)} archived as duplicates ({final.get('archived')})")
 
 
-def archived_before(cfg, session: str) -> dict[str, dict]:
-    """Photo id -> the session that archived it, for photos whose latest confirmed outcome elsewhere is "archived".
-    Per session, a photo is archived only if none of its copies there was kept."""
+def decided_before(cfg, session: str) -> dict[str, dict]:
+    """Photo id -> the latest confirmed judgement of it in another session:
+    {"verdict": keep | archive, "session", "library", "at", "why", "where", "present"}.
+
+    Per session, a photo is kept if any of its copies there was kept, and archived if one was archived on its merits.
+    A session where it was only archived as a duplicate (the same photo kept elsewhere) says nothing about it and is
+    skipped. `where`: a kept copy's path in its library (where the plan moved it); `present`: whether the photo was
+    still in that library at its last inventory."""
     cat = open_catalog(cfg.root)
     if cat is None:
         return {}
-    latest = {}  # id -> (at, session, archived?, why)
-    for i, s, at, kept, why in cat.execute(
-            "SELECT id, session, MAX(at), MAX(verdict = 'keep'), MIN(why) FROM outcome WHERE session != ?"
-            " GROUP BY id, session", (session,)):
-        if i not in latest or at > latest[i][0]:
-            latest[i] = (at, s, not kept, why)
+    latest = {}
+    for i, s, lib, at, kept, rejected, where, why in cat.execute(
+            "SELECT id, session, MIN(library), MAX(at), MAX(verdict = 'keep'), MAX(verdict = 'archive'),"
+            " MIN(CASE WHEN verdict = 'keep' THEN COALESCE(dest, path) END),"
+            " MIN(CASE WHEN verdict = 'archive' THEN why END)"
+            " FROM outcome WHERE session != ? GROUP BY id, session", (session,)):
+        if not (kept or rejected):
+            continue
+        if i not in latest or at > latest[i]["at"]:
+            latest[i] = {"verdict": "keep" if kept else "archive", "session": s, "library": lib, "at": at,
+                         "why": None if kept else why, "where": where if kept else None}
+    present = {}
+    for lib in {b["library"] for b in latest.values() if b["verdict"] == "keep"}:
+        present[lib] = {r[0] for r in cat.execute("SELECT DISTINCT id FROM location WHERE library=?", (lib,))}
     cat.close()
-    return {i: {"session": s, "at": at, "why": why} for i, (at, s, archived, why) in latest.items() if archived}
+    for i, b in latest.items():
+        b["present"] = i in present.get(b["library"], ())
+    return latest
+
+
+def split_before(cfg, session: str) -> tuple[dict, dict, dict]:
+    """What a session does with photos judged before (P58), as three dicts id -> decided_before()'s entry:
+    - archived: archived on its merits before: archived again;
+    - kept: kept before in this same library: kept again;
+    - duplicates: kept before in another library and still there: this copy is a duplicate, archived.
+    A photo kept in another library but gone from it at that library's last inventory is kept here: it may be the
+    only copy left."""
+    lib = library_of(cfg.root)[0]
+    archived, kept, duplicates = {}, {}, {}
+    for i, b in decided_before(cfg, session).items():
+        if b["verdict"] == "archive":
+            archived[i] = b
+        elif b["library"] != lib and b["present"]:
+            duplicates[i] = b
+        else:
+            kept[i] = b
+    return archived, kept, duplicates
 
 
 def main(argv=None):

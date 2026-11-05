@@ -327,7 +327,8 @@ def status() -> dict:
         phases[PHASE["apply"]] |= {"state": "skipped" if cur >= PHASE["apply"] else "pending", "about": why_not}
     pending = review.pending(s) if runner.phase["key"] in ("review", "resort", "plan", "final") else None
     out.update({
-        "session": {"id": s.id, "name": s.name, "root": s.root, "library_index": s.library_index, "created": s.created,
+        "session": {"id": s.id, "name": s.name, "root": s.root, "library_index": s.library_index,
+                    "keep_duplicates": s.keep_duplicates, "created": s.created,
                     "apply": {"possible": can_apply, "why_not": why_not}},
         "phase": runner.phase["key"] if cur < len(PHASES) else None, "phases": phases, "rounds": c["rounds"],
         "wanted": c["wanted"], "stage": st.get("stage") if alive else None, "step": step, "lanes": lanes,
@@ -438,12 +439,13 @@ def api_browse(path: str | None = None):
 
 
 @app.post("/api/sessions")
-def api_new_session(name: str = Body(...), root: str = Body(...), library_index: str | None = Body(None)):
+def api_new_session(name: str = Body(...), root: str = Body(...), library_index: str | None = Body(None),
+                    keep_duplicates: bool = Body(False)):
     """A new session on a root directory; it becomes the active one."""
     if runner.alive():
         raise HTTPException(409, "pause the running session first")
     try:
-        s = sessions.create(name, root, library_index)
+        s = sessions.create(name, root, library_index, keep_duplicates)
     except ValueError as exc:
         raise HTTPException(400, str(exc))
     sessions.set_active(s.id)

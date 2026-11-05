@@ -146,6 +146,9 @@
   <div class="field"><label>Root folder</label><input id="newRoot" readonly placeholder="pick a folder below">
     <div class="muted" id="browseInfo"></div>
     <div class="dirs" id="dirs"></div></div>
+  <div class="field"><label><input type="checkbox" id="newCopies"> This storage may keep copies of photos another storage
+    already keeps (a backup)</label>
+    <div class="muted">Otherwise a photo already kept in another storage is archived here as a duplicate.</div></div>
   <div class="row" style="justify-content: flex-end">
     <button onclick="document.getElementById('newDialog').close()">Cancel</button>
     <button class="primary" id="createBtn" onclick="createSession()">Create and select</button>
@@ -369,7 +372,11 @@ async function browse(path) {
 }
 function openNew() { $("newError").textContent = ""; $("newDialog").showModal(); browse(null); }
 async function createSession() {
-  try { render(await api("/api/sessions", {name: $("newName").value || "Session", root: $("newRoot").value})); $("newDialog").close(); }
+  try {
+    render(await api("/api/sessions", {name: $("newName").value || "Session", root: $("newRoot").value,
+                                       keep_duplicates: $("newCopies").checked}));
+    $("newDialog").close();
+  }
   catch (e) { $("newError").textContent = e.message; }
 }
 $("newSession").onclick = openNew;

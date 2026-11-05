@@ -8,6 +8,7 @@ the sample for now). Close calls and floor candidates are marked for the VLM (ju
 
 import json
 import math
+import os
 import sys
 import time
 
@@ -376,12 +377,19 @@ def run(cfg: Config, con, run_id: str):
 
     bursts = [(g["gid"], [r[0] for r in con.execute("SELECT id FROM grp_member WHERE gid=? ORDER BY ord", (g["gid"],))],
                g["cohesion"]) for g in con.execute("SELECT gid, cohesion FROM grp WHERE run=? AND kind='burst'", (run_id,))]
-    # Archived in an earlier session (the library catalog, P58): archived again, and out of their bursts, so the
-    # rest of a burst is ranked without them.
+    # Judged in an earlier session (the library catalog, P58):
+    # - archived on its merits: archived again, and out of its burst, so the rest of the burst is ranked without it;
+    # - kept in this library: kept again (in decide()), still in its burst, so a new frame is compared with it;
+    # - kept in another storage: this copy is a duplicate, archived and out of its burst. One photo, one storage,
+    #   unless the session says this storage may keep copies (a backup): then it's kept like the others.
     from . import catalog
 
-    before = {i: b for i, b in catalog.archived_before(cfg, run_id).items() if i in feats}
-    bursts = [(g, ms, c) for g, ms, c in ((g, [m for m in ms if m not in before], c) for g, ms, c in bursts) if len(ms) >= 2]
+    before, kept_before, dup_of = catalog.split_before(cfg, run_id)
+    if os.environ.get("OMP_KEEP_DUPLICATES") == "1":
+        kept_before, dup_of = kept_before | dup_of, {}
+    before, kept_before, dup_of = ({i: b for i, b in d.items() if i in feats} for d in (before, kept_before, dup_of))
+    gone = before.keys() | dup_of.keys()
+    bursts = [(g, ms, c) for g, ms, c in ((g, [m for m in ms if m not in gone], c) for g, ms, c in bursts) if len(ms) >= 2]
     in_burst = {i for _, m, _ in bursts for i in m}
     from .db import exact_copies
 
@@ -395,6 +403,13 @@ def run(cfg: Config, con, run_id: str):
             x = feats[id_]
             f = {k: (round(v, 4) if isinstance(v, float) else v) for k, v in x.items()}
             f.update(extra or {})
+            if id_ in kept_before and not f.get("exact_copy") and id_ not in copies:
+                # The user kept it in an earlier session: kept, and out of the judge's reach (no floor check, no
+                # close call). A copy saved again here is still archived as a duplicate (P58).
+                verdict, tier, floor = "keep", "auto", None
+                protected = protected or "kept before"
+                reasons = [f"kept before, in session {kept_before[id_]['session']}"] + list(reasons)
+                f.update(kept_before=kept_before[id_]["session"], judge=False, suspect=None)
             tx = texts.get(id_)
             if tx:
                 f["rotate"] = tx["rotate"] or None
@@ -493,6 +508,11 @@ def run(cfg: Config, con, run_id: str):
                        "auto",
                        extra={"archived_before": b["session"]})
                 continue
+            if id_ in dup_of:  # the same photo is kept in another storage: archived here as a duplicate (P58)
+                b = dup_of[id_]
+                decide(id_, None, "archive", 0, 0.0, [f"a copy of a photo kept in {b['library']}: {b['where']}"], "auto",
+                       extra={"exact_copy": True, "copy_of": f"{b['library']}:{b['where']}", "library_copy": b["library"]})
+                continue
             if id_ in exact:  # the same pixels saved again: archived, never shown for review (P54)
                 decide(id_, None, "archive", 0, 0.0, ["an exact copy of a photo that is kept"], "auto",
                        extra={"exact_copy": True, "copy_of": exact[id_]})
@@ -521,7 +541,7 @@ def run(cfg: Config, con, run_id: str):
                         (run_id,)).fetchone()[0]
     which = (f"fitted on {len(train_y)} labelled frames" if isinstance(model, ExtraModel) else
              f"shared, from {model.about}" if model else "not fitted (rules)")
-    print(f"rank: extra-frame model {which}; {summary}; {floors} below the floor; {judge} bursts need the VLM judge; {len(kept_back)} kept as a person's only photos of an event; {len(before)} archived before (catalog); camera medians {cam_median};"
+    print(f"rank: extra-frame model {which}; {summary}; {floors} below the floor; {judge} bursts need the VLM judge; {len(kept_back)} kept as a person's only photos of an event; catalog: {len(before)} archived before, {len(kept_before)} kept before, {len(dup_of)} copies of photos kept in another storage; camera medians {cam_median};"
           f" {dt:.1f} s")
 
 
