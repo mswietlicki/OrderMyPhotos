@@ -964,6 +964,30 @@ The user, with the CPU at 15% while the 4090 did the previews: "could we do both
   - A real second machine needs the omp-cuda image (or the package and its models), and must accept connections from Mimir: Mimir opens them, so nothing changes in Mimir's firewall. `omp worker` has no authentication, so it should listen only on the LAN or the tailnet, never the internet.
 - **The CPU stays out of the vision stages:** SigLIP 2 on 12 cores did 0.7 images/s (B50 17, 4090 27), and the CPU lane already runs faces and nudity.
 
+## P61 — Faces and nudity on the 4090, through the work queue (2026-11-05, user, measured)
+
+The vision phase of the full run started CPU-bound (89–94%). NudeNet and InsightFace ran on the CPU lane, and the 4090 sat at 11%, its worker short of CPU to prepare images. Faces were the phase's long pole: 3.7 photos/s in s8, ~12 h for the library. The user: "yes, move them" (nudity, then faces, from the CPU to the GPUs).
+
+- **omp-cuda 0.4:** onnxruntime-gpu 1.31.1 (CUDA 13, cuDNN 9), InsightFace 2.1, NudeNet 3.4.2, headless OpenCV. The same versions as the app's image, which has the CPU onnxruntime. cuRAND comes from onnxruntime-gpu's `[cuda,cudnn]` extras.
+- **Engines `faces` and `nudity`** in `omp worker`; both stages use helper.Share (P60), so the 4090 takes chunks while the stage's own CPU does photos too.
+  - faces.face_rows() gives one preview's faces as plain values, on the CPU or in the worker. The stage writes them as before.
+  - NudeNet ignores its `providers` argument (commented out in 3.4.2), so its session is made again: on CUDA in the worker, with fewer threads on the CPU.
+  - On CUDA, TF32 is off, so results match the CPU's.
+- **Checked against the CPU** on 120 previews of the run:
+  - faces: the same 121 faces, box IoU 1.0, identical scores and embeddings (cosine 1.0); 25.7 photos/s on the 4090 against 1.5 on the busy CPU;
+  - nudity: identical detections; 60.9 photos/s on the 4090 against 17.3.
+- **The stage's own CPU work gets 4 onnxruntime threads** (`OMP_LOCAL_ORT_THREADS`) while workers help. onnxruntime's default takes every core, and with that the CPU stayed at 98% and the 4090 at 7%. Results with 4 threads were identical to all cores on 15 previews.
+- **Measured on the full run:**
+
+  | Lane | Before | After |
+  |---|---|---|
+  | nudity | 30 photos/s | 64 |
+  | SigLIP 2 | 15 | 17.6 |
+  | depth | 7.7 | 8.3 |
+
+  The CPU is still at ~90%, now mostly the 4090 worker preparing images (12.6 cores against the app's 8). The 4090 itself sits at ~10%.
+- **Next:** the VLM lane (orient, then text) asks Qwen on the 4090. While it does, the gate keeps the worker off the 4090 (P51), so the other stages lose it until the VLM lane is done.
+
 ## Open — for the user
 
 1. ~~**Language** of titles, descriptions and tags.~~ Resolved by P42: both languages; S11 reads English only.
