@@ -531,7 +531,6 @@ The reviewer: "Yes, then s8", a new set of about 1000 photos once s7 was applied
 | Archived → kept | 76 | 20, of them 6 for motion blur and 3 for one face fewer |
 | A burst's pick kept by the reviewer | 192 of 214 (90%) | 201 of 207 (97%) |
 
-- Most changes were in the `review` tier (31 of 54). In the `auto` tier, 20 photos kept were archived (most of them singles) and 3 archived were kept.
-- s8 has fewer people photos than s7, so the people rules (P55, P57) had little to do.
+- Most changes were in the `review` tier (31 of 54). In the `auto` tier, 20 photos kept were archived and 3 archived were kept.
 
 **Applied:** the reviewer chose to delete the archived photos. The Apply phase took 2.6 s. It moved 672 photos, turned 10 and deleted 384, with nothing skipped and no errors, leaving 588 of the 972 files.
