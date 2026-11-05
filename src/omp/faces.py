@@ -11,6 +11,7 @@ local VLM asked "is this person smiling?" at AUC 0.85, and where it says happy (
 
 import json
 import time
+from pathlib import Path
 
 import numpy as np
 from PIL import Image
@@ -42,57 +43,94 @@ def run(cfg: Config, con, run_id: str, det_size=1024):
     expressions(cfg, con, run_id)
 
 
-def detect(cfg: Config, con, run_id: str, det_size=1024):
+def analysis(models_dir, device: str = "cpu", det_size=1024):
+    """InsightFace buffalo_l, on the CPU or on the 4090 (CUDA, without TF32, so it stays close to the CPU's)."""
     from insightface.app import FaceAnalysis
+
+    cuda = device == "cuda"
+    providers = [("CUDAExecutionProvider", {"use_tf32": 0}), "CPUExecutionProvider"] if cuda else ["CPUExecutionProvider"]
+    app = FaceAnalysis(name="buffalo_l", root=str(Path(models_dir) / "insightface"),
+                       allowed_modules=["detection", "landmark_2d_106", "landmark_3d_68", "recognition"],
+                       providers=providers)
+    app.prepare(ctx_id=0 if cuda else -1, det_thresh=0.5, det_size=(det_size, det_size))
+    return app
+
+
+def face_rows(app, path) -> dict:
+    """One preview's faces, as plain values: {"w", "h", "faces": [{"bbox", "score", "yaw", "pitch", "roll", "eye_l",
+    "eye_r", "emb"}]}. The same on the CPU and in the 4090 worker."""
+    img = Image.open(path).convert("RGB")
+    bgr = np.asarray(img)[:, :, ::-1].copy()
+    h, w = bgr.shape[:2]
+    rows = []
+    for f in app.get(bgr):
+        kps = np.asarray(f.kps, dtype=np.float32)
+        iod = float(np.linalg.norm(kps[0] - kps[1]))
+        lm = f.get("landmark_2d_106")
+        pose = f.get("pose")
+        pitch, yaw, roll = (float(v) for v in pose) if pose is not None else (None, None, None)
+        # `normed_embedding` is a property of insightface's Face, not one of its dict keys.
+        emb = f.normed_embedding if f.get("embedding") is not None else None
+        rows.append({"bbox": [float(v) for v in f.bbox], "score": float(f.det_score), "yaw": yaw, "pitch": pitch,
+                     "roll": roll,
+                     "eye_l": eye_openness(np.asarray(lm), kps[0], iod) if lm is not None else None,
+                     "eye_r": eye_openness(np.asarray(lm), kps[1], iod) if lm is not None else None,
+                     "emb": [float(v) for v in emb] if emb is not None else None})
+    return {"w": w, "h": h, "faces": rows}
+
+
+class Faces:
+    """`omp worker`'s faces engine (the 4090, P61)."""
+
+    def __init__(self, device):
+        from .config import Config
+
+        self.app = analysis(Config().models, "cuda" if device == "cuda" else "cpu")
+
+    def __call__(self, path) -> dict:
+        return face_rows(self.app, path)
+
+
+def detect(cfg: Config, con, run_id: str, det_size=1024):
+    """The faces of every preview: here on the CPU, and on the 4090 through the work queue (helper.Share, P61)."""
+    from .helper import Share
 
     done = {r[0] for r in con.execute("SELECT id FROM signal WHERE kind='faces' AND model=?", (MODEL,))}
     ids = [r[0] for r in con.execute("SELECT id FROM signal WHERE kind='sharp' ORDER BY id") if r[0] not in done]
     if not ids:
         return
-    app = FaceAnalysis(name="buffalo_l", root=str(cfg.models / "insightface"),
-                       allowed_modules=["detection", "landmark_2d_106", "landmark_3d_68", "recognition"],
-                       providers=["CPUExecutionProvider"])
-    app.prepare(ctx_id=-1, det_thresh=0.5, det_size=(det_size, det_size))
+    app = analysis(cfg.models, "cpu", det_size)
     t0 = time.perf_counter()
     total = 0
     with Progress(con, "signals.faces", MODEL, total=len(ids)) as prog:
-        for id_ in ids:
+        share = Share(cfg, "faces", ids)
+        for id_, r in share:
             with prog.item(id_):
-                img = Image.open(cfg.preview(id_)).convert("RGB")
-                bgr = np.asarray(img)[:, :, ::-1].copy()
-                h, w = bgr.shape[:2]
-                faces = app.get(bgr)
+                r = r or face_rows(app, cfg.preview(id_))
+                w, h = r["w"], r["h"]
                 con.execute("DELETE FROM face WHERE id=?", (id_,))  # older models' rows too
                 con.execute("DELETE FROM face_expr WHERE id=?", (id_,))  # new faces, new expressions
                 con.execute("DELETE FROM signal WHERE id=? AND kind='expression'", (id_,))
-                for f in faces:
-                    x0, y0, x1, y1 = [float(v) for v in f.bbox]
-                    kps = np.asarray(f.kps, dtype=np.float32)
-                    iod = float(np.linalg.norm(kps[0] - kps[1]))
-                    lm = f.get("landmark_2d_106")
-                    eye_l = eye_openness(np.asarray(lm), kps[0], iod) if lm is not None else None
-                    eye_r = eye_openness(np.asarray(lm), kps[1], iod) if lm is not None else None
-                    pose = f.get("pose")
-                    pitch, yaw, roll = (float(v) for v in pose) if pose is not None else (None, None, None)
-                    # `normed_embedding` is a property of insightface's Face, not one of its dict keys.
-                    emb = f.normed_embedding if f.get("embedding") is not None else None
+                for f in r["faces"]:
+                    x0, y0, x1, y1 = f["bbox"]
                     con.execute(
                         "INSERT INTO face(id, model, box, score, size, yaw, pitch, roll, eye_l, eye_r, emb)"
                         " VALUES (?,?,?,?,?,?,?,?,?,?,?)",
-                        (id_, MODEL, f"[{x0 / w:.4f},{y0 / h:.4f},{x1 / w:.4f},{y1 / h:.4f}]", float(f.det_score),
-                         (y1 - y0) / h, yaw, pitch, roll, eye_l, eye_r,
-                         np.asarray(emb, np.float16).tobytes() if emb is not None else None),
+                        (id_, MODEL, f"[{x0 / w:.4f},{y0 / h:.4f},{x1 / w:.4f},{y1 / h:.4f}]", f["score"],
+                         (y1 - y0) / h, f["yaw"], f["pitch"], f["roll"], f["eye_l"], f["eye_r"],
+                         np.asarray(f["emb"], np.float16).tobytes() if f["emb"] is not None else None),
                     )
                 con.execute(
                     "INSERT OR REPLACE INTO signal(id, kind, model, value, data) VALUES (?,?,?,?,?)",
-                    (id_, "faces", MODEL, len(faces), None),
+                    (id_, "faces", MODEL, len(r["faces"]), None),
                 )
-                total += len(faces)
+                total += len(r["faces"])
     con.commit()
     dt = time.perf_counter() - t0
-    log_timing(con, "signals.faces", run_id, prog.ok, dt, "cpu")
+    log_timing(con, "signals.faces", run_id, prog.ok, dt, "cpu" + share.note())
     con.commit()
-    print(f"signals.faces: {prog.ok} images, {total} faces, {dt:.1f} s ({prog.ok / max(dt, 1e-6):.1f} img/s on cpu)")
+    print(f"signals.faces: {prog.ok} images, {total} faces, {dt:.1f} s ({prog.ok / max(dt, 1e-6):.1f} img/s,"
+          f" cpu{share.note()})")
 
 
 def square_crop(img: np.ndarray, box) -> np.ndarray:

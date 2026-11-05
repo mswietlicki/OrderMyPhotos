@@ -19,10 +19,11 @@ import time
 
 from fastapi import Body, FastAPI, HTTPException, Response
 
-from . import depth, gpu_previews, orient, subjects, vision
+from . import depth, faces, gpu_previews, orient, subjects, vision
 
 ENGINES = {"dino": vision.Dino, "siglip": vision.Siglip, "iqa": vision.Iqa, "orient": orient.Views, "depth": depth.Depth,
-           "subjects": subjects.Subjects, "previews": gpu_previews.Previews}
+           "subjects": subjects.Subjects, "previews": gpu_previews.Previews, "faces": faces.Faces,
+           "nudity": vision.Nudity}  # faces and nudity: InsightFace and NudeNet on onnxruntime-gpu (omp-cuda 0.4, P61)
 app = FastAPI(title="omp worker")
 loaded: dict = {}
 locks = {name: threading.Lock() for name in ENGINES}  # several lanes ask at once: one load, one call at a time

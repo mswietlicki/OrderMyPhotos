@@ -4,6 +4,7 @@ fits next to the always-on RAG models on the B50 (~8 GiB free)."""
 import contextlib
 import gc
 import time
+from pathlib import Path
 
 import numpy as np
 import torch
@@ -344,24 +345,50 @@ def run_iqa(cfg: Config, con, run_id: str):
 from .nudity import NUDITY, NUDITY_SCORE, full_nudity  # noqa: E402
 
 
+class Nudity:
+    """NudeNet's bundled 320n ONNX model: on the CPU, or `omp worker`'s nudity engine on the 4090 (CUDA, without
+    TF32, P61). It returns the detections as plain values."""
+
+    def __init__(self, device="cpu"):
+        import os
+
+        import nudenet
+        import onnxruntime
+        from nudenet import NudeDetector
+
+        self.detector = NudeDetector()
+        if device == "cuda":  # NudeNet 3.4.2 ignores its `providers` (commented out): its session, made again on CUDA
+            model = os.path.join(os.path.dirname(nudenet.nudenet.__file__), "320n.onnx")
+            self.detector.onnx_session = onnxruntime.InferenceSession(
+                model, providers=[("CUDAExecutionProvider", {"use_tf32": 0}), "CPUExecutionProvider"])
+
+    def __call__(self, path) -> dict:
+        src = str(path) if isinstance(path, (str, Path)) else path.read()  # a path, or a remote worker's bytes
+        return {"dets": [{"class": d["class"], "score": float(d["score"]), "box": [float(v) for v in d["box"]]}
+                         for d in self.detector.detect(src)]}
+
+
 def run_nudity(cfg: Config, con, run_id: str):
-    from nudenet import NudeDetector
+    """Here on the CPU, and on the 4090 through the work queue (helper.Share, P61)."""
+    from .helper import Share
 
     ids = todo_ids(con, "nudity", NUDITY)
     if not ids:
         return
-    detector = NudeDetector()  # the bundled 320n ONNX model, on the CPU
+    detector = Nudity("cpu")
     t0 = time.perf_counter()
     flagged = 0
     with Progress(con, "signals.nudity", NUDITY, total=len(ids)) as prog:
-        for i in ids:
+        share = Share(cfg, "nudity", ids)
+        for i, r in share:
             with prog.item(i):
-                dets = detector.detect(str(cfg.preview(i)))
+                dets = (r or detector(cfg.preview(i)))["dets"]
                 full = full_nudity(dets)
                 flagged += full
                 exposed = sorted({d["class"] for d in dets if d["score"] >= NUDITY_SCORE and d["class"].endswith("_EXPOSED")})
                 put_signal(con, i, "nudity", NUDITY, value=float(full), data={"full": full, "exposed": exposed})
     dt = time.perf_counter() - t0
-    log_timing(con, "signals.nudity", run_id, prog.ok, dt, "cpu")
+    log_timing(con, "signals.nudity", run_id, prog.ok, dt, "cpu" + share.note())
     con.commit()
-    print(f"signals.nudity: {prog.ok} images, {flagged} with full nudity, {dt:.1f} s ({prog.ok / max(dt, 1e-6):.1f} img/s on cpu)")
+    print(f"signals.nudity: {prog.ok} images, {flagged} with full nudity, {dt:.1f} s ({prog.ok / max(dt, 1e-6):.1f} img/s,"
+          f" cpu{share.note()})")
