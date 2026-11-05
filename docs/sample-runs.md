@@ -495,3 +495,17 @@ These are data only: verdicts, groups, features, the ViTPose keypoints and the n
 - **Coverage of people:** of 42 (event, named person) pairs, the pipeline left 4 without a kept photo, and the reviewer kept one for 2 of them.
   - One is a burst of three kept as "the only photos of her in this outfit". The whole burst fell below the quality floor ("badly blurred", quality 0.61–0.70).
 - **The quality floor** archived 65 photos; the reviewer kept 8. Half of them are from a light museum, where "badly blurred against the camera's usual detail" misreads a dark, light-art scene.
+
+### s7 applied (2026-11-05)
+
+The reviewer chose to delete the archived photos. The Apply phase took 2.4 s on s7's copy. It moved 739 photos, turned 4 and deleted the 445 archived photos, with nothing skipped and no errors, leaving 608 of the 1053 files. Its plan was made before P55, so s7 doesn't show the person-per-event rule or the judge's pose question.
+
+## Run s8: a fresh set for P53–P55 (2026-11-05)
+
+The reviewer: "Yes, then s8", a new set of about 1000 photos once s7 was applied. P55 was tuned on s7's picks, so s7 can't tell whether it holds. s8 is the first run with P53–P55 from the start.
+
+**The test set:** 972 photos from 1 to 18 September 2022, built by `scripts/testset.py 2022-09-01 2022-09-18`:
+- the 3 albums dated in those days, with 432 photos, 48 of them put back from `_archived/`;
+- 540 unsorted photos named with those days: 424 from Samsung Gallery and 116 WhatsApp images. That's more messenger photos than any earlier set (s7 had 9).
+- 3 of the unsorted photos are byte copies of photos in the test albums.
+- The session `s8` (own library index) was made in the app and started there.
