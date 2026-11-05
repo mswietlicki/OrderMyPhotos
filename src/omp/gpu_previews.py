@@ -157,7 +157,8 @@ class Previews:
             gray = ((r * 19595 + g * 38470 + b * 7471 + 0x8000) >> 16).to(torch.uint8)  # Pillow's RGB -> "L"
             tiles = self.tiles(gray)
             prev8, th8 = prev.to(torch.uint8), th.to(torch.uint8)
-            res = {"w": w, "h": h, "tiles": tiles.tolist(), "exposure": self.exposure(prev8)}
+            res = {"w": w, "h": h, "tiles": b64(np.ascontiguousarray(tiles, np.float32).tobytes()),
+                   "tiles_shape": list(tiles.shape), "exposure": self.exposure(prev8)}
             return res, prev8.permute(1, 2, 0).contiguous().cpu().numpy(), th8.permute(1, 2, 0).contiguous().cpu().numpy()
 
     def batch(self, paths: list[str]) -> list[dict]:
@@ -200,4 +201,5 @@ class Previews:
 def decode_reply(x: dict) -> tuple[bytes, bytes, np.ndarray, np.ndarray]:
     """One result, for the stage: the preview and thumbnail JPEGs, the thumbnail's pixels, the tiles."""
     thumb_px = np.frombuffer(base64.b64decode(x["thumb_px"]), np.uint8).reshape(x["thumb_shape"])
-    return (base64.b64decode(x["preview"]), base64.b64decode(x["thumb"]), thumb_px, np.asarray(x["tiles"], np.float32))
+    tiles = np.frombuffer(base64.b64decode(x["tiles"]), np.float32).reshape(x["tiles_shape"])
+    return base64.b64decode(x["preview"]), base64.b64decode(x["thumb"]), thumb_px, tiles

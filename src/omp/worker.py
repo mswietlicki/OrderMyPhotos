@@ -10,11 +10,12 @@ It reads the previews from the sessions' cache, mounted read-only at the same pa
 returns results: the stage that asked writes them to its DB.
 """
 
+import json
 import os
 import threading
 import time
 
-from fastapi import Body, FastAPI, HTTPException
+from fastapi import Body, FastAPI, HTTPException, Response
 
 from . import depth, gpu_previews, orient, subjects, vision
 
@@ -40,7 +41,11 @@ def run(name: str, paths: list[str] = Body(..., embed=True)):
     engine = loaded[name]
     if getattr(engine, "concurrent", False):  # takes the chunk at once, several requests side by side (previews)
         t0 = time.perf_counter()
-        return {"results": engine.batch(paths), "seconds": round(time.perf_counter() - t0, 3), "device": vision.device()}
+        out = engine.batch(paths)
+        # json.dumps directly: FastAPI's own encoder walks every value in Python, holding the GIL the decoding
+        # threads need (megabytes of base64 a chunk)
+        return Response(json.dumps({"results": out, "seconds": round(time.perf_counter() - t0, 3), "device": vision.device()}),
+                        media_type="application/json")
     with locks[name]:
         out, t0 = [], time.perf_counter()
         for path in paths:
