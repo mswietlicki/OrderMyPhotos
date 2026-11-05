@@ -321,7 +321,7 @@ def keep_people(con, run_id: str, feats: dict, event_of: dict) -> list[str]:
         "SELECT id, verdict, features, rank, reasons FROM decision WHERE run=?", (run_id,))}
     kept = []
     for (_, pid), ids in sorted(photos.items(), key=lambda kv: (kv[0][0], str(kv[0][1]))):
-        ids = [i for i in ids if i in dec and not dec[i][1].get("exact_copy")]
+        ids = [i for i in ids if i in dec and not dec[i][1].get("exact_copy") and not dec[i][1].get("archived_before")]
         if not ids or any(dec[i][0] == "keep" for i in ids):
             continue
         best = max(ids, key=lambda i: (dec[i][2] == 0, (feats[i]["quality"] or 0) + (feats[i]["aesthetics"] or 0)))
@@ -376,6 +376,12 @@ def run(cfg: Config, con, run_id: str):
 
     bursts = [(g["gid"], [r[0] for r in con.execute("SELECT id FROM grp_member WHERE gid=? ORDER BY ord", (g["gid"],))],
                g["cohesion"]) for g in con.execute("SELECT gid, cohesion FROM grp WHERE run=? AND kind='burst'", (run_id,))]
+    # Archived in an earlier session (the library catalog, P58): archived again, and out of their bursts, so the
+    # rest of a burst is ranked without them.
+    from . import catalog
+
+    before = {i: b for i, b in catalog.archived_before(cfg, run_id).items() if i in feats}
+    bursts = [(g, ms, c) for g, ms, c in ((g, [m for m in ms if m not in before], c) for g, ms, c in bursts) if len(ms) >= 2]
     in_burst = {i for _, m, _ in bursts for i in m}
     from .db import exact_copies
 
@@ -480,6 +486,13 @@ def run(cfg: Config, con, run_id: str):
         for id_, x in feats.items():
             if id_ in in_burst:
                 continue
+            if id_ in before:  # the user's earlier decision stands: archived, not shown for review again (P58)
+                b = before[id_]
+                decide(id_, None, "archive", 0, 0.0, [f"archived before, in session {b['session']}"
+                                                      + (f": {b['why']}" if b["why"] not in (None, "", "archive") else "")],
+                       "auto",
+                       extra={"archived_before": b["session"]})
+                continue
             if id_ in exact:  # the same pixels saved again: archived, never shown for review (P54)
                 decide(id_, None, "archive", 0, 0.0, ["an exact copy of a photo that is kept"], "auto",
                        extra={"exact_copy": True, "copy_of": exact[id_]})
@@ -508,7 +521,7 @@ def run(cfg: Config, con, run_id: str):
                         (run_id,)).fetchone()[0]
     which = (f"fitted on {len(train_y)} labelled frames" if isinstance(model, ExtraModel) else
              f"shared, from {model.about}" if model else "not fitted (rules)")
-    print(f"rank: extra-frame model {which}; {summary}; {floors} below the floor; {judge} bursts need the VLM judge; {len(kept_back)} kept as a person's only photos of an event; camera medians {cam_median};"
+    print(f"rank: extra-frame model {which}; {summary}; {floors} below the floor; {judge} bursts need the VLM judge; {len(kept_back)} kept as a person's only photos of an event; {len(before)} archived before (catalog); camera medians {cam_median};"
           f" {dt:.1f} s")
 
 

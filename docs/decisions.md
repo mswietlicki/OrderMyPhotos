@@ -865,6 +865,30 @@ The user, naming s8: "Sometimes I do not remember a person's name but I still wa
   - The page counts the cards "known without a name", so a stranger left unmarked shows up there.
 - **Hidden:** cards marked "I don't know them" ("Not an animal of ours" for animals) or "Not a person" leave the All and Unnamed views. They go to a Hidden tab that shows their count, where the mark can be undone.
 
+## P58 — A library catalog outlives the sessions; what was archived stays archived (2026-11-05, user)
+
+The user, during the full OneDrive run: "Make sure to save full inventory with metadata for future use. We may want to run this on other disks and storages and photos may duplicate; if something is archived during this process it should also always be archived in future sessions."
+
+A session's DB belongs to the session, and sessions get deleted (the tests were cleared that day). So what has to last goes to a catalog of its own, `<state>/catalog.db` (`/srv/mimir/data/photos/catalog.db` on Mimir, in the snapshotted `data` volume), written by `omp/catalog.py`:
+
+- **Inventory:** the read phase ends with a `catalog` stage.
+  - `location`: every file, with its library and path. A library is OneDrive (whichever snapshot of the mirror is read) or a drive or share's root. A session on one folder replaces only that folder's rows.
+  - `media`: every distinct photo and video by its QuickXorHash, with its EXIF metadata (time, camera, GPS, size, orientation) and pHash/dHash, so resized or recompressed copies can be found later.
+  - A later session with less metadata doesn't erase what's known.
+  - The full run's 178,475 files take 35 s and 163 MB.
+- **Outcome:** confirming the final decision saves where each judged photo ends up: kept (at its path, or where the plan moves it) or archived. It also saves whether the archived photos are kept or deleted.
+- **Archived before:** the `rank` stage of a later session archives a photo whose latest confirmed outcome elsewhere is "archived".
+  - It takes it out of its burst first, so the rest of the burst is ranked without it.
+  - The archive is `auto` tier, isn't shown for review again, and P55's "only photo of someone you know" doesn't bring it back. The reviewer can still move it by hand.
+  - A photo counts as archived only when no copy of it was kept in that session: an exact copy archived next to a kept original (P54) is a duplicate, not a rejected photo.
+- **Tests:** test sets (copies in `OMP_APPLY_ROOTS`, P48) neither write nor read the catalog. They're copies of library photos with the same hashes, so their experimental decisions would otherwise decide the library's. `OMP_CATALOG=off` turns it off for a bench.
+- **Tested on s8:** s8's DB from `data` snapshot 73, with its plan rebuilt (the same 672 moves and 384 archived as applied), was recorded, then ranked again as a new session.
+  - All 379 photos archived with no kept copy came back archived, `auto`, outside bursts. 5 exact copies of kept photos weren't counted.
+  - Every burst left has ≥ 2 frames and a kept one.
+  - Not covered: 43 of the 583 photos the user kept would be archived by the new ranking before the judge. 14 of them the old ranking archived too, and the other 29 come from bursts re-ranked without the archived frames. They're shown for review again. Whether a photo kept before should also stay kept is open below.
+
+Open: whether "kept before" should be honoured the same way, and what a later session does with a copy, on another storage, of a photo kept in the library (archive it as a duplicate, or leave it).
+
 ## Open — for the user
 
 1. ~~**Language** of titles, descriptions and tags.~~ Resolved by P42: both languages; S11 reads English only.

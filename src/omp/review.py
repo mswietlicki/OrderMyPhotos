@@ -104,6 +104,8 @@ def placements(session) -> dict:
             continue  # an exact copy of a photo in an album: archived as a copy, nothing to review
         if i in exact and kind != "move":  # a confirmed album's "place" labels don't count, only a move by hand
             continue  # the same pixels as a photo that's kept, saved again: archived, nothing to review (P54)
+        if feat.get("archived_before") and kind != "move":
+            continue  # archived in an earlier session: the user decided it then (P58)
         state, target = "open", None
         if kind in ("move", "place") and value and not value.startswith("new:"):
             target, state = value, "confirmed"

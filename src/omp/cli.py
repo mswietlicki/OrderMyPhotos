@@ -10,9 +10,9 @@ from . import runtime
 from .config import Config
 from .db import connect
 
-STAGES = ["inventory", "previews", "signals", "orient", "faces", "subjects", "depth", "text", "group", "rank",
+STAGES = ["inventory", "previews", "catalog", "signals", "orient", "faces", "subjects", "depth", "text", "group", "rank",
           "judge", "captions", "people", "place", "albums", "report", "plan", "apply", "ocr", "labels", "evaluate", "stats"]
-ALL = ["inventory", "previews", "signals", "orient", "faces", "subjects", "depth", "text", "people", "place", "group", "rank",
+ALL = ["inventory", "previews", "catalog", "signals", "orient", "faces", "subjects", "depth", "text", "people", "place", "group", "rank",
        "judge", "captions", "albums", "report", "plan"]
 
 
@@ -32,7 +32,7 @@ def lock(cfg: Config):
 
 # Quick stages without one loop to follow: a step over all photos, done when the stage is, so the app shows
 # every step in photos and percent. The others count their own photos as they go.
-WHOLE = {"people", "place", "plan"}
+WHOLE = {"people", "place", "plan", "catalog"}
 
 
 def run_stage(stage, cfg, con, args):
@@ -52,6 +52,9 @@ def _run_stage(stage, cfg, con, args):
     elif stage == "previews":
         from . import previews
         previews.run(cfg, con, args.run, force=args.force)
+    elif stage == "catalog":  # the inventory, saved where it outlives the session (P58)
+        from . import catalog
+        print(catalog.save(cfg, con, args.run))
     elif stage == "signals":
         from . import vision
         only = (args.only or "dino,siglip,iqa,nudity").split(",")

@@ -30,8 +30,8 @@ ACTIVE = STATE / "active.json"
 
 PHASES = [
     {"key": "read", "kind": "server", "title": "Read the photos",
-     "about": "Find every photo, hash it, read its metadata and make the previews.",
-     "stages": ["inventory", "previews"]},
+     "about": "Find every photo, hash it, read its metadata and make the previews; save them to the library catalog.",
+     "stages": ["inventory", "previews", "catalog"]},
     {"key": "signals", "kind": "server", "title": "Look at every photo",
      "about": "Embeddings, quality, orientation, faces, people and animals, depth, text pages.",
      "stages": ["signals", "orient", "faces", "subjects", "depth", "text"],

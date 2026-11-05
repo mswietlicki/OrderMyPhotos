@@ -132,6 +132,7 @@ class Runner:
                 if (data or {}).get("archived") not in ("keep", "delete"):
                     raise HTTPException(400, "decide what happens to the archived photos: keep or delete")
                 _write_json(self.session.dir / "final.json", (data or {}) | {"at": time.time()})
+                self._record_outcome(data or {})
                 if not apply.appliable(Path(self.session.root))[0]:  # OneDrive: applied there, later (S9)
                     self.control.update(phase=len(PHASES), wanted="finished")
                     self.save()
@@ -143,6 +144,23 @@ class Runner:
             self.save()
             if not self.alive():
                 self._spawn()
+
+    def _record_outcome(self, final: dict):
+        """The confirmed plan goes to the library catalog, where it outlives the session (P58). A failure is logged
+        and doesn't hold up the final decision."""
+        from . import catalog
+
+        try:
+            cfg = self.session.config()
+            con = sqlite3.connect(f"file:{cfg.db}?mode=ro", uri=True, timeout=60)
+            try:
+                msg = catalog.record_outcome(cfg, con, self.session.run_id, final)
+            finally:
+                con.close()
+        except Exception as exc:  # noqa: BLE001
+            msg = f"catalog: the outcome wasn't saved: {exc}"
+        with open(self.log_path(), "a", encoding="utf-8") as f:
+            print(msg, file=f)
 
     def _spawn(self):
         stages = self.phase["stages"]
