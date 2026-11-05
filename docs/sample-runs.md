@@ -475,3 +475,23 @@ The user: "Clear S6 and its copy of the photos and prepare and start S7 with a n
 - **The sure-first loop:** 33 groups placed for sure, 45 left unsure.
 - **The review:** 43 albums and folders.
 - **On the page**, orientation and the judge show no photo counts while they run: they don't report per-photo progress, so a long step looks idle.
+
+### s7: the reviewer's picks against the pipeline's (2026-11-05)
+
+These are data only: verdicts, groups, features, the ViTPose keypoints and the named faces, with no photo looked at. 967 photos, exact copies left out.
+
+- **The reviewer changed 121 verdicts (13%):** 76 photos the pipeline archived were kept, and 45 it kept were archived.
+  - That's 9% of the `auto` tier and 14% of `review`.
+  - The pick of a burst was kept in 192 of 214 bursts.
+  - In 33 bursts the reviewer kept more frames than the pipeline (448 against 411 in all).
+- **Reasons on the photos kept against the pipeline:**
+  - "smiles less than the best frame" 23;
+  - "weaker than the best frame" 20, "motion blur" 20, "subject soft" 14, one face fewer 14;
+  - a whole burst below the quality floor 5.
+  - Re-ranking without the smile term, or with sharpness weighted 0.20 instead of 0.35, changed one photo. So the smile is named but isn't what decides those frames.
+- **Where the pick differs** (23 bursts), the reviewer's frame is softer: sharper in only 8%. It's also less often facing the camera, and has more torso lean (+2.9°), shoulder tilt (+4.5°) and hip tilt (+3.6°), so more of a posed stance. The reviewer: "photos with more provocative or expressive poses are better".
+  - Keypoint measures and the zero-shot "posing/kissing/hugging" share don't predict it, though. Added to the extra-frame model, they lower its AUC from 0.72 to 0.69.
+- **The extra-frame model** fitted on s7's own 544 labelled frames reaches AUC 0.72, leaving each album out in turn. Its best signals are a different look (DINOv2 similarity to the pick), more faces, sharpness and the burst's size. At P ≥ 0.5 it loses 81 of the 233 kept extras and keeps 84 more that were archived.
+- **Coverage of people:** of 42 (event, named person) pairs, the pipeline left 4 without a kept photo, and the reviewer kept one for 2 of them.
+  - One is a burst of three kept as "the only photos of her in this outfit". The whole burst fell below the quality floor ("badly blurred", quality 0.61–0.70).
+- **The quality floor** archived 65 photos; the reviewer kept 8. Half of them are from a light museum, where "badly blurred against the camera's usual detail" misreads a dark, light-art scene.
