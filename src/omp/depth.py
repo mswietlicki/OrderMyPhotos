@@ -22,11 +22,19 @@ INPUT_PX = 768
 LOCAL = "hf-local/Depth-Anything-V2-Small-hf"  # the depth service's own copy of the model, under /models
 
 
+MODEL_PX, MULTIPLE = 518, 14  # Depth-Anything's processor: the long side to 518, each side a multiple of 14
+
+
 def request(path) -> bytes:
-    """What the service is sent for a photo: its preview at INPUT_PX, as a JPEG."""
+    """What the service is sent for a photo: its preview at INPUT_PX, as a JPEG. A strip too thin for the model
+    raises ValueError at once: the processor would round its short side to 0 and the service answer 500, which the
+    stage retried for 15 minutes, holding up the lane (a 3060 x 42 photo on the full run)."""
     img = Image.open(path).convert("RGB")
     s = INPUT_PX / max(img.size)
-    img = img.resize((round(img.width * s), round(img.height * s)), Image.Resampling.LANCZOS)
+    w, h = round(img.width * s), round(img.height * s)
+    if round(MODEL_PX * min(w, h) / max(w, h) / MULTIPLE) < 1:
+        raise ValueError(f"too thin for depth: {img.width}x{img.height}")
+    img = img.resize((w, h), Image.Resampling.LANCZOS)
     buf = io.BytesIO()
     img.save(buf, "JPEG", quality=92)
     return buf.getvalue()
@@ -93,7 +101,12 @@ def service_worker(url: str, slots: int):
         def request(self, client, chunk):
             out = []
             for it in chunk:
-                r = client.post(url, files={"file": ("p.jpg", request(self.path_of(it)), "image/jpeg")})
+                try:
+                    data = request(self.path_of(it))
+                except ValueError as exc:  # too thin: this photo's error (the stage skips it), not the worker's
+                    out.append({"error": str(exc)})
+                    continue
+                r = client.post(url, files={"file": ("p.jpg", data, "image/jpeg")})
                 r.raise_for_status()
                 out.append({"png": base64.b64encode(r.content).decode()})
             return out
