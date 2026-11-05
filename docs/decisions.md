@@ -927,6 +927,36 @@ A photo took ~2.9 s of one core: 56% the sharpness filters, 18% the decode, 15% 
 - **Rejected:** the sharpness filters on the B50 (built and checked). The upload alone took 24 ms a photo, so one process could do at most ~11 photos/s.
 - `OMP_PREVIEWS_4090=0` puts everything back on the CPU.
 
+## P60 — One queue, several workers: the CPU, the 4090, the B50, later other machines (2026-11-05, user, measured)
+
+The user, with the CPU at 15% while the 4090 did the previews: "could we do both in parallel? maybe even B50, 4090 and CPU? make a queue and subscriber workers running on different components but doing the same job as fast as they can; in the future we could even use different machines in the local network".
+
+- **workqueue.py:** the step's photos are one queue. A worker takes the next chunk whenever it has a free slot, so a fast worker takes more:
+  - **CPU:** the stage's process pool;
+  - **4090:** `omp worker` through llama-swap, while the 4090 may be borrowed;
+  - **B50:** a second `omp worker` that the stage starts in the app's container, on 127.0.0.1:8791, with a pidfile;
+  - **another machine:** `OMP_REMOTE_WORKERS="name=http://host:port"`, an `omp worker` that reads the originals at the same paths.
+- What a GPU worker can't do goes to the CPU, which marks what it must.
+- A worker that keeps failing gives its chunks back, and stops after 10 minutes.
+- `OMP_PREVIEWS_LANES` picks the workers, `OMP_PREVIEWS_CPU` the CPU's slots.
+- **The CPU gets 2 slots next to GPU workers, not workers − 6.** A photo on the CPU path takes ~2.9 s of CPU, against ~0.3 s for a GPU worker's decoding. With 14 CPU slots the full run fell from 19 to 13 photos/s: the CPU was at 90% and the 4090 at 4–15%, short of decoding.
+- **Measured on the full run:**
+
+  | Workers | Photos/s |
+  |---|---|
+  | 4090 alone | 19 |
+  | 4090 + B50 + 2 CPU slots | ~23 (4090 13, B50 8, CPU 2) |
+  | 4090 + B50 + 14 CPU slots | 13 |
+
+  The stage's own process is the limit now: it parses the workers' JSON (~1 MB a photo, base64) and writes every result under one GIL. Binary replies, or parsing in another process, would go further.
+- **The B50 engine** is checked against the CPU on 72 photos:
+  - sharpness within 2e-6, exposure within 1e-4;
+  - dhash identical, phash at most 2 apart;
+  - previews at 75 dB PSNR.
+
+  It takes ~4 GB of the B50 next to the RAG models (8.2 → 12.4 GB), and only during the preview step.
+- **Not yet:** the vision stages of the signals phase still share work the older way (helper.Share: the B50 from the front, the 4090 from the back). Moving them onto the queue is the next step. Remote workers are built but untested.
+
 ## Open — for the user
 
 1. ~~**Language** of titles, descriptions and tags.~~ Resolved by P42: both languages; S11 reads English only.
