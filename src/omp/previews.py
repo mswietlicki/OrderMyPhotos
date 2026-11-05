@@ -12,7 +12,7 @@ from pathlib import Path
 import cv2
 import imagehash
 import numpy as np
-from PIL import Image, ImageOps
+from PIL import Image, ImageFile, ImageOps
 
 from .config import Config
 from .db import log_timing, put_signal
@@ -102,8 +102,22 @@ def exposure(rgb_small: np.ndarray) -> dict:
 def process(args) -> dict:
     id_, path, preview, thumb = args
     t0 = time.perf_counter()
+    truncated = False
     try:
         img = decode(Path(path))
+    except OSError as exc:
+        if "truncated" not in str(exc):
+            return {"id": id_, "error": f"decode: {exc}"}
+        # A JPEG that lost its last bytes (an interrupted download or copy): decode what's there, the rest comes
+        # out grey. The photo is still sorted like the others ("no photo stays unsorted", P29), and marked.
+        ImageFile.LOAD_TRUNCATED_IMAGES = True
+        try:
+            img = decode(Path(path))
+            truncated = True
+        except Exception as exc2:  # noqa: BLE001
+            return {"id": id_, "error": f"decode: {exc2}"}
+        finally:
+            ImageFile.LOAD_TRUNCATED_IMAGES = False
     except Exception as exc:  # noqa: BLE001 - recorded, the stage continues
         return {"id": id_, "error": f"decode: {exc}"}
     w, h = img.size
@@ -124,7 +138,7 @@ def process(args) -> dict:
     expo = exposure(np.asarray(prev))
     hashes = {"phash": str(imagehash.phash(th)), "dhash": str(imagehash.dhash(th))}
     return {
-        "id": id_, "w": w, "h": h, "sharp": sharp, "exposure": expo, "hashes": hashes,
+        "id": id_, "w": w, "h": h, "sharp": sharp, "exposure": expo, "hashes": hashes, "truncated": truncated,
         "seconds": time.perf_counter() - t0, "decode_s": t_decode,
     }
 
@@ -149,6 +163,9 @@ def run(cfg: Config, con, run_id: str, force=False):
                        data={k: s[k] for k in ("p90", "median", "motion", "noise", "scale")})
             put_signal(con, res["id"], "exposure", MODEL, data=res["exposure"])
             put_signal(con, res["id"], "phash", MODEL, data=res["hashes"])
+            if res["truncated"]:
+                put_signal(con, res["id"], "truncated", MODEL, value=1)
+                print(f"previews: {res['id'][:10]} is truncated; decoded what's there (signal truncated)")
             per_image.append(res["seconds"])
             prog.done(res["id"])
     elapsed = time.perf_counter() - started
