@@ -102,7 +102,7 @@ def placements(session) -> dict:
         kind, value = word.get(i, (None, ""))
         if pr is not None and pr["action"] == "copy" and kind not in ("move", "place"):
             continue  # an exact copy of a photo in an album: archived as a copy, nothing to review
-        if i in exact and kind not in ("move", "place"):
+        if i in exact and kind != "move":  # a confirmed album's "place" labels don't count, only a move by hand
             continue  # the same pixels as a photo that's kept, saved again: archived, nothing to review (P54)
         state, target = "open", None
         if kind in ("move", "place") and value and not value.startswith("new:"):

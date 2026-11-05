@@ -819,7 +819,7 @@ The user, reviewing s7: "I see duplicates of photos in albums. The duplicate is 
   - Each pair had the same capture time, pHash distance 0, the same size in pixels and DINOv2 cosine 1.0000.
 - **Exact copy** (`group.py`): a copy pair (same capture time to 0.01 s, in two folders) with pHash distance 0, the same width and height, and DINOv2 ≥ 0.999. Its group records `exact`. Groups from earlier runs count as exact when their pHash distance is 0.
 - **The kept one is the file already in an album.** The group puts it first. Before, the earlier of the two in the photo list was kept, and in 19 of s7's 58 pairs that was the phone's copy, with the album's own file archived.
-- **Rank** archives the second as `exact_copy` (tier `auto`, `copy_of` the kept photo). The review doesn't show it unless the reviewer moved or placed it by hand. The plan archives it as "an exact copy of a photo that's kept".
+- **Rank** archives the second as `exact_copy` (tier `auto`, `copy_of` the kept photo). The review doesn't show it unless the reviewer moved it by hand (confirming an album, which labels every photo in it, doesn't count). The plan archives it as "an exact copy of a photo that's kept".
 - **Near copies** (a resized or re-compressed version, pHash ≤ 8) are still shown archived, since they may differ.
 - **Tested** on a scratch copy of s7: all 58 pairs were exact, with the album's file first. 41 album files were kept with their copy archived; in 17 both were archived, the frame not being the burst's pick.
 
