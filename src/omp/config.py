@@ -6,6 +6,11 @@ from dataclasses import dataclass, field
 from pathlib import Path, PurePosixPath
 
 import yaml
+from PIL import Image
+
+# Pillow refuses images over 2 x 89.5 MP as possible decompression bombs. The library's own 200 MP phone shots
+# (Galaxy S23 Ultra, 16320 x 12240) are real photos: allow up to 2 x 250 MP.
+Image.MAX_IMAGE_PIXELS = 250_000_000
 
 PHOTO_EXT = {".jpg", ".jpeg", ".png", ".heic", ".heif", ".webp", ".mpo", ".cr2", ".dng", ".gif", ".tif", ".tiff"}
 VIDEO_EXT = {".mp4", ".mov", ".mts", ".m2ts", ".avi", ".mkv", ".3gp", ".m4v", ".wmv", ".mpg", ".mpeg"}
