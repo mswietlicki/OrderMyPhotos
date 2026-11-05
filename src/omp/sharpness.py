@@ -89,11 +89,17 @@ class TorchTiles:
         self.filters = t([SOBEL_X, SOBEL_X.T, LAPLACIAN]).view(3, 1, 3, 3)
         self.noise = t(NOISE_KERNEL).view(1, 1, 3, 3)
         self.areas = {}
+        import threading
+
+        self.lock = threading.Lock()  # callers on several threads (the 4090 worker's previews)
 
     def _area(self, n: int, m: int):
-        if (n, m) not in self.areas:
-            self.areas[(n, m)] = self.torch.tensor(area_weights(n, m), device=self.dev)
-        return self.areas[(n, m)]
+        with self.lock:
+            if (n, m) not in self.areas:
+                self.areas[(n, m)] = self.torch.tensor(area_weights(n, m), device=self.dev)
+                if len(self.areas) > 128:
+                    self.areas.pop(next(k for k in self.areas if k != (n, m)))
+            return self.areas[(n, m)]
 
     def __call__(self, gray) -> np.ndarray:
         """(8, gh, gw) float32 for a luminance image: a uint8 numpy array, or a 2-D tensor on the device."""

@@ -83,26 +83,32 @@ def b64(data: bytes) -> str:
 
 
 class Previews:
-    """The engine: `batch(paths)` -> one result per path, {"error"} for those the CPU should do."""
+    """The engine: `batch(paths)` -> one result per path, {"error"} for those the CPU should do. Several requests run
+    at once (`concurrent`), so one chunk's decoding overlaps another's GPU work."""
+
+    concurrent = True
 
     def __init__(self, device):
+        import threading
+
         import torch
 
         self.torch, self.dev = torch, torch.device(device)
         self.tiles = TorchTiles(device)
-        self.mats = {}
+        self.mats, self.lock = {}, threading.Lock()
         sdiv = [0] + [int(round((255 << 12) / i)) for i in range(1, 256)]  # OpenCV's RGB2HSV saturation table
         self.sdiv = torch.tensor(sdiv, dtype=torch.int64, device=self.dev)
         self.pool = ThreadPoolExecutor(THREADS)
 
     def _mat(self, kind: str, n: int, m: int):
         key = (kind, n, m)
-        if key not in self.mats:
-            w = lanczos_weights(n, m) if kind == "lanczos" else box_weights(n, m)
-            self.mats[key] = self.torch.tensor(w, device=self.dev)
-            if len(self.mats) > 64:  # many sizes: keep the cache small
-                self.mats.pop(next(iter(self.mats)))
-        return self.mats[key]
+        with self.lock:
+            if key not in self.mats:
+                w = lanczos_weights(n, m) if kind == "lanczos" else box_weights(n, m)
+                self.mats[key] = self.torch.tensor(w, device=self.dev)
+                if len(self.mats) > 64:  # many sizes: keep the cache small
+                    self.mats.pop(next(k for k in self.mats if k != key))
+            return self.mats[key]
 
     def _pass(self, img, mat, axis, rounded=True):
         """One resampling pass along an axis (2: width, 1: height) of a (3, H, W) float tensor; rounded to 8 bits
@@ -156,10 +162,13 @@ class Previews:
 
     def batch(self, paths: list[str]) -> list[dict]:
         t0 = time.perf_counter()
+        from concurrent.futures import as_completed
+
         out: list = [None] * len(paths)
-        loads = [self.pool.submit(_load, p) for p in paths]
+        loads = {self.pool.submit(_load, p): k for k, p in enumerate(paths)}
         encodes = {}
-        for k, fut in enumerate(loads):
+        for fut in as_completed(loads):  # each photo to the GPU as soon as it's decoded
+            k = loads[fut]
             try:
                 a = fut.result()
             except Exception as exc:  # noqa: BLE001 - the CPU path: cut short, broken, not an image

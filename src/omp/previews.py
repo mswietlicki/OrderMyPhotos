@@ -32,7 +32,8 @@ MODEL = "classic@1"
 PREVIEW_PX, THUMB_PX = 1536, 384
 MAX_SHARP_MP = 25       # above this, sharpness is measured at half resolution (108 MP phones)
 GPU_EXT = {".jpg", ".jpeg"}
-CHUNK = int(os.environ.get("OMP_PREVIEWS_CHUNK", "16"))  # JPEGs per request to the 4090
+CHUNK = int(os.environ.get("OMP_PREVIEWS_CHUNK", "24"))  # JPEGs per request to the 4090
+IN_FLIGHT = int(os.environ.get("OMP_PREVIEWS_IN_FLIGHT", "3"))  # requests at once: decoding overlaps GPU work
 
 try:
     import pillow_heif
@@ -144,7 +145,7 @@ def process(args) -> dict:
 
 
 class Sender:
-    """Chunks of JPEGs to the 4090 worker (`previews` engine), two requests at a time, while the 4090 may be borrowed
+    """Chunks of JPEGs to the 4090 worker (`previews` engine), IN_FLIGHT requests at a time, while the 4090 may be borrowed
     (helper.Gate, as for the vision stages). Results, and chunks given back to the CPU, come out of `out`."""
 
     GIVE_UP = 600  # seconds the 4090 may stay unavailable, or failing, before the CPU takes the rest
@@ -156,7 +157,7 @@ class Sender:
         self.chunks = deque(items[i:i + CHUNK] for i in range(0, len(items), CHUNK))
         self.url = f"{cfg.llm}/upstream/{helper.WORKER}/v1/previews"
         self.out, self.lock, self.stop, self.remote = queue.Queue(), threading.Lock(), False, 0
-        self.threads = [threading.Thread(target=self._run, daemon=True) for _ in range(2 if items else 0)]
+        self.threads = [threading.Thread(target=self._run, daemon=True) for _ in range(IN_FLIGHT if items else 0)]
         for t in self.threads:
             t.start()
 

@@ -37,9 +37,12 @@ def run(name: str, paths: list[str] = Body(..., embed=True)):
     with locks[name]:
         if name not in loaded:
             loaded[name] = ENGINES[name](vision.device())
-        engine, out, t0 = loaded[name], [], time.perf_counter()
-        if hasattr(engine, "batch"):  # an engine that takes the chunk at once (previews: nvJPEG decodes in batches)
-            return {"results": engine.batch(paths), "seconds": round(time.perf_counter() - t0, 3), "device": vision.device()}
+    engine = loaded[name]
+    if getattr(engine, "concurrent", False):  # takes the chunk at once, several requests side by side (previews)
+        t0 = time.perf_counter()
+        return {"results": engine.batch(paths), "seconds": round(time.perf_counter() - t0, 3), "device": vision.device()}
+    with locks[name]:
+        out, t0 = [], time.perf_counter()
         for path in paths:
             try:
                 out.append(engine(path))
