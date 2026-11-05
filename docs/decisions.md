@@ -770,6 +770,10 @@ The user: "The server will be restricted to only work regarding this OrderMyPhot
   - 6 slots weren't faster; 8 don't fit.
   - It pays where answers are long. Captions on s6, 113 photos: 538 s one at a time, 353 s four at a time.
   - Questions answered with one token are bound by reading the prompt. The judge took 597 s four at a time against 608 s one at a time, and its probabilities moved by up to 0.16 (the verdicts didn't). So the judge, orient's checks and text stay one at a time.
+  - **Later (2026-11-05):** the user saw the 4090 "in waves" during s7's judge. It was busy only ~57 % of the time.
+    - The cause: after every request, the server copied its context (328 MiB) into its RAM prompt cache, and the 4090 waited for that.
+    - Turned off (mimir D28, `--cache-ram 0`), the same 100 judge requests took 20–24 % less time, with the 4090 72–80 % busy. The answers stayed within run-to-run noise.
+    - Preparing the next images ahead or two requests in flight added only 3–5 % more, so they weren't adopted.
   - A first benchmark, which reused the same images, had shown them faster; the server's prompt cache had done that.
 - **The album sorting keeps its answers** (`answers.db` next to the session's DB, by the whole request).
   - A re-run asks only what's new. On s6 without its review, the first run asked 107 questions in 104 s; the same run again took 1 s, with the same 25 proposals for all 386 photos.
