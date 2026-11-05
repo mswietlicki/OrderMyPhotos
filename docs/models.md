@@ -51,6 +51,44 @@ The library is private and non-commercial, so non-commercial licences (InsightFa
 | Copy verification (crops, edits) | **SIFT + RANSAC homography** (OpenCV) on candidate pairs | ALIKED + LightGlue if SIFT misses filtered edits | — | CPU |
 | Perceptual hash | pHash/dHash (`imagehash`) | | — | CPU |
 
+## Picking the frame: what the research says (2026-11-05)
+
+What the literature and the culling tools say about choosing the best of a series, and how it bears on OrderMyPhotos. The numbers marked "s7" are from the reviewer's own picks (sample-runs.md, s7 analysis).
+
+- **[Automatic Triage for a Photo Series](https://pixl.cs.princeton.edu/pubs/Chang_2016_ATF/index.php)** (Chang et al., SIGGRAPH 2016): 5,953 series of personal photos, with pairwise preferences from MTurk.
+  - What raters gave as reasons, against a photo: blur, dark lighting, washed-out colour, distracting foreground or background. For one: sharper, clearer and closer, more detail, brighter colour, often a wider shot.
+  - For portraits: "smiling face", "closer face", "face angle" and "eyes".
+  - The photos' owners chose the crowd's pick in 358 of 551 series (65%); where they didn't, the crowd was split too.
+  - A generic aesthetics model (RAPID, trained on AVA) and composition rules came out close to random between similar photos. Sharpness did well. A Siamese CNN reached 73% on pairs with ≥ 70% agreement.
+- **[Top Shot](https://research.google/blog/top-shot-on-pixel-3/)** (Google, Pixel 3):
+  - per face: eyes open, smiling, and emotional expression (amusement, surprise), combined over the faces with a small additive model;
+  - without faces: subject motion saliency, global motion blur, and exposure and focus;
+  - the whole fitted to the frames that hundreds of volunteers chose.
+  - That's the shape of rank's score, with a few weights fitted to labels.
+- **[Best Frame Selection in a Short Video](https://openaccess.thecvf.com/content_WACV_2020/html/Ren_Best_Frame_Selection_in_a_Short_Video_WACV_2020_paper.html)** (Ren et al., WACV 2020): 11,000 clips with the best frame marked. The context of the other frames matters to the choice, so frames should be compared within their series, not scored alone.
+- **[FGAesthetics / FGAesQ](https://arxiv.org/abs/2603.03907)** (CVPR 2026): fine-grained aesthetics within series of near-identical photos, 10,028 series ranked pairwise, burst photos among them.
+  - FGAesQ, a CLIP ViT-B/16 model, picks the better of a natural pair 78% of the time, against 71% for Q-Align (8B).
+  - The [weights are on Hugging Face](https://huggingface.co/yzc002/FGAesQ), with no licence stated.
+  - **A candidate for bursts:** small, made for exactly this, and to be measured against the s7 picks.
+- **[HumanAesExpert](https://arxiv.org/abs/2503.23907)** (2025): aesthetics of photos of people. Its scores cover the face (brightness, clarity, skin, structure, contour), outfit, body shape, looks and environment, but not pose or expression.
+  - [HumanAesExpert-1B](https://huggingface.co/KlingTeam/HumanAesExpert-1B) is MIT, 0.9B parameters (InternViT-300M + Qwen2-0.5B).
+  - A candidate for people frames, also to be measured on s7.
+- **[Visual Aesthetic Benchmark](https://icml.cc/virtual/2026/68543)** (ICML 2026): the best of 20 frontier multimodal models chose both the best and the worst image of a set in 26.5% of tasks, against 68.9% for human experts. Fine-tuning a 35B model on 2,000 expert examples brought it near a 397B one.
+  - So the VLM judge isn't an aesthetic expert out of the box. The reviewer's own labels (s7: 1,120 verdicts) are worth more than a better prompt alone.
+- **Personal taste:** few-shot personalised aesthetics ([task vectors](https://arxiv.org/abs/2407.07176), ECCV 2024) is an open problem; one evaluation found it didn't beat general predictions on average. Culling tools (Aftershoot) learn from the photographer's own culls over time. That's the extra-frame model carried from one session to the next.
+- **Albums, not frames:**
+  - [Event-specific image importance](https://openaccess.thecvf.com/content_cvpr_2016/html/Wang_Event-Specific_Image_Importance_CVPR_2016_paper.html) (CVPR 2016): what matters in an album depends on the kind of event.
+  - Album summaries trade off [quality, diversity and coverage](https://archives.iw3c2.org/www2011/proceedings/companion/p127.pdf) of people, events and places.
+  - Facebook's summary patent picks a photo per group of people.
+  - That supports keeping a photo of every person at every event.
+- **Interestingness** ([Gygli et al., ICCV 2013](https://openaccess.thecvf.com/content_iccv_2013/html/Gygli_The_Interestingness_of_2013_ICCV_paper.html)) comes from unusualness, aesthetics and emotional arousal. Memorability models (ResMem) exist, but they score a photo alone, not a frame against its burst.
+
+**Against the s7 picks (within bursts):**
+- **Expression intensity:** the faces' emotional arousal (EmotiEffLib, P50) was higher in the kept frames in 66% of bursts, and higher in the reviewer's frame where their pick differed from the pipeline's in 65%. Valence, the smile, was higher there in only 41%. So intensity of expression, not happiness alone, is what the reviewer keeps.
+- **Eyes open** (eye openness, already measured): higher in the reviewer's frame in 79% of the bursts where they differed (14 bursts). rank doesn't use it yet.
+- **Face angle and face size:** no effect.
+- Pose measures from the keypoints didn't predict the picks (sample-runs.md, s7 analysis).
+
 ## VLM: judge (S5) and captions (S7)
 
 | Model | Why | Fit | Status |
