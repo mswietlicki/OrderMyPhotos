@@ -179,8 +179,10 @@ def run(cfg: Config, con, run_id: str, force=False):
             workers.append(workqueue.HttpWorker(q, "b50", f"{local.url}/v1/previews", path_of, CHUNK, IN_FLIGHT))
     for name, url in workqueue.remotes():
         workers.append(workqueue.HttpWorker(q, name, f"{url}/v1/previews", path_of, CHUNK, IN_FLIGHT))
-    # The CPU's slots: fewer when GPU workers decode on the same cores (the 4090's and the B50's in this machine)
-    cpu_slots = cfg.workers if not workers else max(1, int(os.environ.get("OMP_PREVIEWS_CPU", max(2, cfg.workers - 6))))
+    # The CPU's slots. With GPU workers, few: they decode on the same cores, and a photo on the CPU path takes ~2.9 s of
+    # CPU against ~0.3 s for a GPU worker's decoding. With 14 slots the full run went from 19 to 13 photos/s, the 4090
+    # starved of decoding (P60)
+    cpu_slots = cfg.workers if not workers else max(1, int(os.environ.get("OMP_PREVIEWS_CPU", 2)))
     if "cpu" not in lanes and workers:
         cpu_slots = 1  # only what the GPUs can't do
     print(f"{split}; workers: cpu x{cpu_slots}" + "".join(f", {w.name}" for w in workers))
