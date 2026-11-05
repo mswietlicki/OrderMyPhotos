@@ -444,3 +444,19 @@ s6 became the first session of the web app (its DB, cache and bundle adopted; ro
 - In `albums.run`, the out-label helper `base()` was shadowed by the rolling `Base` further down. It never ran before, because no run had out photos at that point; the first resort crashed. It's `unit_of()` now.
 - The pinned set was checked under the name `moved`, which `run` reuses as a counter. Now `pinned`.
 - The dismantled album was made again under the same name, so its photos stayed "to sort" for ever. Now no new album is made for them. Separately, a resort that places nothing stops the loop: Done asks to move those photos by hand.
+
+## Run s7: 1000 photos, the first test in the app from the start (2026-11-05)
+
+The user: "Clear S6 and its copy of the photos and prepare and start S7 with a new set of 1000 photos."
+
+**s6 is gone:**
+- its session (state and cache) and its photo copy in `tests/s6/`;
+- the old build scripts in `/tmp`;
+- `data` snapshot 65 was taken before.
+
+**The test set:** 1053 photos from 1 June to 22 July 2022, built by [`scripts/testset.py`](../scripts/testset.py) the way s5 and s6 were:
+- the 9 albums dated in those days, with 501 photos, 200 of them put back from `_archived/`;
+- 543 unsorted Samsung Gallery photos and 9 WhatsApp images named with those days;
+- 28 of those unsorted photos are byte copies of photos in the test albums. They're kept, as in the library, so they're 1025 photos for the pipeline.
+- The file list and the ground truth (which of the user's albums hold each unsorted photo's bytes) are in `tests/s7/state/`.
+- The session `s7` was made in the app (root `tests/s7/before`, its own library index) and started there. It runs everything since P48–P52: lanes, the 4090 helper with no idle wait, facial expressions, and the chat model on 4 slots.
