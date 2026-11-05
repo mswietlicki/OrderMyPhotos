@@ -168,10 +168,14 @@ def sleep(seconds: float):
 class Progress:
     """`with Progress(con, stage, model) as prog:`, then `with prog.item(id_):` around each photo's work,
     or `prog.done(id_)` / `prog.fail(id_, error)` for results coming back from a process pool.
-    `commit=False`: only the progress, for a stage that commits its own work when it's whole (the albums)."""
+    `commit=False`: only the progress, for a stage that commits its own work when it's whole (the albums).
+    `before`: the items an earlier pass of the step already did (a resumed run): the step reports the whole count,
+    `before` included, so its total doesn't shrink after a restart; its speed is this pass's."""
 
-    def __init__(self, con, stage: str, model: str, total: int | None = None, every=None, seconds=None, commit=True):
+    def __init__(self, con, stage: str, model: str, total: int | None = None, every=None, seconds=None, commit=True,
+                 before: int = 0):
         self.con, self.stage, self.model, self.total, self.commit = con, stage, model, total, commit
+        self.before = before
         self.every, self.seconds = every or COMMIT_EVERY, seconds or COMMIT_SECONDS
         self.ok = self.failed = self.streak = self.pending = 0
         self.last = self.reported = time.monotonic()
@@ -191,8 +195,7 @@ class Progress:
         if self.commit:
             self.con.commit()
         self._report()
-        add_step({"name": self.stage, "ok": self.ok, "failed": self.failed, "total": self.total,
-                  "seconds": round(time.time() - self.started, 1), "stopped": exc[0] is not None})
+        add_step(self._counts() | {"seconds": round(time.time() - self.started, 1), "stopped": exc[0] is not None})
         report(step=None)
         if self.failed:
             print(f"{self.stage}: {self.failed} photos skipped (signal error.{self.stage})")
@@ -241,9 +244,14 @@ class Progress:
         self.samples.append((time.time(), self.ok))
         t0, n0 = self.samples[0]
         recent = (self.ok - n0) / (time.time() - t0) if time.time() - t0 >= 5 else None
-        report(step={"name": self.stage, "ok": self.ok, "failed": self.failed, "total": self.total,
-                     "started": self.started, "recent_rate": round(recent, 2) if recent is not None else None,
-                     "errors": list(self.errors)})
+        report(step=self._counts() | {"started": self.started,
+                                      "recent_rate": round(recent, 2) if recent is not None else None,
+                                      "errors": list(self.errors)})
+
+    def _counts(self) -> dict:
+        """The step's counts, with what earlier passes did; `before` lets a reader take this pass's speed."""
+        return {"name": self.stage, "ok": self.ok + self.before, "failed": self.failed,
+                "total": self.total + self.before if self.total is not None else None, "before": self.before}
 
 
 def post(client: httpx.Client, url: str, **kw) -> httpx.Response:

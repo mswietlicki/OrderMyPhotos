@@ -295,7 +295,7 @@ def _rated(step: dict | None) -> dict | None:
     """A step with its speed since it started and the time left at that speed."""
     if step:
         elapsed = max(time.time() - step["started"], 1e-6)
-        step["rate"] = round(step["ok"] / elapsed, 2)
+        step["rate"] = round((step["ok"] - step.get("before", 0)) / elapsed, 2)  # this pass's speed
         left = (step["total"] or 0) - step["ok"] - step["failed"]
         step["eta"] = round(left / step["rate"]) if step["rate"] and step["total"] else None
     return step

@@ -313,7 +313,7 @@ function render(s) {
 function renderDetails(s) {
   $("steps").innerHTML = s.steps.length ? "<tr><th>Step</th><th class='n'>Photos</th><th class='n'>Done</th><th class='n'>Skipped</th><th class='n'>Time</th><th class='n'>/s</th></tr>"
     + s.steps.slice().reverse().map(x => `<tr><td>${esc(x.name)}${x.lane ? ` <span class='muted'>· ${esc(x.lane)}</span>` : ""}${x.stopped ? " <span class='muted'>(stopped)</span>" : ""}</td><td class="n">${num(x.ok)}${x.total != null ? " of " + num(x.total) : ""}</td>`
-    + `<td class="n">${x.total ? pctOf(x).toFixed(0) + " %" : "—"}</td><td class="n">${num(x.failed)}</td><td class="n">${fmtDur(x.seconds)}</td><td class="n">${x.seconds ? (x.ok / x.seconds).toFixed(1) : "—"}</td></tr>`).join("")
+    + `<td class="n">${x.total ? pctOf(x).toFixed(0) + " %" : "—"}</td><td class="n">${num(x.failed)}</td><td class="n">${fmtDur(x.seconds)}</td><td class="n">${x.seconds ? ((x.ok - (x.before || 0)) / x.seconds).toFixed(1) : "—"}</td></tr>`).join("")
     : "<tr><td class='muted'>None yet</td></tr>";
   const m = s.system || {}, g = m.gpu4090, load = m.b50_load || {}, rows = [];
   rows.push(["Host CPU", m.host_cpu == null ? "—" : `${m.host_cpu} % of ${m.cores} cores` + (m.load ? ` · load ${m.load.map(x => x.toFixed(1)).join(" ")}` : "")]);

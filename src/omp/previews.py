@@ -153,7 +153,8 @@ def run(cfg: Config, con, run_id: str, force=False):
             for r in rows if r["id"] not in done]
     started = time.perf_counter()
     per_image = []
-    with Progress(con, "previews", MODEL, total=len(todo)) as prog, worker_pool(cfg.workers) as pool:
+    with Progress(con, "previews", MODEL, total=len(todo), before=len(rows) - len(todo)) as prog, \
+            worker_pool(cfg.workers) as pool:
         for res in pool.map(process, todo, chunksize=1):
             if "error" in res:
                 prog.fail(res["id"], res["error"])

@@ -230,7 +230,8 @@ def run(cfg: Config, con, run_id: str):
             todo.append((full, rel))
     con.commit()
     # Hashes are committed as they come, so a stop in the middle of the library's terabyte resumes there.
-    with Progress(con, "inventory.hash", "quickxorhash", total=len(todo)) as prog, worker_pool(cfg.workers) as pool:
+    with Progress(con, "inventory.hash", "quickxorhash", total=len(todo), before=len(media) - len(todo)) as prog, \
+            worker_pool(cfg.workers) as pool:
         for rel, id_, size, mtime, error in pool.map(_hash_one, todo, chunksize=4):
             if error:
                 prog.fail(rel, error)
@@ -246,13 +247,14 @@ def run(cfg: Config, con, run_id: str):
 
     # Metadata, once per content hash (copies share it), in exiftool batches of 200 run side by side.
     have = {r[0] for r in con.execute("SELECT id FROM photo")}
-    first = {}
+    first, photo_ids = {}, set()
     for r in con.execute("SELECT path, id, mtime FROM file WHERE media='photo' ORDER BY path"):
+        photo_ids.add(r["id"])
         if r["id"] not in have and r["id"] not in first:
             first[r["id"]] = (r["path"], r["mtime"])
     items = list(first.items())
     batches = [items[i : i + 200] for i in range(0, len(items), 200)]
-    with Progress(con, "inventory.meta", "exiftool", total=len(items)) as prog, \
+    with Progress(con, "inventory.meta", "exiftool", total=len(items), before=len(photo_ids) - len(items)) as prog, \
             worker_pool(max(1, cfg.workers // 2), threads=True) as pool:
         for batch, metas in zip(batches, pool.map(run_exiftool, [[cfg.root / p for _, (p, _) in b] for b in batches])):
             by_path = {Path(m["SourceFile"]).relative_to(cfg.root).as_posix(): m for m in metas}
