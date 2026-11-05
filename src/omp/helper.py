@@ -121,12 +121,13 @@ class Share:
     previews' bytes. A photo a worker couldn't do comes back to be done here. Before P60 the B50 took from the
     front and the 4090 from the back of a list (P49)."""
 
-    def __init__(self, cfg, engine: str, ids: list[str]):
+    def __init__(self, cfg, engine: str, ids: list[str], extra=()):
+        """`extra`: functions (queue, path_of) -> a worker of the stage's own (depth: the B50's depth service)."""
         from . import workqueue
 
         self.q = workqueue.WorkQueue(list(ids))
         path_of = lambda i: str(cfg.preview(i))  # noqa: E731
-        self.workers = []
+        self.workers = [make(self.q, path_of) for make in extra]
         if ENABLED and len(ids) > 2 * CHUNK:
             g = gate(cfg.llm)
             self.workers.append(workqueue.HttpWorker(self.q, "4090", f"{cfg.llm}/upstream/{WORKER}/v1/{engine}", path_of,

@@ -103,13 +103,7 @@ class HttpWorker:
                 time.sleep(0.5)  # nothing left, or given back later by a failing worker
                 continue
             try:
-                if self.send == "bytes":  # another machine: the files themselves
-                    body = {"images": [base64.b64encode(open(self.path_of(it), "rb").read()).decode() for it in chunk]}
-                else:
-                    body = {"paths": [self.path_of(it) for it in chunk]}
-                r = client.post(self.url, json=body)
-                r.raise_for_status()
-                results = r.json()["results"]
+                results = self.request(client, chunk)
                 if len(results) != len(chunk):
                     raise ValueError(f"{len(results)} results for {len(chunk)} photos")
             except (httpx.HTTPError, ValueError, KeyError, OSError) as exc:
@@ -124,6 +118,17 @@ class HttpWorker:
                     self.q.to_cpu(it, taken=True)
                 else:
                     self.q.answer(self.name, it, x)
+
+    def request(self, client, chunk: list) -> list:
+        """One chunk to the worker, its results back (one per item). A worker with another API overrides this (the B50's
+        depth service, depth.py)."""
+        if self.send == "bytes":  # another machine: the files themselves
+            body = {"images": [base64.b64encode(open(self.path_of(it), "rb").read()).decode() for it in chunk]}
+        else:
+            body = {"paths": [self.path_of(it) for it in chunk]}
+        r = client.post(self.url, json=body)
+        r.raise_for_status()
+        return r.json()["results"]
 
     def _wait(self, why: str):
         if self.give_up is not None and self.unavailable >= self.give_up and not self.retired:
