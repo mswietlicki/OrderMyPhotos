@@ -21,10 +21,15 @@ MAX_CONTENDERS = 4
 
 SYSTEM = ("You help cull a private photo library. You look at photos critically, like an experienced "
           "photographer choosing which shots to keep.")
+# P55: the reviewer keeps people's frames by their pose and expression ("photos with more provocative or expressive
+# poses are better"), over a little sharpness; the question says so. Its answers are kept apart from the old ones.
 PAIR = ("These two photos show the same scene, taken moments or minutes apart. Which one is better to keep? "
-        "Judge the sharpness of the main subject, exposure, framing and composition, faces (eyes open, natural "
-        "expression, nobody cut off or turned away) and whether it caught the moment. "
+        "Judge the sharpness of the main subject, exposure, framing and composition, faces (eyes open, nobody cut "
+        "off or turned away) and whether it caught the moment. When the photos show people, the pose and expression "
+        "matter most: prefer the more expressive, striking or attractive pose and look over a stiff or neutral one, "
+        "even if it is a little less sharp. "
         "Answer with one digit: 1 for the first photo, 2 for the second.")
+PAIR_VERSION = "pair@2"
 FLOOR = ("This photo may be blurred, badly exposed or taken by accident. Is it still worth keeping in a personal "
          "photo album? Keep it if it shows something recognizable that someone might want to see again, even if "
          "imperfect. Answer with one word: yes or no.")
@@ -50,7 +55,8 @@ def bradley_terry(n, p, iters=200):
 
 
 def pair_prob(vlm, cfg, con, a, b):
-    row = con.execute("SELECT p_a FROM judge WHERE a=? AND b=? AND model=?", (a, b, vlm.model)).fetchone()
+    model = f"{vlm.model}|{PAIR_VERSION}"  # an answer to this question, not to an earlier wording
+    row = con.execute("SELECT p_a FROM judge WHERE a=? AND b=? AND model=?", (a, b, model)).fetchone()
     if row:
         return row[0]
     ia, ib = image_part(cfg.preview(a)), image_part(cfg.preview(b))
@@ -62,7 +68,7 @@ def pair_prob(vlm, cfg, con, a, b):
     p = (p_ab + p_ba) / 2
     for x, y, q in ((a, b, p), (b, a, 1 - p)):
         con.execute("INSERT OR REPLACE INTO judge(a, b, model, p_a, p_ab, p_ba, data) VALUES (?,?,?,?,?,?,?)",
-                    (x, y, vlm.model, q, p_ab if x == a else p_ba, p_ba if x == a else p_ab, None))
+                    (x, y, model, q, p_ab if x == a else p_ba, p_ba if x == a else p_ab, None))
     con.commit()
     return p
 

@@ -8,6 +8,7 @@ the sample for now). Close calls and floor candidates are marked for the VLM (ju
 
 import json
 import math
+import sys
 import time
 
 import numpy as np
@@ -24,6 +25,9 @@ W_SHARP, W_QUALITY, W_AESTH, W_FACE = 0.35, 0.30, 0.25, 0.10
 W_SMILE, SMILE_SPAN = 0.15, 0.30   # the full penalty at 0.30 less than the group's best
 HARD_SHARP = -1.0        # log Tenengrad vs the group's best: 37 % of its gradient energy, ~60 % of the edge strength
 CLOSE = 0.08             # contenders within this score of the best go to the VLM judge
+# ... and within this one when the burst shows people (P55): the reviewer picks people's frames by their pose and
+# expression, which the features don't see, so more of those go to the judge, which is asked about it.
+CLOSE_PEOPLE = 0.20
 # An extra frame is kept when it looks different from every kept frame and isn't clearly worse: on the
 # sample (run s1 labels) every frame the user archived was either near-identical (DINOv2 >= 0.94) or
 # clearly softer, while the extra frames they kept (another moment, a vista) were 0.71-0.93 and as sharp.
@@ -37,6 +41,9 @@ EXTRA_FEATURES = ["sim", "rel_sharp", "d_quality", "d_aesthetics", "d_score", "f
 KEEP_P = 0.30            # keep an extra frame when P(the user keeps it) is at least this
 MAYBE_P = 0.50           # ... and mark it "maybe redundant" below this, so a review can sweep those quickly
 MIN_TRAIN = 50           # labelled extra frames needed before the model replaces the rules
+# Below that, the model fitted on earlier sessions' labels (P55), so a new library starts with the reviewer's
+# taste: `python -m omp.rank train-extra <models>/omp/extra-frames.json <db>:<run> ...` writes it.
+SHARED = "omp/extra-frames.json"
 SAME = 0.985             # an extra this close to another kept extra is the same picture twice
 FLOOR_SHARP = 2.5        # log Tenengrad below the camera's median p90 (≈ e^-2.5 = 8 % of its energy)
 FLOOR_QUALITY = 0.60
@@ -169,9 +176,111 @@ def extra_vec(i, best, pos, n, sc, feats, dino):
             (f["smile"] or 0) - (fb["smile"] or 0) if f.get("smile") is not None and fb.get("smile") is not None else 0.0]
 
 
+class SharedModel:
+    """The extra-frame model fitted on earlier sessions' labels (P55): one logistic regression on EXTRA_FEATURES, for a
+    session with too few labels of its own. Its threshold was chosen on a session it wasn't fitted on."""
+
+    def __init__(self, d: dict):
+        self.mu, self.sd, self.w = (np.array(d[k], float) for k in ("mu", "sd", "coef"))
+        self.b, self.keep_p, self.about = float(d["intercept"]), float(d["keep_p"]), d.get("trained_on")
+
+    @classmethod
+    def load(cls, cfg):
+        path = cfg.models / SHARED
+        try:
+            d = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            return None
+        return cls(d) if d.get("features") == EXTRA_FEATURES else None  # fitted on other features: not used
+
+    def p(self, x, album=None):
+        z = float(((np.array(x, float) - self.mu) / self.sd) @ self.w + self.b)
+        return 1 / (1 + math.exp(-z))
+
+
+def training_rows(con, run: str):
+    """(X, y, albums) for the extra-frame model from a session that's been reviewed: every burst frame but the pick
+    with a verdict label, its EXTRA_FEATURES as extra_vec computes them, from the stored decisions."""
+    labels, dino = latest_labels(con), get_vecs(con, "dino")
+    album_of = {r[0]: r[1] for r in con.execute("SELECT id, MIN(album) FROM file GROUP BY id")}
+    dec = {r[0]: (r[1], r[2], r[3], json.loads(r[4] or "{}")) for r in con.execute(
+        "SELECT id, gid, rank, score, features FROM decision WHERE run=? AND gid IS NOT NULL", (run,))}
+    bursts = {}
+    for i, d in dec.items():
+        bursts.setdefault(d[0], []).append(i)
+    X, y, albums = [], [], []
+    for members in bursts.values():
+        best = min(members, key=lambda i: dec[i][1])
+        fb = dec[best][3]
+        for i in members:
+            f, lab = dec[i][3], labels.get(i, {}).get("verdict")
+            if i == best or not lab or f.get("exact_copy") or i not in dino or best not in dino:
+                continue
+            smile = (f["smile"] - fb["smile"]) if f.get("smile") is not None and fb.get("smile") is not None else 0.0
+            X.append([float(dino[i] @ dino[best]), f.get("rel_sharp") or 0.0, (f.get("quality") or 0) - (fb.get("quality") or 0),
+                      (f.get("aesthetics") or 0) - (fb.get("aesthetics") or 0), dec[i][2] - dec[best][2], f.get("faces") or 0,
+                      len(members), dec[i][1], smile])
+            y.append(int(lab == "keep"))
+            albums.append(album_of.get(i))
+    return np.array(X, float), np.array(y), albums
+
+
+def train_shared(out: str, sources: list[str]):
+    """Fit the shared extra-frame model on reviewed sessions (`<db>:<run>`). Each session is also predicted by a
+    model fitted on the others, and the threshold is the lowest P that keeps the reviewer's lost extras under 15 %."""
+    import sqlite3
+
+    from sklearn.linear_model import LogisticRegression
+    from sklearn.metrics import roc_auc_score
+
+    sets = []
+    for src in sources:
+        db, run = src.rsplit(":", 1)
+        con = sqlite3.connect(f"file:{db}?mode=ro", uri=True)
+        con.row_factory = sqlite3.Row
+        sets.append((run, *training_rows(con, run)))
+        print(f"{run}: {len(sets[-1][2])} labelled extra frames, {int(sets[-1][2].sum())} kept")
+
+    def fit(X, y):
+        mu, sd = X.mean(0), X.std(0) + 1e-9
+        return LogisticRegression(C=0.5, max_iter=2000).fit((X - mu) / sd, y), mu, sd
+
+    held = []  # (P, y) of each session predicted by the others
+    for k, (run, X, y, _) in enumerate(sets):
+        rest = [s for j, s in enumerate(sets) if j != k]
+        if not rest:
+            continue
+        m, mu, sd = fit(np.vstack([s[1] for s in rest]), np.concatenate([s[2] for s in rest]))
+        p = m.predict_proba((X - mu) / sd)[:, 1]
+        held.append((p, y))
+        print(f"  {run} predicted by the others: AUC {roc_auc_score(y, p):.3f}")
+        for t in (0.3, 0.4, 0.5, 0.6):
+            print(f"    keep at P >= {t}: of the kept extras lost {int((y & (p < t)).sum())} of {int(y.sum())}, "
+                  f"kept that were archived {int((~y.astype(bool) & (p >= t)).sum())}")
+    keep_p = KEEP_P
+    if held:
+        P, Y = np.concatenate([h[0] for h in held]), np.concatenate([h[1] for h in held]).astype(bool)
+        for t in np.arange(0.70, 0.19, -0.05):
+            if (Y & (P < t)).sum() <= 0.15 * Y.sum():
+                keep_p = round(float(t), 2)
+                break
+    X, y = np.vstack([s[1] for s in sets]), np.concatenate([s[2] for s in sets])
+    m, mu, sd = fit(X, y)
+    d = {"features": EXTRA_FEATURES, "mu": mu.tolist(), "sd": sd.tolist(), "coef": m.coef_[0].tolist(),
+         "intercept": float(m.intercept_[0]), "keep_p": keep_p, "trained_on": {s[0]: len(s[2]) for s in sets},
+         "fitted": time.strftime("%Y-%m-%d")}
+    from pathlib import Path
+
+    Path(out).parent.mkdir(parents=True, exist_ok=True)
+    Path(out).write_text(json.dumps(d, indent=1), encoding="utf-8")
+    print(f"wrote {out}: {len(y)} frames, keep at P >= {keep_p}")
+
+
 class ExtraModel:
     """Logistic regression on EXTRA_FEATURES, fitted to the user's labels. A labelled album is always
     predicted by a model fitted without it, so its evaluation stays honest."""
+
+    keep_p = KEEP_P
 
     def __init__(self, X, y, albums):
         self.X, self.y, self.albums, self.cache = np.array(X, float), np.array(y), np.array(albums), {}
@@ -191,6 +300,36 @@ class ExtraModel:
             return None
         model, mu, sd = fit
         return float(model.predict_proba(((np.array(x, float) - mu) / sd)[None])[0, 1])
+
+
+def keep_people(con, run_id: str, feats: dict, event_of: dict) -> list[str]:
+    """Every named person keeps at least one photo of each event (P55). The user, on a burst the floor had archived:
+    "a keep because this is the only photos of her in this outfit". When all of a person's photos in an event would
+    go to the archive, the best of them (a burst's pick first, then by quality and aesthetics) is kept and protected,
+    so the judge's floor check doesn't archive it either."""
+    try:
+        names = {r[0]: r[1] or "the owner" for r in con.execute("SELECT pid, short FROM person WHERE short IS NOT NULL OR owner=1")}
+    except Exception:  # noqa: BLE001 - no people stage yet
+        return []
+    photos = {}
+    for r in con.execute("SELECT id, person FROM face WHERE person IS NOT NULL AND score >= 0.6"):
+        if r[1] in names and r[0] in event_of and r[0] in feats:
+            photos.setdefault((event_of[r[0]], r[1]), set()).add(r[0])
+    dec = {r[0]: [r[1], json.loads(r[2] or "{}"), r[3], json.loads(r[4] or "[]")] for r in con.execute(
+        "SELECT id, verdict, features, rank, reasons FROM decision WHERE run=?", (run_id,))}
+    kept = []
+    for (_, pid), ids in sorted(photos.items(), key=lambda kv: (kv[0][0], str(kv[0][1]))):
+        ids = [i for i in ids if i in dec and not dec[i][1].get("exact_copy")]
+        if not ids or any(dec[i][0] == "keep" for i in ids):
+            continue
+        best = max(ids, key=lambda i: (dec[i][2] == 0, (feats[i]["quality"] or 0) + (feats[i]["aesthetics"] or 0)))
+        why = f"the only photos of {names[pid]} in this event: the best one is kept"
+        reasons = [why] + [r for r in dec[best][3] if r != "whole burst below the quality floor"]
+        con.execute("UPDATE decision SET verdict='keep', protected=?, tier='review', reasons=? WHERE id=? AND run=?",
+                    (why, json.dumps(reasons), best, run_id))
+        dec[best][0] = "keep"
+        kept.append(best)
+    return kept
 
 
 def run(cfg: Config, con, run_id: str):
@@ -227,6 +366,8 @@ def run(cfg: Config, con, run_id: str):
     for x in feats.values():
         by_cam.setdefault(x["camera"], []).append(x["sharp_global"])
     cam_median = {c: float(np.median(v)) for c, v in by_cam.items()}
+    event_of = {r[0]: r[1] for r in con.execute(
+        "SELECT m.id, g.gid FROM grp g JOIN grp_member m ON m.gid=g.gid WHERE g.run=? AND g.kind='event'", (run_id,))}
     day_count = {}
     for x in feats.values():
         day_count[x["day"]] = day_count.get(x["day"], 0) + 1
@@ -286,7 +427,7 @@ def run(cfg: Config, con, run_id: str):
                     train_X.append(extra_vec(i, order[0], pos, len(members), sc, feats, dino))
                     train_y.append(int(lab == "keep"))
                     train_album.append(album_of.get(i))
-        model = ExtraModel(train_X, train_y, train_album) if len(train_y) >= MIN_TRAIN else None
+        model = ExtraModel(train_X, train_y, train_album) if len(train_y) >= MIN_TRAIN else SharedModel.load(cfg)
 
         for gid, members, cohesion in bursts:
             sc, order = scored[gid]
@@ -298,14 +439,15 @@ def run(cfg: Config, con, run_id: str):
                 p = model.p(extra_vec(i, best, pos, len(members), sc, feats, dino), album_of.get(i)) if model else None
                 if p is not None:
                     p_extra[i] = p
-                    if p >= KEEP_P and not any(float(dino[i] @ dino[k]) >= SAME for k in kept[1:]):
+                    if p >= model.keep_p and not any(float(dino[i] @ dino[k]) >= SAME for k in kept[1:]):
                         kept.append(i)
                     continue
                 similar = any(float(dino[i] @ dino[k]) >= KEEP_DIVERSE for k in kept)
                 worse = sc[i]["rel_sharp"] < KEEP_SOFT and sc[i]["score"] < sc[best]["score"] - KEEP_CLOSE
                 if not similar and not worse:
                     kept.append(i)
-            close = [i for i in order[1:] if sc[best]["score"] - sc[i]["score"] <= CLOSE and not sc[i]["hard"]]
+            margin = CLOSE_PEOPLE if any(feats[m]["faces"] for m in members) else CLOSE
+            close = [i for i in order[1:] if sc[best]["score"] - sc[i]["score"] <= margin and not sc[i]["hard"]]
             best_floor = floor_check(feats[best], cam_median[feats[best]["camera"]])
             whole_bad = bool(best_floor) and not protection(feats[best])
             for rank, i in enumerate(order):
@@ -352,6 +494,7 @@ def run(cfg: Config, con, run_id: str):
             else:
                 decide(id_, None, "keep", 0, 0.0, ["single"] + (floor or []), "auto" if not (floor or hint) else "review",
                        floor or None, prot, {"floor_vlm": bool(floor), "suspect": hint})
+    kept_back = keep_people(con, run_id, feats, event_of)
     con.commit()
     dt = time.perf_counter() - t0
     log_timing(con, "rank", run_id, len(feats), dt, "cpu")
@@ -361,5 +504,11 @@ def run(cfg: Config, con, run_id: str):
     floors = con.execute("SELECT COUNT(*) FROM decision WHERE run=? AND floor IS NOT NULL", (run_id,)).fetchone()[0]
     judge = con.execute("SELECT COUNT(DISTINCT gid) FROM decision WHERE run=? AND json_extract(features,'$.judge')",
                         (run_id,)).fetchone()[0]
-    print(f"rank: extra-frame model {'fitted on ' + str(len(train_y)) + ' labelled frames' if model else 'not fitted (rules)'}; {summary}; {floors} below the floor; {judge} bursts need the VLM judge; camera medians {cam_median};"
+    which = (f"fitted on {len(train_y)} labelled frames" if isinstance(model, ExtraModel) else
+             f"shared, from {model.about}" if model else "not fitted (rules)")
+    print(f"rank: extra-frame model {which}; {summary}; {floors} below the floor; {judge} bursts need the VLM judge; {len(kept_back)} kept as a person's only photos of an event; camera medians {cam_median};"
           f" {dt:.1f} s")
+
+
+if __name__ == "__main__" and len(sys.argv) >= 4 and sys.argv[1] == "train-extra":
+    train_shared(sys.argv[2], sys.argv[3:])

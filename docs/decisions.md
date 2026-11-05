@@ -827,6 +827,32 @@ The user, reviewing s7: "I see duplicates of photos in albums. The duplicate is 
 - **Near copies** (a resized or re-compressed version, pHash ≤ 8) are still shown archived, since they may differ.
 - **Tested** on a scratch copy of s7: all 58 pairs were exact, with the album's file first. 41 album files were kept with their copy archived; in 17 both were archived, the frame not being the burst's pick.
 
+## P55 — Picks after s7's review: a person keeps a photo of each event; the judge looks at the pose (2026-11-05, user, measured)
+
+The user asked for a full analysis of how their picks differ from the pipeline's (sample-runs.md, s7). They added: "photos with more provocative or expressive poses are better", and a burst the floor had archived was a keep because it held the only photos of one friend in that outfit. Four changes were proposed and all four approved. Each was measured on s7: rank re-run on a copy with its verdict labels removed, scored against the user's 967 verdicts.
+
+1. **A named person keeps a photo of each event** (`rank.keep_people`, built). If every photo of a person (named on the People page, or the owner) in an event would go to the archive, the best one is kept. That's a burst's pick first, then by quality and aesthetics. It's protected, so the judge's floor check doesn't archive it either. On s7 it kept 4 photos: 2 the user kept (one is the outfit burst's pick) and 2 the user archived.
+2. **Blur held to the event's own median** (dropped). A dark or light-art event would no longer fail as a whole. On s7 it lifted 13 photos off the floor: 5 the user kept and 8 the user archived. Those photos would also skip the VLM's "worth keeping?" check, so the camera's median stays.
+3. **The burst judge asks about the pose** (built).
+   - The pair question now says that for people "the pose and expression matter most: prefer the more expressive, striking or attractive pose and look over a stiff or neutral one, even if it is a little less sharp". Its answers are cached under `pair@2`.
+   - A burst with faces goes to the judge when a frame is within 0.20 of the pick, not 0.08. On s7 that's 154 bursts instead of 130, about 18 % more judge time.
+   - Replayed on s7's bursts with people, the reviewer kept the judged pick:
+     - in 15 of 17 with the new question, 14 of 17 with the old;
+     - 3 of 5 either way where they had passed over rank's pick, 12 of 12 against 11 of 12 where they hadn't.
+   - It's a small sample, and the change does no harm.
+4. **An extra-frame model shared across sessions** (built, not used).
+   - `python -m omp.rank train-extra <models>/omp/extra-frames.json <db>:<run> ...` fits it on reviewed sessions. Rank uses it when a session has fewer than 50 labels of its own.
+   - Trained on s6's labels and tested on s7, it reached AUC 0.70, and 0.71 the other way.
+   - But the rules s7 ran with (then the judge) did better. On s7's 544 labelled extra frames:
+     - the rules lost 72 that the user kept and kept 24 that they archived;
+     - the s6 model at P ≥ 0.3 lost 62 and kept 142; at P ≥ 0.5 it lost 126 and kept 50.
+   - So no model file is written, and rank keeps the rules. The session's own model, once it has 50 labels, did no better on s7 either: at P ≥ 0.5 it lost 81 and kept 84.
+- **Tried and not taken**, because each lowered the agreement with the user's verdicts, from 85.1 % to 82.7–84.6 %:
+  - keypoint pose measures (lean, shoulder and hip tilt, arm reach) and the zero-shot posing/kissing/hugging share in the extra-frame model (AUC 0.72 → 0.69);
+  - open eyes (83.7 %) and expression intensity, EmotiEffLib's arousal (84.6 %; in place of the smile, 82.7 %), in the burst score.
+  - Both looked promising on the 14–17 bursts where the user passed over the pick, but they move more frames the wrong way across all bursts.
+  - The smile term stays. Without it the verdicts changed by one photo.
+
 ## Open — for the user
 
 1. ~~**Language** of titles, descriptions and tags.~~ Resolved by P42: both languages; S11 reads English only.
