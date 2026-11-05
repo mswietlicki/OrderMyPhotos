@@ -460,3 +460,18 @@ The user: "Clear S6 and its copy of the photos and prepare and start S7 with a n
 - 28 of those unsorted photos are byte copies of photos in the test albums. They're kept, as in the library, so they're 1025 photos for the pipeline.
 - The file list and the ground truth (which of the user's albums hold each unsorted photo's bytes) are in `tests/s7/state/`.
 - The session `s7` was made in the app (root `tests/s7/before`, its own library index) and started there. It runs everything since P48–P52: lanes, the 4090 helper with no idle wait, facial expressions, and the chat model on 4 slots.
+
+**First pass, to the album review**, with no photo skipped, no errors and no retries:
+
+| Phase | Time | What came out |
+|---|---|---|
+| Read the photos | 2.3 min | 1053 files, 1025 photos |
+| Look at every photo | 9.9 min, in lanes | orientation flagged 53 photos and turned 6 (106 VLM checks); 2 text pages |
+| Find people and pets | 16 s | 407 faces in 29 cards, 101 animals in 28; the owner from front-camera selfies |
+| Bursts and picks | 21.5 min | 110 events, 214 bursts, 58 copies. The judge took 882 calls for 130 bursts (1.4 s each, one at a time), leaving 577 kept and 448 archived |
+| Describe and sort | 32.5 min | captions 577 photos in 26 min, 4 at a time (10.1 s a call); sorting 413 calls in 6 min |
+
+- **The sort:** of the 552 unsorted photos, 28 were already in 5 albums, and 79 join 6 albums by time. The 72 other events became 17 new albums, 11 new folders, and 84 photos in thematic folders.
+- **The sure-first loop:** 33 groups placed for sure, 45 left unsure.
+- **The review:** 43 albums and folders.
+- **On the page**, orientation and the judge show no photo counts while they run: they don't report per-photo progress, so a long step looks idle.
