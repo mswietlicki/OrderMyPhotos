@@ -59,4 +59,7 @@ def run(name: str, paths: list[str] = Body(..., embed=True)):
 def main():
     import uvicorn
 
-    uvicorn.run(app, host="0.0.0.0", port=int(os.environ.get("PORT", "8000")), log_level="warning")
+    # in its container 0.0.0.0, published on 127.0.0.1 by llama-swap; a worker in the app's container (the B50's for
+    # the previews, workqueue.Local) shares the host network, so it listens on 127.0.0.1
+    uvicorn.run(app, host=os.environ.get("OMP_WORKER_HOST", "0.0.0.0"), port=int(os.environ.get("PORT", "8000")),
+                log_level="warning")
