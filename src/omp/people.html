@@ -35,6 +35,7 @@
   .top { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
   .id { font: 600 12px ui-monospace, monospace; background: var(--soft); border-radius: 4px; padding: 1px 6px; }
   .meta, .hint, .same, .merged { font-size: 12px; color: var(--muted); } .same { color: var(--accent); }
+  .same button { background: none; border: 0; padding: 0; font: inherit; color: inherit; text-decoration: underline; cursor: pointer; }
   .hint button, .merged button { font-size: 12px; padding: 0 6px; }
   .fb { display: flex; flex-wrap: wrap; gap: 4px 6px; align-items: center; font-size: 12px; color: var(--muted); }
   .fb button { display: inline-flex; align-items: center; gap: 5px; font-size: 12px; padding: 2px 8px 2px 2px; border-radius: 999px; }
@@ -236,7 +237,12 @@ function status() {
     el.classList.toggle("sel", selected.has(c.id));
     el.querySelector(".pick").checked = selected.has(c.id);
     const others = w ? seen[w].filter(i => i !== c.id) : [];
-    el.querySelector(".same").textContent = others.length ? `the same person as ${others.join(", ")}` : "";
+    const same = el.querySelector(".same"), key = others.join(",");
+    if (same.dataset.k !== key) {  // a merge link per card with the same name (P65); drawn again only when it changes
+      same.dataset.k = key;
+      same.innerHTML = others.length ? `the same person as ${others.map(i => `<button data-same="${i}" title="merge ${c.id} and ${i}">${i}</button>`).join(", ")}`
+        + (others.length > 1 ? ` · <button data-same="${key}" title="merge ${c.id} with all of them">merge all</button>` : "") : "";
+    }
     // marked "I don't know them" / "Not an animal of ours" or "Not a person": out of the way, under Hidden, where
     // the mark can still be undone
     el.hidden = !shownIn(c, filter);
@@ -389,6 +395,10 @@ function card(c) {
   if (more) more.onclick = () => { const all = more.dataset.all !== "1"; draw(all); more.dataset.all = all ? "1" : ""; more.textContent = all ? "show fewer" : `show all ${fs.length}`; };
   el.querySelector(".pick").onchange = e => { e.target.checked ? selected.add(c.id) : selected.delete(c.id); status(); };
   mergeField(c, el.querySelector("[data-merge]"));
+  el.querySelector(".same").onclick = e => {
+    const b = e.target.closest("[data-same]");
+    if (b) { e.stopPropagation(); merge([c, ...b.dataset.same.split(",").map(i => byId[i]).filter(Boolean)]); }
+  };
   for (const b of el.querySelectorAll("[data-un]")) b.onclick = () => {
     const m = byId[b.dataset.un];
     touch(m);  // the person it was part of, and itself
