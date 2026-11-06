@@ -44,6 +44,7 @@
   .summary { color: var(--muted); margin: 6px 0 12px; }
   /* every photo sits in the same frame, a burst's dashed and labelled on its border, so all line up in rows */
   .grid { display: flex; flex-wrap: wrap; gap: 14px 8px; padding-top: 4px; }
+  .grid > .more { flex-basis: 100%; padding: 10px; }
   .burst, .solo { position: relative; display: flex; flex-wrap: wrap; gap: 6px; padding: 6px; border: 1px solid transparent; border-radius: 10px; }
   .burst { border: 1px dashed var(--line); }
   .burst > .lbl { position: absolute; top: -8px; left: 10px; padding: 0 5px; font-size: 11px; line-height: 14px; color: var(--muted); background: var(--bg); }
@@ -210,7 +211,8 @@ function tile(p, i) {
 
 // A burst is shown in one piece, where its first photo comes, even when other photos fall between its frames
 // in time (messenger photos have a date and no time, so they sort by name): the grid, the arrows and the large
-// view's burst column then all follow the burst.
+// view's burst column then all follow the burst. Returns the grid's items: [html, tiles in it].
+let idx = new Map();  // photo -> its index in `photos`; looking each up in the list made a big folder take minutes
 function section(list) {
   const members = {};
   for (const p of list) if (p.gid != null) (members[p.gid] = members[p.gid] || []).push(p);
@@ -220,10 +222,31 @@ function section(list) {
     if (burst && burst.length > 1) {
       if (placed.has(p.gid)) continue;
       placed.add(p.gid);
-      out.push(`<div class="burst"><div class="lbl">burst of ${burst.length}</div>${burst.map(q => tile(q, photos.indexOf(q))).join("")}</div>`);
-    } else out.push(`<div class="solo">${tile(p, photos.indexOf(p))}</div>`);
+      out.push([`<div class="burst"><div class="lbl">burst of ${burst.length}</div>${burst.map(q => tile(q, idx.get(q))).join("")}</div>`, burst.length]);
+    } else out.push([`<div class="solo">${tile(p, idx.get(p))}</div>`, 1]);
   }
-  return `<div class="grid">${out.join("")}</div>`;
+  return out;
+}
+
+// A big album or folder (the library has folders of thousands) is drawn TILES at a time, the rest as it's scrolled
+// to or with "Show more"; a burst is never split.
+const TILES = 240;
+const lazy = new IntersectionObserver(es => { for (const e of es) if (e.isIntersecting) e.target.click(); }, {rootMargin: "1200px"});
+function fill(grid, list) { grid._items = section(list); grid._at = 0; grow(grid); }
+function grow(grid) {
+  const items = grid._items, parts = [];
+  let k = grid._at, n = 0;
+  while (k < items.length && n < TILES) { parts.push(items[k][0]); n += items[k][1]; k++; }
+  const old = grid.querySelector(":scope > .more");
+  if (old) { lazy.unobserve(old); old.remove(); }
+  grid.insertAdjacentHTML("beforeend", parts.join(""));
+  grid._at = k;
+  if (k < items.length) {
+    const left = items.slice(k).reduce((a, it) => a + it[1], 0), b = document.createElement("button");
+    b.className = "more"; b.textContent = `Show more (${left} photos left)`;
+    b.onclick = () => grow(grid);
+    grid.append(b); lazy.observe(b);
+  }
 }
 
 function summary() {
@@ -245,6 +268,7 @@ function unitActs() {
 
 function drawUnit() {
   unitActs();
+  idx = new Map(photos.map((p, i) => [p, i]));
   const u = cur, fresh = photos.filter(p => p.state !== "confirmed"), done = photos.filter(p => p.state === "confirmed");
   const nameOnly = u.kind === "album" && /^\d{4}-\d{2}-\d{2} /.test(u.name) ? u.name.slice(11) : u.name;
   $("main").innerHTML = `<div class="head">
@@ -256,19 +280,26 @@ function drawUnit() {
     </div>
     <div class="path">${esc(u.key)}</div>
     <div class="summary" id="summary">${summary()}</div>
-    ${fresh.length ? section(fresh) : `<p class="muted">Everything here is confirmed.</p>`}
-    ${done.length ? `<details class="done" ${fresh.length ? "" : "open"}><summary>Already confirmed (${done.length})</summary>${section(done)}</details>` : ""}
+    ${fresh.length ? `<div class="grid" id="gFresh"></div>` : `<p class="muted">Everything here is confirmed.</p>`}
+    ${done.length ? `<details class="done" ${fresh.length ? "" : "open"}><summary>Already confirmed (${done.length})</summary><div class="grid" id="gDone"></div></details>` : ""}
     <div class="help">Click to show large · right-click or <kbd>Space</kbd> to keep or archive · <kbd>O</kbd> take out or put back · <kbd>M</kbd> move · <kbd>Enter</kbd> or <kbd>Z</kbd> show large · <kbd>←</kbd><kbd>→</kbd><kbd>↑</kbd><kbd>↓</kbd> select · <kbd>Ctrl</kbd>+<kbd>Enter</kbd> confirm · every change is saved at once</div>`;
-  for (const el of $("main").querySelectorAll(".ph")) {
-    el.onclick = e => {  // a click opens the photo large; the corner buttons do the rest
-      const i = +el.dataset.i, a = e.target.dataset.a;
-      setFocus(i);
-      if (a === "move") return askMove(photos[i]);
-      if (a === "out") return toggleOut(photos[i]);
-      showBig(photos[i]);
-    };
-    el.oncontextmenu = e => { e.preventDefault(); setFocus(+el.dataset.i); toggleVerdict(photos[+el.dataset.i]); };  // right click: keep or archive
-  }
+  if (fresh.length) fill($("gFresh"), fresh);
+  if (done.length) fill($("gDone"), done);
+  // one handler for all the tiles, drawn now or later
+  $("main").onclick = e => {  // a click opens the photo large; the corner buttons do the rest
+    const el = e.target.closest(".ph");
+    if (!el) return;
+    const i = +el.dataset.i, a = e.target.dataset.a;
+    setFocus(i);
+    if (a === "move") return askMove(photos[i]);
+    if (a === "out") return toggleOut(photos[i]);
+    showBig(photos[i]);
+  };
+  $("main").oncontextmenu = e => {  // right click: keep or archive
+    const el = e.target.closest(".ph");
+    if (!el) return;
+    e.preventDefault(); setFocus(+el.dataset.i); toggleVerdict(photos[+el.dataset.i]);
+  };
   const name = $("uname");
   name.onchange = () => rename(name.value);
   name.onkeydown = e => { if (e.key === "Enter") name.blur(); };
@@ -278,8 +309,12 @@ function drawUnit() {
 
 // One tile drawn again after a change, so the page doesn't jump.
 function redraw(p) {
-  const i = photos.indexOf(p), el = $("main").querySelector(`.ph[data-i="${i}"]`);
-  if (!el) return drawUnit();
+  const i = idx.has(p) ? idx.get(p) : photos.indexOf(p), el = $("main").querySelector(`.ph[data-i="${i}"]`);
+  if (!el) {  // not drawn yet (further down a big folder): it's drawn as it is when it's reached
+    $("summary").textContent = summary();
+    if ($("big").open && photos[focusIdx] === p) bigInfo(p);
+    return;
+  }
   el.className = `ph ${p.verdict} ${p.state === "out" ? "out" : ""} ${i === focusIdx ? "focus" : ""}`;
   $("summary").textContent = summary();
   if ($("big").open && photos[focusIdx] === p) bigInfo(p);
