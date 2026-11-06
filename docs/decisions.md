@@ -1189,6 +1189,28 @@ After P68, 2,544 people were still unnamed, many of them one person on several c
 - **Most of the rest are people seen a few times.** Of the 2,544, 1,637 had at most 5 faces, and 920 were in at most 3 photos: guests and passers-by. Faces can't fold these together; "Mark the N unnamed as 'I don't know them'" (P57) is for them, once the people the user knows are named.
 - **Saved through the page's own save,** with the state's version (P69): had anything saved meanwhile, nothing would have been. The state before is in `people.json.before-merge-<time>`.
 
+## P71 — A second face model beside the run's, and the people seen in 5 photos or fewer as strangers (2026-11-06, user, measured)
+
+After P70, 2,169 people were still unnamed. The user: "try to use different tool/algorithm and compare the faces again", then "set 'I don't know them' on all that have 5 or less photos".
+
+- **Comparing faces one by one doesn't help.** Matching each face to its best counterpart in the other card should handle profiles and other poses. On the named people's cards it made 810 joins at 2.1% wrong, the same as comparing mean faces (806 at 2.1%).
+- **A second model helps.** The faces were measured again with InsightFace glintr100 (antelopev2: a ResNet-100 trained on Glint360K), up to 30 per card, chosen by the key's hash so the same ones are used every time. Each face was found again in its preview by antelopev2's detector, for 5 landmarks, then aligned. That was 31,081 faces in 128 s on the 4090, with Qwen unloaded at the user's word (`scripts/faces_glintr100.py`).
+- **Both models together** (mean faces side by side, so the cosine is the mean of the two models') gave the most at the same accuracy, on the named people:
+
+  | | into named, 0.45/0.15 or nearest equal accuracy | grouping, ~2.1% wrong |
+  |---|---|---|
+  | buffalo_l (the run's) | 939 found, 99.4% right (at 0.55/0.15) | 801 joins |
+  | glintr100 | 1,103, 99.4% | about the same |
+  | both | 1,119, 99.4% | 841 joins |
+
+- **Applied** (`people_merge.py --named 0.45 0.15 --group 0.45 --emb2 … --strangers 5`):
+  - 129 unnamed people joined 41 named ones, the most to the most photographed (27 to one person, 11 to the owner);
+  - 110 cards were grouped with each other, then 14 of the groups joined named people;
+  - 1,112 unnamed people seen in 5 photos or fewer were marked "I don't know them", as the page's button does;
+  - left: 804 unnamed known people, 319 named, and 1,180 strangers.
+- **The strangers that matched a named person:** 15 of 68 at these thresholds, 13 of them the same named person. That's that person on cards marked differently, not a face that draws everyone: no more than 2 unnamed people joined her.
+- **The first run of the embedding ran Mimir out of memory.** Its loader decoded all 20,000 previews ahead of the GPU: 60 GB, swapping, SSH unresponsive for ~3 minutes, then the kernel killed it, and nothing else. It now keeps at most 32 decoded photos ahead, and runs with an 8 GB memory limit and no network.
+
 ## Open — for the user
 
 1. ~~**Language** of titles, descriptions and tags.~~ Resolved by P42: both languages; S11 reads English only.
