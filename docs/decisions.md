@@ -1146,6 +1146,20 @@ The user had named 900 cards with 317 names, many through the Facebook suggestio
 - **How.** `scripts/people_merge.py` writes the page's state and the faces' names the way the page does, after backing both up. The page saves its whole state, so an open People page must not change anything meanwhile, and must be reloaded after. Each merge can be undone on the card ("merged: P… ✕").
 - **The People page afterwards.** 2,972 people, 318 named, 2,572 known without a name, 61 strangers.
 
+## P69 — A People page loaded before another save can't overwrite it (2026-11-06, user)
+
+The People page saves its whole state (names, merges, faces taken out) on every change. A page left open while something else saved (another tab or device, or the P68 merges) would undo that save at its next change, and nothing said so. The user agreed to a check.
+
+- **The version.** `GET /api/people` gives the state's version: the hash of `people.json`, so a state written by anything counts as new, a script or a restored backup included.
+- **The check.** A save sends the version its page started from, or last saved. When the state is newer, the server saves nothing and answers 409. The check and the write happen together, one save at a time.
+- **On the page.** "Not saved: changed in another tab or device since this page was loaded", with a Reload button. The page then stops saving, so the change it couldn't save has to be made again after the reload.
+- **Old pages.** A page loaded before this sends no version and gets 409 too: its own "Not saved: 409", until it's reloaded.
+- **The bundle's page,** opened in the app, does the same.
+- **Checked** on the full run:
+  - a stale version, and no version, got 409, and the file was unchanged;
+  - the right version saved, and an identical state kept its version;
+  - on the page, a refused save showed Reload, the next change sent nothing, and Reload loaded the saved state.
+
 ## Open — for the user
 
 1. ~~**Language** of titles, descriptions and tags.~~ Resolved by P42: both languages; S11 reads English only.
