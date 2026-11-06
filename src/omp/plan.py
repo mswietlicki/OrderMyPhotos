@@ -12,6 +12,10 @@ as a list of moves in the bundle (`OrderMyPhotos/plan.json`).
 - `metadata.jsonl`, next to it: what goes into each kept photo's file, in one write (metadata.py, P67): the
   caption's title, description and tags, the named people and animals with their regions, the detectors' tags
   and the turn.
+- Every move carries `id`, the QuickXorHash the photo must still have when it's moved (S9).
+- `descriptions`: a kept photo's caption, Polish then English, for the OneDrive item description, which
+  `mimir-onedrive apply` writes through Graph without a re-upload (S9, P56). The path is where the photo
+  ends up.
 
 Applying it is a move per photo, in place: nothing is copied (user, 2026-11-03: "do the moving in place as
 not to extend disk space"). For a test, `python3 -m omp.plan --links <library> <out>` builds the resulting
@@ -41,7 +45,12 @@ def run(cfg, con, run_id: str):
         prop[r[0]] = (r[1], r[2], json.loads(r[3] or "{}").get("why", ""))
     from .nudity import TAGS
 
-    moves, rotations, tags, counts, taken = [], [], [], Counter(), defaultdict(int)
+    described = {}  # photo id -> its caption's description, Polish then English (P42)
+    for pid, data in con.execute("SELECT id, data FROM caption"):
+        c = json.loads(data)
+        texts = (str(c.get(k) or "").strip() for k in ("description_pl", "description_en"))
+        described[pid] = "\n\n".join(t for t in texts if t)
+    moves, rotations, tags, descriptions, counts, taken = [], [], [], [], Counter(), defaultdict(int)
 
     def to(folder, name):
         """A free name in the folder: a second photo with the same name gets _1, _2, ..."""
@@ -73,7 +82,9 @@ def run(cfg, con, run_id: str):
             counts["stays"] += 1
             dst = None
         if dst and dst != path:
-            moves.append({"from": path, "to": dst, "why": why})
+            moves.append({"from": path, "to": dst, "why": why, "id": id_})
+        if described.get(id_) and v == "keep" and not (dst or "").startswith(ARCHIVE + "/"):
+            descriptions.append({"path": dst or path, "id": id_, "text": described[id_]})
         if f.get("rotate") and v == "keep":
             rotations.append({"path": dst or path, "degrees": f["rotate"]})
         if f.get("nudity") in TAGS and v == "keep":
@@ -91,9 +102,10 @@ def run(cfg, con, run_id: str):
     print(f"plan: metadata for {len(entries)} of {len(kept)} kept photos -> {cfg.bundle / 'metadata.jsonl'}")
     out = cfg.bundle / "plan.json"
     out.write_text(json.dumps({"run": run_id, "generated": datetime.now().isoformat(timespec="seconds"),
-                               "counts": dict(counts), "moves": moves, "rotations": rotations, "tags": tags},
-                              ensure_ascii=False, indent=1), encoding="utf-8")
-    print(f"plan: {len(moves)} moves ({dict(counts)}), {len(rotations)} turns, {len(tags)} tagged -> {out}")
+                               "counts": dict(counts), "moves": moves, "rotations": rotations, "tags": tags,
+                               "descriptions": descriptions}, ensure_ascii=False, indent=1), encoding="utf-8")
+    print(f"plan: {len(moves)} moves ({dict(counts)}), {len(rotations)} turns, {len(tags)} tagged,"
+          f" {len(descriptions)} descriptions -> {out}")
 
 
 def links(library: str, out: str) -> None:

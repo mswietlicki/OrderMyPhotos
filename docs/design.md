@@ -69,8 +69,9 @@ File names show the cameras: `YYYYMMDD_HHMMSS` (Samsung, 97k), `P…` (Panasonic
  Photon (127.0.0.1): offline reverse geocoding, Polish place names
          │ approved plan (JSONL)
          ▼
- mimir-onedrive apply  (user `onedrive`, the only one holding the token)
-   server-side moves by item ID, metadata uploads, hash-checked, logged
+ mimir-onedrive apply  (user `onedrive`, the only one holding the token; P56)
+   server-side moves, item descriptions, hash-checked, logged, undoable
+   (metadata uploads later)
 ```
 
 - **The GPU model servers are llama-swap "models"** with measured `capacities`, the same way the depth service works today ([mimir D10](https://github.com/mswietlicki/mimir/blob/main/docs/decisions.md)). When the vision server needs the 4090, llama-swap evicts Qwen3.8 and later brings it back. Nothing has to coordinate GPU use by hand. The servers mount the mirror and the cache read-only and receive file paths, not image bytes.
@@ -283,7 +284,7 @@ The open view loads the **original file through its relative path** (`../../<alb
 
 **Deleting** is the last step, also in the page (user requirement, 2026-11-03). Once an album is applied, the page offers to delete its reviewed archived photos, and does it only after the reviewer confirms. The confirmation shows the number of files, their total size and the list, with thumbnails. Only photos that went through review or an explicit trust are eligible, and each is hash-checked again before it's deleted. Until then they sit in `Archive/OrderMyPhotos/`, where a restore is one move back from the log. The decisions file records what was deleted and when.
 
-**Applying on OneDrive** stays on Mimir (S9). The mirror is read-only, so Mimir **uploads the bundle into OneDrive** (`OrderMyPhotos/` at the drive root, through `mimir-onedrive`), album by album **as each album is ready**, while the rest is still processing. The reviewer opens it from their synced OneDrive folder; Files On-Demand downloads an original when it's viewed. The page writes the decisions into `OrderMyPhotos/decisions/`, OneDrive syncs them up, and Mimir picks them up on the next pull. It applies them with `mimir-onedrive apply`: server-side moves, hash-checked and logged. The reviewer's PC doesn't move the files itself; that would also work through the sync client, but it would bypass the hash checks and the op log. Deleting works the same way: the reviewer confirms in the page, the page writes a delete request into the decisions file, and Mimir deletes those files from the archive, after which OneDrive's recycle bin keeps them another 30 days.
+**Applying on OneDrive** stays on Mimir (S9). The mirror is read-only, so Mimir **uploads the bundle into OneDrive** (`OrderMyPhotos/` at the drive root, through `mimir-onedrive`), album by album **as each album is ready**, while the rest is still processing. The reviewer opens it from their synced OneDrive folder; Files On-Demand downloads an original when it's viewed. The page writes the decisions into `OrderMyPhotos/decisions/`, OneDrive syncs them up, and Mimir picks them up on the next pull. Since P47 the review happens in the web app, and the session's plan is applied with `mimir-onedrive apply` (S9, P56): server-side moves, hash-checked and logged. The reviewer's PC doesn't move the files itself. That would also work through the sync client, but it would bypass the hash checks and the op log. Deleting follows the final decision. With "delete", Mimir deletes the photos the apply moved into the archive, and OneDrive's recycle bin keeps them another 30 days.
 
 **An album is ready** when all its files are in the library (for OneDrive: synced, with nothing pending for it), and every stage up to captions is done for its photos. Then its page and thumbnails are written, and uploaded for OneDrive. The index shows the other albums as processing.
 
@@ -371,15 +372,30 @@ The page itself:
 
 ### S9 Apply to OneDrive
 
-- Every change is a **plan**, a JSONL list of ops: `move(item_id, from, to)`, `put_meta(item_id, file built in the work area)`, `restore(…)`. Each op carries the hash it expects to find on OneDrive.
-- `mimir-onedrive apply <plan>` runs as `onedrive`:
-  1. Takes a snapper `onedrive` snapshot.
-  2. Executes the plan with rclone server-side moves (`moveto` keeps item ID, sharing and version history) and content uploads for metadata.
-  3. Skips any op whose expected hash no longer matches (the photo changed on OneDrive in the meantime).
-  4. Logs every op.
+- Every change is a **plan**: the session's `plan.json` (P37), written after the review.
+  - `moves`: `from`, `to`, why, and `id`, the QuickXorHash the photo must still have.
+  - `descriptions`: each kept photo's caption for the OneDrive item description.
+  - `rotations` and `tags`: these wait for the metadata write (below).
+
+  The session's `final.json` says whether the archived photos are deleted.
+- `mimir-onedrive apply <plan>` (mimir `scripts/onedrive-apply.py`, P56) runs on the host as `onedrive`:
+  1. It takes a snapper `onedrive` snapshot, and holds the lock that makes the hourly pull skip its turn.
+  2. It checks each photo's QuickXorHash on OneDrive against the session's DB, and skips a photo that changed or went away since the run.
+  3. It moves the photo server-side: rclone's moveto, through one `rclone rcd`. That keeps the item ID, sharing and version history. A name that's taken gets `_1`, `_2`. The move never overwrites, and the item at the destination must be the one that moved.
+  4. It writes the item descriptions through Graph (`PATCH /items/{id}`, no re-upload), and leaves a description the user wrote.
+  5. With the final decision "delete", it deletes the photos it moved into the archive, each hash-checked again, into OneDrive's recycle bin.
+  6. It removes the folders the moves left empty. It never removes a top-level folder, one of OneDrive's own (Camera Roll, Pictures), or one in `Obrazy/Samsung Gallery`.
+  7. It logs every op in `/srv/mimir/onedrive/plans/<run>-<time>/apply.jsonl`.
+
+  The other modes:
+  - `--dry-run` checks everything and changes nothing.
+  - A second run carries on where the first stopped.
+  - `--undo` restores the deleted photos and removed folders from the recycle bin (30 days), puts the descriptions back, moves the photos back and removes the folders the apply created.
 
   The next pull brings the result back into the mirror.
-- **Archive layout:** a single root outside the albums, for example `Archive/OrderMyPhotos/<original path>`. Restoring is a move back, and albums stay clean (v1 put `_archived/` inside every album). Deleting from the archive is a separate, explicit plan, and OneDrive's recycle bin adds 30 more days.
+  - **Speed:** about 2 moves a second with 4 workers when OneDrive doesn't throttle, so ~14 h for 100k moves. When OneDrive throttles (429, Retry-After of minutes), that sets the pace.
+  - **The phone's gallery:** a plan that moves photos out of `Obrazy/Samsung Gallery` is refused until the two-way sync test (P8, P30) is recorded on Mimir.
+- **Archive layout:** a single root outside the albums, `Archive/OrderMyPhotos/<original path>`. Restoring is a move back (`--undo`), and albums stay clean (v1 put `_archived/` inside every album). Deleting from the archive follows the final decision (P56; before, it was a separate plan), and OneDrive's recycle bin adds 30 more days.
 - **Metadata goes in once per file** (P67: built for the plan, `metadata.jsonl` and metadata.py, and for a test set's apply; the upload to OneDrive is still to build). Titles, descriptions, tags, people and rating are written together with exiftool 13.x after captions and names are final. Only the metadata segments change; pixels are not re-encoded. Each file is then re-uploaded once to the same item (`PUT /items/{id}/content` keeps the ID and version history): ~0.5 TB for all photos kept, network-bound, spread over days. Sidecars don't work here, because OneDrive and Windows never read them (P5). Fields written, so that Windows, OneDrive, Immich and digiKam all agree:
 
   | What | Fields |
@@ -391,7 +407,7 @@ The page itself:
   | Rating | `XMP-xmp:Rating`, from the S5 score for kept shots (optional) |
   | Provenance | `XMP-xmp:CreatorTool` + the `omp` namespace (version, run id) |
 
-  OneDrive Photos keeps its own tags in the service, and there is no official word on whether its web search indexes embedded keywords. This is measured on the sample album before the big upload. The OneDrive item `description` (Graph `PATCH /items/{id}`, no re-upload) is a cheap extra channel for the description. Videos are not re-uploaded just for metadata (S12).
+  OneDrive Photos keeps its own tags in the service, and there is no official word on whether its web search indexes embedded keywords. This is measured on the sample album before the big upload. The OneDrive item `description` (Graph `PATCH /items/{id}`, no re-upload) is a cheap extra channel for the description. `mimir-onedrive apply` already writes it, from the plan's `descriptions`. It's stored and read back, but rclone's docs say Microsoft no longer supports the field, so whether OneDrive shows or searches it is measured with the rest (P56). Videos are not re-uploaded just for metadata (S12).
 - **v1 reconciliation:** after review, a frame v1 archived that v2 keeps moves back into its album, a frame v2 culls moves to the new archive, and the `_archived/` folders and `burst_*.json` files are removed. Their content is kept in the DB.
 
 ### S10 Live mode (new phone photos)
@@ -475,7 +491,7 @@ Videos are 4,786 files and 359 GiB, 37% of the library, and very lopsided: 56 fi
 | S7 captions | The same VLM call with 4–8 keyframes plus a transcript excerpt gives the title, description and tags. The transcript is also searchable |
 | S8 people | Faces from keyframes |
 | S11 albums | Videos join events exactly like photos |
-| S9 metadata | **Not re-uploaded just for metadata** (359 GiB). The description goes to the OneDrive item `description` through Graph, and tags and people go to the DB and Immich. XMP goes into the MP4 only when the file is rewritten anyway (re-encode below) |
+| S9 metadata | **Not re-uploaded just for metadata** (359 GiB). The description goes to the OneDrive item `description` through Graph (`mimir-onedrive apply` writes the plan's `descriptions`, P56), and tags and people go to the DB and Immich. XMP goes into the MP4 only when the file is rewritten anyway (re-encode below) |
 
 **Re-encoding, optional and lossy** (P9, opt-in per run):
 - Candidates are old high-bitrate files: MJPEG AVI from compacts (`MVI_…`), AVCHD `.mts`, early 4K H.264 from phones, and anything over ~200 MB.
@@ -549,6 +565,7 @@ Every number is shown before anything is approved.
 | S12 video probe, keyframes, fingerprints | NVDEC + CPU | hours (359 GiB to read) |
 | S12 transcripts | B50 STT | depends on the total duration, which is not known yet (S0 measures it) |
 | S12 re-encode (opt-in) | 4090 NVENC | hours per 100 GiB; the VMAF check doubles the decode |
+| S9 apply: moves, descriptions (P56) | OneDrive's API | ~2 moves/s with 4 workers when not throttled (measured on a test folder), so ~14 h per 100k moves; throttling stretches it |
 | S9 upload | network | days for the metadata re-upload |
 | S10 live mode | B50 + resident Qwen3.8 | minutes per day, no model swaps |
 

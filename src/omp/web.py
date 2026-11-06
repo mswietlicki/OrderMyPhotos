@@ -134,7 +134,7 @@ class Runner:
                     raise HTTPException(400, "decide what happens to the archived photos: keep or delete")
                 _write_json(self.session.dir / "final.json", (data or {}) | {"at": time.time()})
                 self._record_outcome(data or {})
-                if not apply.appliable(Path(self.session.root))[0]:  # OneDrive: applied there, later (S9)
+                if not apply.appliable(Path(self.session.root))[0]:  # OneDrive: mimir-onedrive apply (S9)
                     self.control.update(phase=len(PHASES), wanted="finished")
                     self.save()
                     return

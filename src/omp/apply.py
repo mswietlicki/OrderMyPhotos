@@ -1,6 +1,7 @@
 """Applying the plan (S9, decisions.md P48) to a session's own copy of photos: a test set, which is a copy of
 some OneDrive photos. OneDrive itself is never touched here; the library's plan goes through `mimir-onedrive
-apply` (server-side moves by item id), which is still to build.
+apply` on the host (P56: server-side moves, the same hash checks, an op log and undo; mimir repo
+`scripts/onedrive-apply.py`).
 
 - Every move of `plan.json` is done in place, as a rename: nothing is copied. Before a photo moves, its
   QuickXorHash is checked against the DB, so a file that changed since the run isn't moved. A destination
@@ -35,7 +36,8 @@ def appliable(root: Path) -> tuple[bool, str]:
     """Whether a session's plan may be applied here, and why not."""
     r = root.resolve()
     if r == NEVER.resolve() or r.is_relative_to(NEVER.resolve()):
-        return False, "this is the OneDrive library: its plan is applied on OneDrive by mimir-onedrive (not built yet)"
+        return False, ("this is the OneDrive library: its plan is applied on OneDrive, on Mimir's host, with "
+                       "mimir-onedrive apply <the session's plan.json>")
     if not any(r.is_relative_to(b.resolve()) for b in APPLY_ROOTS):
         return False, f"only copies in {', '.join(map(str, APPLY_ROOTS))} are changed here"
     return True, ""

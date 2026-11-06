@@ -14,7 +14,7 @@ The models, both GPUs and the OneDrive mirror are all on Mimir, so the work goes
 
 Hundreds of GB of private photos, GPS tracks and faces stay on Mimir. Every stage has a local model good enough for it ([models.md](models.md)). OpenRouter, or any external API, isn't part of the design. If one is ever wanted, it needs its own decision here and may only see text that contains no coordinates or names. Reverse geocoding is offline too (P12). v1 leaked GPS to Nominatim.
 
-## P4 — Changes go through reviewed plans; archive first, delete later (2026-11-02)
+## P4 — Changes go through reviewed plans; archive first, delete later (2026-11-02; the delete step superseded by P56)
 
 The mirror stays read-only ([mimir D15](https://github.com/mswietlicki/mimir/blob/main/docs/decisions.md)). The pipeline produces a plan of hash-checked operations, the user approves it, and `mimir-onedrive apply` executes it as the `onedrive` user with server-side moves. Culled files move to a single archive root (`Archive/OrderMyPhotos/<original path>`), so albums stay clean and a restore is one move back. Deleting is a separate plan, and OneDrive's recycle bin adds 30 more days. v1 moved files inside the synced folder, with no review.
 
@@ -853,6 +853,44 @@ The user asked for a full analysis of how their picks differ from the pipeline's
   - Both looked promising on the 14–17 bursts where the user passed over the pick, but they move more frames the wrong way across all bursts.
   - The smile term stays. Without it the verdicts changed by one photo.
 
+## P56 — The plan goes to OneDrive through `mimir-onedrive apply`; deletes follow the final decision (2026-11-05, measured)
+
+This was the last piece before the library can be ordered: `plan.json` carried out on OneDrive itself (S9). The tool lives in the mimir repo (`scripts/onedrive-apply.py`, called by `mimir-onedrive apply`), not here. It runs on the host as `onedrive`, the only user holding the token, so its code is root-owned and the app's container can't write to it.
+
+- **Moves are server-side.** They use rclone's moveto (`operations/movefile`) through one `rclone rcd` on a private unix socket, and OneDrive keeps the item ID, sharing and version history.
+  - One `rclone moveto` process took 8–9 s per move, most of it spent finding the folders from the drive's root. The same move through the rcd took about 3 s, and a stat 0.25 s.
+  - With one rcd there's one pacer: when OneDrive throttles, every worker backs off together.
+  - 4 ops run at a time (`--jobs`). Unthrottled, that's about 2 moves a second.
+- **Checked first:** each photo's QuickXorHash on OneDrive is checked against the session's DB. Plans now also carry it per move (`id`). A photo that changed or went away since the run is skipped and logged.
+- **Never overwrites.** A name that's taken gets `_1`, `_2`, comparing names without case, as OneDrive does.
+  - Left to itself, rclone's moveto replaces an existing destination, and deletes the source if the destination holds the same bytes.
+  - So the tool moves with IgnoreExisting, then checks that the item at the destination is the one that moved.
+- **Deletes follow the final decision**, as for a test set (P48). With "delete", the tool deletes the photos this plan's apply moved into `Archive/OrderMyPhotos/`, and nothing else, each hash-checked again.
+  - They go to OneDrive's recycle bin, and the undo brings them back from there for 30 days (Graph `restore`: same item ID, same folder).
+  - This replaces "deleting is a separate plan" (P4, S9). The reviewer's final decision is the confirmation. The cooling-off is the recycle bin, the mirror's attic (30 days) and the snapshot taken before each apply.
+  - "Keep" leaves the photos in the archive. A later run of the same plan, after the decision is changed to "delete", does only the deletes.
+- **Descriptions:** the plan's new `descriptions` go to the OneDrive item `description` through Graph, with no re-upload. Each is a kept photo's caption, Polish then English (P42). A description the user wrote is left alone.
+  - The field is stored and read back, and the file's content tag doesn't change. But rclone's docs call it "no longer supported by Microsoft", so whether OneDrive shows or searches it is part of "What shows up where" (plan.md Phase 5).
+  - Graph ignores `null`; an empty string clears the description.
+- **Turns and tags wait.** They change the file, so they go in with the one metadata write and upload per file (S9, Wave 5), which isn't built yet.
+- **Empty folders** that the moves leave behind are removed (to the recycle bin). The exceptions are a top-level folder, one of OneDrive's own (`Obrazy` and `Obrazy/Camera Roll` carry Graph's `specialFolder`), and `Obrazy/Samsung Gallery`, which the phone syncs.
+- **The phone's gallery:** a plan that moves photos out of `Obrazy/Samsung Gallery` is refused until the two-way sync test (P8, P30) is recorded on Mimir. The steps for it are in mimir's runbook 04.
+- **The pull waits.** The hourly pull lists the whole drive: 487k entries, about 15 minutes.
+  - During one pull, Graph throttled the test: 429 with Retry-After 188 s, and a move took 331 s.
+  - So an apply holds a lock, and a pull that finds it held skips its turn.
+- **The op log** is `/srv/mimir/onedrive/plans/<run>-<time>/apply.jsonl`, next to a copy of the plan.
+  - A second run carries on where the first stopped. That includes a move that finished but wasn't logged: it's found by its item ID.
+  - `--undo` restores from the recycle bin, puts the descriptions back, moves the photos back and removes the folders the apply created.
+  - `--dry-run` reads folder listings and changes nothing.
+- **Tested** on a throwaway OneDrive folder with synthetic JPEGs, never the library. The folder was removed afterwards.
+  - The runs: a dry run, an apply, a second apply (nothing new), an undo, an apply with "delete", an undo, `--limit`, a stop and a simulated crash.
+  - The apply made 8 moves, every item ID kept, with two `_1` names (one of them a clash in case only).
+  - It skipped a changed photo, a missing one and one not in the DB.
+  - It wrote 3 descriptions, kept one the user had written, and removed an emptied folder.
+  - "Delete": 3 archived photos were deleted, and one changed in the archive was refused.
+  - Each undo gave back the starting state: the same paths, hashes, item IDs and descriptions, with the deleted photos and the removed folders back from the recycle bin. The one exception was the photo the test itself changed.
+  - The gallery guard refused a plan before touching OneDrive, and a pull skipped while the lock was held.
+
 ## P57 — A card left without a name is someone the user knows; strangers and false faces are hidden (2026-11-05, user)
 
 The user, naming s8: "Sometimes I do not remember a person's name but I still want them to be saved. So if I do not check 'I don't know them' but also do not give a name, still treat them as a known person." And: "Hide faces I marked as unknown, or not a person."
@@ -1109,3 +1147,4 @@ The user asked whether all photos will be tagged with the people in them. They w
    - Are the default folders and names right (design.md S3b)? Should new ones be Polish (`Info/Dom`, `Info/Notatki`) or English like `Info/Documents`?
    - Should trip receipts and tickets go to Receipts (the default), or stay with the trip?
    - Any retention rules (e.g. suggest archiving receipts after 3 years)?
+

@@ -58,10 +58,11 @@ Run s1 (2026-11-03) did a first pass of every stage below on the B50 and the res
 
 ## Phase 5 — Write-back trial on the real OneDrive (sample)
 
-- [ ] `mimir-onedrive apply <plan>`: snapshot, hash-checked ops, server-side `moveto`, `PUT content` to the same item, an op log, dry run
-- [ ] What shows up where: embedded title, description and keywords in OneDrive web/mobile search, Windows Explorer and Immich; the Graph item `description`
-- [ ] **Two-way sync test** (P8): move and delete a throwaway photo in the cloud copy of the Samsung Gallery folder, and watch the phone
-- [ ] The archive layout, plus restore as one move back
+- [x] `mimir-onedrive apply <plan>` (P56): snapshot, hash-checked server-side `moveto` through one rclone rcd, no overwrites (`_1`, `_2`), the archive, deletes when the final decision says so, the Graph item `description`, an op log, dry run, resume and undo. Tested end to end on a throwaway OneDrive folder (2026-11-05)
+- [ ] `PUT content` to the same item, for the one metadata write per file (with the turns and tags the plan already lists)
+- [ ] What shows up where: embedded title, description and keywords in OneDrive web/mobile search, Windows Explorer and Immich. The Graph item `description` is written and read back (P56), but rclone says Microsoft no longer supports it. **You:** check whether OneDrive web or mobile shows a written description, or finds it in search
+- [ ] **You: two-way sync test** (P8, P30): move and delete throwaway photos in the cloud copy of the Samsung Gallery folder, and watch the phone. Step by step in mimir's `docs/runbooks/04-onedrive.md` ("The two-way sync test"). Until it's recorded on Mimir, `mimir-onedrive apply` refuses plans that move photos out of the gallery
+- [x] The archive layout, plus restore as one move back (`mimir-onedrive apply --undo`, P56)
 
 ## Phase 5b — Review bundle and other libraries (design.md S6, decisions.md P21)
 
@@ -70,7 +71,7 @@ Run s1 (2026-11-03) did a first pass of every stage below on the B50 and the res
 - [ ] Delete in the page: after apply, delete the reviewed archived photos once the reviewer confirms, seeing the count, size and list; hash-checked again; logged
 - [ ] The page saves decisions straight into `decisions/` (File System Access API) instead of a download; `omp` reads that folder back as labels on the next run
 - [ ] Libraries: a `library.json` ID, a DB and cache per library on Mimir, external drives and shares mounted read-only (mimir side), album-by-album processing order, per-album readiness
-- [ ] OneDrive: `mimir-onedrive` uploads the bundle album by album as albums are ready; the pull brings decisions back; `mimir-onedrive apply` executes moves and confirmed deletes
+- [ ] OneDrive: `mimir-onedrive` uploads the bundle album by album as albums are ready; the pull brings decisions back; `mimir-onedrive apply` executes moves and confirmed deletes (the apply is done, P56; the bundle upload isn't)
 - [x] Text pages (P24): `omp text` (orientation from the VLM, Unlimited-OCR-2 on the 4090), FTS5, `.txt` per text page in the bundle, `Dokumenty/` placement, document sets by word overlap; the page shows the OCR text, "rotate", "page n/m" and "→ Dokumenty/"
 - [ ] Apply for text pages: write the `.txt` next to the photo, set EXIF Orientation for the rotate proposals, move to `Dokumenty/`
 - [ ] Decisions per file for photos stored in more than one curated folder: each folder is judged on its own (s2: the user kept the `Places` copy of an album photo that isn't the best of its burst)
@@ -94,7 +95,7 @@ Run s1 (2026-11-03) did a first pass of every stage below on the B50 and the res
 - [x] The review in the app (P47): a wizard over sessions (a root folder each, one at a time), phases that stop for the reviewer, every album and folder one review unit (keep/archive, out, move, rename, dismantle, confirm), a resort loop that leaves confirmed photos alone, the People page saving to the app, the final decision
 - [x] The People page in the app's style (`/people`): a face's photo full screen with the person's faces on the right, right-click takes a face out, saved at once (P47)
 - [x] Apply the plan to a test session's copy after the final decision: moves, turns, deleting the archived photos if decided, a log and undo (P48)
-- [ ] Apply the plan on OneDrive: `mimir-onedrive apply` (S9), server-side moves by item id, the archive, confirmed deletes
+- [x] Apply the plan on OneDrive: `mimir-onedrive apply` (S9, P56), server-side moves, the archive, deletes when the final decision says so; plans carry each move's hash and the captions for the item descriptions
 - [x] When `fullrun` and the P45 sorting work are both on master (whoever merges second): albums.py's `vlm = VLM(cfg.llm)` becomes `VLM(cfg.llm, repeatable=True)` and the `:instruct` workaround wrapper under it goes (P46); the `OMP_PROMPT_LOG` wrapper stays
 - [x] S11 answers kept across runs (by the whole request, `answers.db`), so a re-run of `albums` doesn't redo ~25k LLM calls (P52: 104 s → 1 s on s6)
 - [x] The neighbour table (top-20 look-alikes) at full scale: it already goes in chunks of 1,024 rows with numpy, ~1–2 min for the library (P52)
