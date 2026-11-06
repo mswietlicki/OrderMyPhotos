@@ -1039,6 +1039,17 @@ The People page had 3,921 people to name. The user: "use Facebook to help me nam
 - **Suggestions only, never applied.** Of the 34 cards already named from People folders or album names, 12 matched a friend at ≥ 0.55, and 5 of them were the right person. Most of the others were a partner or a relative in a shared profile picture. So each card shows its friends with the picture and similarity, and marks a picture with several faces (👥). "Use" fills the full name, which the user can still change.
 - **On the page.** A Facebook tab lists the unnamed people with a suggestion, nearest first (622 of them). Every friend's name is in the name field's autocomplete, for the people the match missed.
 
+## P65 — People page: named people first, and "Merge with…" by a name typed roughly (2026-11-06, user)
+
+The user, naming the full library's 3,921 people: "sort people already named on top, also I need a faster way to find a person to merge, give me fuzzy search when merging".
+
+- **Order:** named people, and the owner, come first in their order; people then animals. The list is drawn again on a tab, a merge or the large view, not while typing, so a card doesn't jump away from the name being typed. The Facebook tab (P64) keeps its own order.
+- **"Merge with…" on every card:** it lists up to 8 named people of the same kind, or any card by its id ("P12"). Picking one merges the card into them, with merge()'s rules: the person with more faces takes the other's name if it has none.
+  - Names are compared without diacritics or case (ł is l).
+  - The best kind of match comes first: the name's start, then a word's start, then every typed word starting a word ("an kow"), then anywhere, then one typo off ("matuesz", "agnieska"), then the letters in order.
+  - Arrows and Enter pick, Esc closes. `M` on a selected card opens its field.
+- **Checked:** the matcher on sample names in Node. On the live page, the first 48 cards were all named (83 named in all), and a surname's first 4 letters typed into another card's field found that person; clearing it saved nothing.
+
 ## Open — for the user
 
 1. ~~**Language** of titles, descriptions and tags.~~ Resolved by P42: both languages; S11 reads English only.
