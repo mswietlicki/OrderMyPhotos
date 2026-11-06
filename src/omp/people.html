@@ -103,7 +103,7 @@
 <body>
 <header>
   <b>People and pets</b>
-  <div class="tabs" id="tabs"><button data-f="all" class="on">All</button><button data-f="todo">Unnamed</button><button data-f="fb" id="fbTab" hidden title="Unnamed people whose face is near a Facebook friend's profile picture, the nearest first">Facebook</button><button data-f="hidden" id="hiddenTab">Hidden</button></div>
+  <div class="tabs" id="tabs"><button data-f="all" class="on">All</button><button data-f="todo">Unnamed</button><button data-f="fb" id="fbTab" hidden title="Unnamed people whose face is near a Facebook friend's (from their profile picture and photos), the nearest first">Facebook</button><button data-f="hidden" id="hiddenTab">Hidden</button></div>
   <span class="muted" id="sub"></span>
   <button id="rest" hidden title="After naming the people you know: the cards left without a name become strangers"></button>
   <span style="flex:1"></span>
@@ -372,8 +372,9 @@ function fill(c, el) {
     : sug.source === "people-folder" ? "from a People folder" : esc(sug.source || "")}) <button data-use>use</button></span>` :
     !who(s) && !s.me && owner ? `<span class="hint">probably you (from the front camera) <button data-me>yes, me</button></span>` : "";
   const fb = c.pet || who(s) || s.me || s.unknown || s.ignore ? [] : fbOf(c);
-  const fbLine = fb.length ? `<div class="fb">Facebook:${fb.map((f, i) => `<button data-fb="${i}" title="use this name${f.faces
-    ? ` · their picture has ${f.faces} faces: it may show someone else` : ""}"><img src="${esc(f.pic)}" alt="" loading="lazy">${esc(f.name)}
+  const fbLine = fb.length ? `<div class="fb">Facebook:${fb.map((f, i) => `<button data-fb="${i}" title="use this name${f.seen > 1
+    ? ` · their face, found in ${f.seen} of their photos` : f.faces ? ` · only their profile picture, which has ${f.faces} faces: it may show someone else`
+    : f.seen === 1 ? " · only their profile picture" : ""}"><img src="${esc(f.pic)}" alt="" loading="lazy">${esc(f.name)}
     ${Math.round(f.cos * 100)}%${f.faces ? " 👥" : ""}</button>`).join("")}</div>` : "";
   el.innerHTML = `<div class="top"><input type="checkbox" class="pick" title="select to merge (X)">
     <span class="id">${c.id}</span><span class="meta">${fs.length} ${c.pet ? esc(c.kind || "animal") + (fs.length > 1 ? "s" : "") : "faces"} in ${photosOf(fs)} photos</span>
