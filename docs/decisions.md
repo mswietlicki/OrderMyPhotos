@@ -1137,7 +1137,7 @@ The user asked whether all photos will be tagged with the people in them. They w
   - The write changes the photo's QuickXorHash, which is its id here and in the catalog. So the omp namespace keeps the hash from before (`XMP-omp:Original`), and the apply counts a photo it wrote as unchanged.
   - **A sample album** (9 photos of 2016, 6.2 MB): all written and uploaded. The item IDs were the same, the version before was kept, and downloaded again each photo held its regions, names and keywords.
   - **Still to see before the library's write** (~450 GB of kept photos):
-    - whether OneDrive's versions count against its storage, with 58.6 GiB of 1,039 GiB free. After the sample the used bytes didn't change;
+    - whether OneDrive's versions count against its storage, with 58.6 GiB of 1,039 GiB free. An hour after the sample, the used bytes hadn't changed, but they hadn't for two new phone screenshots either: the figure lags, so it's read again a day later. The next pull downloaded none of the 9 photos;
     - whether OneDrive's search finds the names: Graph's search fails on this account, so the user tries it in OneDrive;
     - room on Mimir's disk for the old copies, which the mirror's snapshots keep.
   - **Still to build:** a later run's inventory should read `Original`, so a written photo keeps its id, analysis and catalog outcome.
