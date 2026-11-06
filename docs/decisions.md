@@ -1049,6 +1049,7 @@ The user, naming the full library's 3,921 people: "sort people already named on 
   - The best kind of match comes first: the name's start, then a word's start, then every typed word starting a word ("an kow"), then anywhere, then one typo off ("matuesz", "agnieska"), then the letters in order.
   - Arrows and Enter pick, Esc closes. `M` on a selected card opens its field.
 - **Checked:** the matcher on sample names in Node. On the live page, the first 48 cards were all named (83 named in all), and a surname's first 4 letters typed into another card's field found that person; clearing it saved nothing.
+- **"The same person as P12" is a merge link** (the same day, user): each card with the same name is a button that merges the two, and "merge all" merges them all when there are several. Only cards of the same kind are linked: a person and an animal with the same name aren't the same, and merge() refuses them. Checked on the live page with its save blocked: the link merged two cards of the same name and the hint went; after a reload the server still had them apart.
 
 ## Open — for the user
 
