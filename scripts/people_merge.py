@@ -5,7 +5,13 @@
    to anyone else;
 3. the unnamed people that are surely one person, with each other: average-linkage groups of their mean faces at
    cosine >= G (each pair of cards in a group is near on average, so a chain of look-alikes doesn't join);
-4. step 2 again, for the groups step 3 made.
+4. step 2 again, for the groups step 3 made;
+5. with --strangers N: the unnamed people seen in N photos or fewer marked "I don't know them" (P57), as the page's
+   "Mark the N unnamed" button does.
+
+With --emb2 <npz> (keys, embs: the same faces measured by a second model, e.g. glintr100, P71) a card's mean face is
+both models' mean faces side by side, so the cosine is the mean of the two models' cosines; only the faces both
+measured count.
 
 Never merged: two people seen in the same photo (one person is in a photo once), strangers ("I don't know them"),
 "Not a person", animals.
@@ -18,7 +24,8 @@ Reads the cards and the page's state from the app (`/api/people/cards`, `/api/pe
 from the session's DB. With --apply, saves through the page's own save (`PUT /api/people`) with the state's version:
 if anything saved meanwhile, nothing is saved (409). The state before goes to `people.json.before-merge-<time>`.
 
-    docker exec -i omp-omp-1 python - /state/sessions/onedrive [--named T M] [--group G] [--apply] < scripts/people_merge.py
+    docker exec -i omp-omp-1 python - /state/sessions/onedrive [--named T M] [--group G] [--emb2 <npz>] [--strangers N]
+        [--apply] < scripts/people_merge.py
 """
 import json
 import sqlite3
@@ -39,6 +46,7 @@ session = Path(args[0])
 apply = "--apply" in args
 T, M = (float(args[args.index("--named") + 1]), float(args[args.index("--named") + 2])) if "--named" in args else (0.60, 0.15)
 G = float(args[args.index("--group") + 1]) if "--group" in args else 0.60
+STRANGERS = int(args[args.index("--strangers") + 1]) if "--strangers" in args else None
 
 
 def get(path):
@@ -54,6 +62,10 @@ con = sqlite3.connect(f"file:{session / 'omp.db'}?mode=ro", uri=True)
 for pic, box, e in con.execute("SELECT id, box, emb FROM face WHERE person IS NOT NULL AND emb IS NOT NULL"):
     v = np.frombuffer(e, np.float16).astype(np.float32)
     emb[f"face:{pic}:{box}"] = v / np.linalg.norm(v)
+emb2 = None
+if "--emb2" in args:
+    z = np.load(args[args.index("--emb2") + 1])
+    emb2 = {str(k): (lambda v: v / np.linalg.norm(v))(e.astype(np.float32)) for k, e in zip(z["keys"], z["embs"])}
 ids = list(cards)
 top = {i: cards[i]["faces"][0]["k"] if cards[i]["faces"] else i for i in ids}
 
@@ -95,11 +107,16 @@ def nfaces(r, g):
 
 
 def centroid(members, out=()):
-    es = [emb[f["k"]] for c in members for f in cards[c]["faces"] if f["k"] in emb and f["k"] not in out]
-    if not es:
+    ks = [f["k"] for c in members for f in cards[c]["faces"]
+          if f["k"] in emb and f["k"] not in out and (emb2 is None or f["k"] in emb2)]
+    if not ks:
         return None
-    m = np.mean(es, axis=0)
-    return m / np.linalg.norm(m)
+    m = np.mean([emb[k] for k in ks], axis=0)
+    m /= np.linalg.norm(m)
+    if emb2 is None:
+        return m
+    m2 = np.mean([emb2[k] for k in ks], axis=0)
+    return np.concatenate([m, m2 / np.linalg.norm(m2)]) / np.sqrt(2)
 
 
 def photos(members):
@@ -264,9 +281,17 @@ n4 = to_named()
 g, named, unnamed, strangers = people()
 print(f"merges: same name {n1}, into named {n2}, unnamed together {n3}, groups into named {n4};"
       f" now {len(g)} people: named {len(named)}, unnamed known {len(unnamed)}, strangers {len(strangers)}")
+marked = []
+if STRANGERS is not None:
+    for r in unnamed:
+        if len(photos(g[r])) <= STRANGERS:
+            st(r, make=True)["unknown"] = True
+            marked.append(r)
+    print(f"marked 'I don't know them': {len(marked)} unnamed people seen in {STRANGERS} photos or fewer;"
+          f" unnamed known left {len(unnamed) - len(marked)}")
 
-if apply and merges:
-    touched = {c for pair in merges for c in pair}
+if apply and (merges or marked):
+    touched = {c for pair in merges for c in pair} | set(marked)
     roots = {root(c) for c in touched}
     members = [c for c in ids if root(c) in roots]
     names, keys = {}, []
@@ -289,6 +314,6 @@ if apply and merges:
                                                  ensure_ascii=False).encode())
     try:
         with urllib.request.urlopen(req) as r:
-            print(f"saved: {len(merges)} merges, {len(names)} faces' names; the state before: people.json.before-merge-{stamp}")
+            print(f"saved: {len(merges)} merges, {len(marked)} marked, {len(names)} faces' names; the state before: people.json.before-merge-{stamp}")
     except urllib.error.HTTPError as e:
         print(f"not saved: {e.code} {json.load(e).get('detail')}")
