@@ -340,9 +340,10 @@ function more(sec, n = BATCH) {
   if (end) { sentinels.unobserve(end); end.remove(); }
   for (let k = from; k < to; k++) box.append(card(list[k]));
   drawn[sec] = to;
-  if (to < list.length) {
-    const s = document.createElement("div");
-    s.className = "sentinel muted"; s.dataset.sec = sec; s.textContent = `${list.length - to} more…`;
+  if (to < list.length) {  // drawn when scrolled near, or clicked
+    const s = document.createElement("button");
+    s.className = "sentinel"; s.dataset.sec = sec; s.textContent = `Show ${Math.min(BATCH, list.length - to)} more (${list.length - to} left)`;
+    s.onclick = () => more(sec);
     box.append(s); sentinels.observe(s);
   }
   status();
