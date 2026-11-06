@@ -46,6 +46,10 @@
   .faces button.out::after { content: "✕"; position: absolute; inset: 0; display: grid; place-items: center; color: #fff; font-size: 22px; text-shadow: 0 0 3px #000; }
   .more { align-self: flex-start; font-size: 12px; padding: 2px 10px; }
   .fields { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; }
+  .mergewith { position: relative; margin-top: 6px; } .mergewith input { width: 100%; }
+  .mw-list { position: absolute; z-index: 5; left: 0; right: 0; top: 100%; margin-top: 2px; background: var(--card);
+             border: 1px solid var(--line); border-radius: 8px; max-height: 260px; overflow: auto; box-shadow: 0 6px 18px rgba(0,0,0,.18); }
+  .mw-list div { padding: 6px 9px; cursor: pointer; font-size: 13px; } .mw-list div.on, .mw-list div[data-k]:hover { background: var(--soft); }
   .fields label { display: flex; flex-direction: column; gap: 2px; font-size: 12px; color: var(--muted); }
   .flags { display: flex; gap: 14px; flex-wrap: wrap; font-size: 13px; color: var(--muted); }
   .flags label { display: inline-flex; gap: 6px; align-items: center; cursor: pointer; }
@@ -119,7 +123,7 @@
     "I don't know them" keeps a stranger out of the names. A card you leave without a name is still someone you know: their photos
     are kept like a named person's. Cards marked "I don't know them" or "Not a person" go to Hidden, where you can undo it.<br>
     Click a face to see its photo · right-click a face that isn't them to take it out · <kbd>←</kbd><kbd>→</kbd><kbd>↑</kbd><kbd>↓</kbd> select a card ·
-    <kbd>Enter</kbd> type its name · <kbd>Esc</kbd> back · <kbd>Z</kbd> show its faces large · <kbd>X</kbd> select to merge · every change is saved at once</div>
+    <kbd>Enter</kbd> type its name · <kbd>Esc</kbd> back · <kbd>Z</kbd> show its faces large · <kbd>X</kbd> select to merge · <kbd>M</kbd> merge with someone by name · every change is saved at once</div>
 </main>
 <div class="bar" id="bar" hidden><span id="barsum"></span><button class="primary" id="merge">Merge into one</button><button id="clear">Clear</button></div>
 <dialog id="big"><div id="bigMain"><div id="bigBox"><img id="bigImg" alt=""><div id="faceBox"></div><div id="bigBadge">Not them</div><button class="nav prev" id="bigPrev" title="Previous (←)">‹</button><button class="nav next" id="bigNext" title="Next (→)">›</button><button class="close" id="bigClose" title="Close (Esc)">✕</button></div><div id="bigFaces"></div></div><div id="bigBar"><div id="bigInfo"></div><div id="bigActs"></div></div></dialog>
@@ -280,6 +284,71 @@ function toggleOut(c, k) {
   save();
 }
 
+// --- "Merge with…": a person found by name, typed roughly (P65) ---
+// Names compared without diacritics and case ("lukasz" finds "Łukasz"); the best kind of match first: the name's
+// start, a word's start, every typed word starting a word ("an kow"), anywhere, one typo off, the letters in order.
+const fold = s => (s || "").normalize("NFD").replace(/[̀-ͯ]/g, "").replace(/[łŁ]/g, "l").toLowerCase();
+function oneOff(a, b) {  // one letter added, dropped, changed, or two swapped
+  if (Math.abs(a.length - b.length) > 1 || a === b) return a === b;
+  let i = 0;
+  while (i < a.length && i < b.length && a[i] === b[i]) i++;
+  if (a.length === b.length) return a.slice(i + 1) === b.slice(i + 1) || (a[i] === b[i + 1] && a[i + 1] === b[i] && a.slice(i + 2) === b.slice(i + 2));
+  return a.length > b.length ? a.slice(i + 1) === b.slice(i) : a.slice(i) === b.slice(i + 1);
+}
+function fuzzy(query, text) {  // a score, higher is better; 0: no match
+  const q = fold(query).trim(), t = fold(text);
+  if (!q || !t) return 0;
+  const words = t.split(/[\s\-.,()·]+/).filter(Boolean), parts = q.split(/\s+/);
+  if (t.startsWith(q)) return 100;
+  if (words.some(w => w.startsWith(q))) return 90;
+  if (parts.length > 1 && parts.every(p => words.some(w => w.startsWith(p)))) return 80;
+  const at = t.indexOf(q);
+  if (at >= 0) return 70 - Math.min(at, 20) / 2;
+  if (q.length >= 4 && words.some(w => oneOff(q, w) || oneOff(q, w.slice(0, q.length)))) return 55;
+  let k = 0, gaps = 0, last = -1;
+  for (let j = 0; j < t.length && k < q.length; j++) if (t[j] === q[k]) { if (last >= 0) gaps += j - last - 1; last = j; k++; }
+  return k === q.length ? Math.max(1, 40 - gaps) : 0;
+}
+// The people (or animals) a card can be merged with: the named ones by name, and any card by its id ("P123").
+function mergeTargets(c, query) {
+  const me = root(c), byIdQ = /^\s*[pa]\d+\s*$/i.test(query);
+  const out = [];
+  for (const r of rootCards()) {
+    if (r === me || r.pet !== c.pet || st(r).ignore) continue;
+    const s = st(r), name = who(s) || (s.me && !r.pet ? "me" : "");
+    const score = byIdQ ? (r.id.toLowerCase() === query.trim().toLowerCase() ? 100 : 0)
+      : name ? Math.max(fuzzy(query, s.name || ""), fuzzy(query, s.nick || ""), s.me ? fuzzy(query, "me") : 0) : 0;
+    if (score) out.push({r, name, score});
+  }
+  return out.sort((a, b) => b.score - a.score || facesOf(b.r).length - facesOf(a.r).length).slice(0, 8);
+}
+function mergeField(c, input) {
+  if (!input) return;
+  const list = input.nextElementSibling;
+  let hits = [], on = 0;
+  const close = () => { list.hidden = true; hits = []; };
+  const show = () => {
+    hits = input.value.trim() ? mergeTargets(c, input.value) : [];
+    on = 0;
+    list.innerHTML = hits.map((h, k) => `<div data-k="${k}" class="${k === on ? "on" : ""}"><b>${esc(h.name || h.r.id)}</b>
+      ${h.name && st(h.r).nick && st(h.r).name ? `<span class="muted">(${esc(st(h.r).nick)})</span>` : ""}
+      <span class="muted">· ${h.r.id} · ${facesOf(h.r).length} ${c.pet ? "photos" : "faces"}</span></div>`).join("")
+      || (input.value.trim() ? `<div class="muted">nobody named like that</div>` : "");
+    list.hidden = !input.value.trim();
+    for (const el of list.querySelectorAll("[data-k]")) el.onmousedown = e => { e.preventDefault(); pick(+el.dataset.k); };
+  };
+  const mark = () => { for (const el of list.querySelectorAll("[data-k]")) el.classList.toggle("on", +el.dataset.k === on); };
+  const pick = k => { const h = hits[k]; if (!h) return; input.value = ""; close(); merge([c, h.r]); };
+  input.oninput = show;
+  input.onfocus = () => { setFocus(c.id, false); if (input.value.trim()) show(); };
+  input.onblur = () => setTimeout(close, 150);
+  input.onkeydown = e => {
+    if (e.key === "ArrowDown" || e.key === "ArrowUp") { e.preventDefault(); e.stopPropagation(); if (hits.length) { on = (on + (e.key === "ArrowDown" ? 1 : hits.length - 1)) % hits.length; mark(); } }
+    else if (e.key === "Enter") { e.preventDefault(); e.stopPropagation(); pick(on); }
+    else if (e.key === "Escape") { close(); }
+  };
+}
+
 function card(c) {
   const s = st(c), el = document.createElement("div"), fs = facesOf(c), parts = members(c).filter(m => m !== c);
   el.className = "card"; el.id = "c-" + c.id; el.dataset.id = c.id;
@@ -298,6 +367,7 @@ function card(c) {
     <div class="faces"></div>${fs.length > DATA.shown ? `<button class="more">show all ${fs.length}</button>` : ""}
     <div class="fields"><label>${c.pet ? "Name" : "Full name"}<input type="text" data-f="name" list="known" autocomplete="off" placeholder="${c.pet ? "Filemon" : "Anna Kowalska"}"></label>
     <label>Nickname<input type="text" data-f="nick" autocomplete="off" placeholder="${c.pet ? "Filuś" : "Ania"}"></label></div>
+    <div class="mergewith"><input type="text" data-merge autocomplete="off" placeholder="Merge with… a name, or P12 (M)"><div class="mw-list" hidden></div></div>
     <div class="flags">${c.pet ? `<label><input type="checkbox" data-f="unknown"> Not an animal of ours</label>` :
       `<label><input type="checkbox" data-f="me"> This is me</label><label><input type="checkbox" data-f="unknown"> I don't know them</label>
        <label><input type="checkbox" data-f="ignore"> Not a person</label>`}</div>`;
@@ -318,6 +388,7 @@ function card(c) {
   const more = el.querySelector(".more");
   if (more) more.onclick = () => { const all = more.dataset.all !== "1"; draw(all); more.dataset.all = all ? "1" : ""; more.textContent = all ? "show fewer" : `show all ${fs.length}`; };
   el.querySelector(".pick").onchange = e => { e.target.checked ? selected.add(c.id) : selected.delete(c.id); status(); };
+  mergeField(c, el.querySelector("[data-merge]"));
   for (const b of el.querySelectorAll("[data-un]")) b.onclick = () => {
     const m = byId[b.dataset.un];
     touch(m);  // the person it was part of, and itself
@@ -375,8 +446,10 @@ function render(keep = false) {
   const roots = rootCards(), before = keep ? {...drawn} : {};
   const once = roots.filter(c => c.pet && facesOf(c).length === 1);
   lists.people = roots.filter(c => !c.pet && shownIn(c, filter));
+  const known = c => !!who(st(c)) || !!st(c).me, namedFirst = list => [...list.filter(known), ...list.filter(c => !known(c))];
   if (filter === "fb") lists.people.sort((a, b) => fbOf(b)[0].cos - fbOf(a)[0].cos);
-  lists.pets = roots.filter(c => c.pet && facesOf(c).length > 1 && shownIn(c, filter));
+  else lists.people = namedFirst(lists.people);  // drawn again on a tab, a merge or the large view, not while typing
+  lists.pets = namedFirst(roots.filter(c => c.pet && facesOf(c).length > 1 && shownIn(c, filter)));
   lists.once = once.filter(c => shownIn(c, filter));
   for (const sec of ["people", "pets", "once"]) {
     $(sec).innerHTML = ""; drawn[sec] = 0;
@@ -481,6 +554,7 @@ document.addEventListener("keydown", e => {
   else if (e.key === "Enter") { e.preventDefault(); $("c-" + c.id).querySelector("[data-f=name]").focus(); }
   else if (e.key === "z") openBig(c, 0);
   else if (e.key === "x") { selected.has(c.id) ? selected.delete(c.id) : selected.add(c.id); status(); }
+  else if (e.key === "m") { e.preventDefault(); $("c-" + c.id).querySelector("[data-merge]").focus(); }
 });
 
 for (const b of $("tabs").children) b.onclick = () => { filter = b.dataset.f; for (const x of $("tabs").children) x.classList.toggle("on", x === b); render(); };
