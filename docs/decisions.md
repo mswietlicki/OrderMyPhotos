@@ -1014,6 +1014,22 @@ The B50's service (mimir `stacks/depth`) did the same work one image at a time. 
 
 - **On the full run:** depth went from 8.3 to 31.9 photos/s (~73 min left instead of ~5 h). SigLIP 2 fell from 17.6 to 12.8, sharing the B50 (72%) and the CPU (92%) with depth, so the B50's lane (SigLIP, DINOv2, Q-ReAlign, subjects) is now the longest.
 
+## P63 — The review pages at the full library's size (2026-11-06, user, measured)
+
+The full run reached the People page with 3,921 people and 2,952 animal cards over ~175k faces, and the page didn't load. The user: "add some paging, or lazy loading", and "probably same to the review page as well".
+
+- **People: the cards.** `naming.page_data` reads all faces and animal boxes in one query each. A query per card scanned the face table (no index on `person`) 3,921 times, which took minutes. `/api/people/cards` is cached until the clustering changes, and only the user's names are read again. The app gzips its responses: 4.7 MB for the cards, 2.3 s the first time, 0.9 s after.
+- **People: the page.**
+  - Cards are drawn 48 at a time as they're scrolled to, or with "Show 48 more". The tabs filter before drawing.
+  - A card's members come from one map, made again after a merge; going through every card was ~47M steps a save.
+  - A save sends only the changed cards' faces, and the state of cards with something set.
+- **"Mark the N unnamed as 'I don't know them'"** (P57): a card left without a name counts as someone you know, so with thousands of cards the ones never looked at would all count. The button marks them as strangers in one go, after naming the people you know. It asks first, and each card can be undone under Hidden.
+- **The album review:** a unit is drawn ~240 photos at a time, with bursts whole and the rest on scroll or "Show more". An index map replaces `photos.indexOf` per tile. One handler serves all the tiles. A change to a photo not drawn yet updates the summary instead of drawing the unit again.
+- **Checked:**
+  - People, on the full run: 48 + 48 cards; 5 more batches in ~300 ms. A test nickname saved its card's 28 face labels and clearing it removed them, leaving no trace.
+  - Review, on s8 in a throwaway app instance: the 284-photo album drew 240 then 284 photos, each once. Keep/archive and the large view worked on a tile of the second batch.
+- **Not yet measured:** `placements()` for the whole library's review, which is recomputed after each change. Measure it once the run reaches the review.
+
 ## Open — for the user
 
 1. ~~**Language** of titles, descriptions and tags.~~ Resolved by P42: both languages; S11 reads English only.
