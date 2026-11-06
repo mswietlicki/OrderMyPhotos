@@ -1051,6 +1051,20 @@ The user, naming the full library's 3,921 people: "sort people already named on 
 - **Checked:** the matcher on sample names in Node. On the live page, the first 48 cards were all named (83 named in all), and a surname's first 4 letters typed into another card's field found that person; clearing it saved nothing.
 - **"The same person as P12" is a merge link** (the same day, user): each card with the same name is a button that merges the two, and "merge all" merges them all when there are several. Only cards of the same kind are linked: a person and an animal with the same name aren't the same, and merge() refuses them. Checked on the live page with its save blocked: the link merged two cards of the same name and the hint went; after a reload the server still had them apart.
 
+## P66 — The People and review pages let go of what's far off-screen (2026-11-06, user, measured)
+
+The user: the site needs to unload what it holds, to perform better. Drawn as they're scrolled to (P63), the cards and tiles stayed drawn afterwards: scrolled through, the full library's ~6,900 People cards of up to 12 faces each, or a folder of thousands of photos, all stayed in the browser's memory.
+
+- **People:** a card more than 2,500 px off-screen is emptied to a box of its size and filled again as it comes near. The selected card and a card with a field being typed in stay filled; M and Enter fill the selected card first. A card's marks (named, selected, the same-name links) are drawn by `paint()`, which skips an emptied card except for its classes.
+- **Review:** a tile more than 3,000 px off-screen lets go of its thumbnail and takes it again as it comes near. The tiles themselves stay (about 9 elements each).
+  - The observer is made for each album, around what scrolls as the CSS has it: `#main` on a wide screen, the page on a narrow one. If a resize changes that, it can only keep the thumbnails or take them again late.
+  - "Show more" keeps the page as its root: rooted on a `#main` that doesn't scroll, it would draw a whole folder.
+- **Measured** on the live library, in a browser pane that draws no frames: an IntersectionObserver computed by hand stood in, and saving was blocked.
+  - People, scrolled through 1,248 cards: 2,568 elements and 108 face images held, against 54,960 and 12,982 before. The scroll took 5.0 s, against 18.3 s.
+  - A merge with those 1,248 cards drawn took 1.7 s.
+  - Review, the 68,562-photo "(not sorted)" folder scrolled through 5,040 tiles: 40 thumbnails held, against 5,040.
+- **Not done:** a merge still draws every card that was drawn before, and only then empties the far ones. Drawing the far ones as boxes would need their heights first.
+
 ## Open — for the user
 
 1. ~~**Language** of titles, descriptions and tags.~~ Resolved by P42: both languages; S11 reads English only.
