@@ -1141,6 +1141,11 @@ The user asked whether all photos will be tagged with the people in them. They w
     - whether OneDrive's search finds the names: Graph's search fails on this account, so the user tries it in OneDrive;
     - room on Mimir's disk for the old copies, which the mirror's snapshots keep.
   - **Still to build:** a later run's inventory should read `Original`, so a written photo keeps its id, analysis and catalog outcome.
+- **Only the names the user gave** (the same day).
+  - The sample album wrote "Akty" as a person into 5 photos. That's a People folder's name ("nudes"), which named a cluster of 4,352 faces. On the People page it was only a suggestion, but the person table keeps suggestions as names.
+  - Now only clusters the user named (source "user") are written, and the owner's other clusters take the owner's name. The sample was written again with the user's names.
+  - The captions do the same (user: "want captions limited to the names you gave"): `people.recognized()` and `faces.described()` leave a suggested name out. On the library, 25 of the 48,006 photos with names lost one.
+  - Album names and sorting (albums.py) still use the 5 suggested names (120 faces) left.
 
 ## P68 — Same-name cards merged, and unnamed cards merged into the named person they surely are (2026-11-06, user, measured)
 
