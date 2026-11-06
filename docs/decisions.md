@@ -1134,6 +1134,18 @@ The user asked whether all photos will be tagged with the people in them. They w
   - A test set's apply (a move, a turn, three photos written) undid to the exact original bytes. Applied twice, the second apply wrote nothing.
 - **Not built yet:** the OneDrive side. `mimir-onedrive apply` still skips turns and tags. Uploading each written photo once (PUT content to the same item) is the next step. Three things to measure first: what OneDrive's versions cost in quota, whether its search reads embedded keywords, and Mimir's disk. The next pull would download every written photo again, while the snapshot taken before the apply keeps the old ones.
 
+## P68 — Same-name cards merged, and unnamed cards merged into the named person they surely are (2026-11-06, user, measured)
+
+The user had named 900 cards with 317 names, many through the Facebook suggestions (P64), which suggest the same friend for each card of one person. The user: "Merge People with the same name … try to identify unnamed based on them and merge them if you are quite sure it's them."
+
+- **Same name.** 146 names were on 729 cards. They were merged as the page's Merge does: into the card with the most faces, with names filled from the others. Names that differ only in spacing, case or Polish letters were checked too, and there were none.
+- **By face.** A named person's face is the mean of their cards' faces. An unnamed card (not a stranger, not "Not a person") joins the nearest named person at cosine ≥ 0.60, when that is ≥ 0.15 nearer than anyone else.
+  - **Calibration.** The cards the user had merged into a named person were each compared with that person without them. At these thresholds, 567 of 971 found a person, and 563 of them the right one (99.3%). At 0.50 / 0.10, 805 of 817 were right, with twice as many merges.
+  - **Strangers.** Of 61 cards marked "I don't know them", 4 would match. On inspection they were all one named person, one of them a 488-face card at 0.84, so the user probably marked that person differently on different cards. Strangers are never merged; that's for the user.
+  - **The result.** 145 unnamed cards joined 38 people. 30 of them joined the most photographed person (19 cards, 7,887 faces), each at least 0.27 nearer than anyone else. In every merged card, at least 70% of its faces were nearest the same person.
+- **How.** `scripts/people_merge.py` writes the page's state and the faces' names the way the page does, after backing both up. The page saves its whole state, so an open People page must not change anything meanwhile, and must be reloaded after. Each merge can be undone on the card ("merged: P… ✕").
+- **The People page afterwards.** 2,972 people, 318 named, 2,572 known without a name, 61 strangers.
+
 ## Open — for the user
 
 1. ~~**Language** of titles, descriptions and tags.~~ Resolved by P42: both languages; S11 reads English only.
