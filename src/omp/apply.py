@@ -5,7 +5,11 @@ apply` (server-side moves by item id), which is still to build.
 - Every move of `plan.json` is done in place, as a rename: nothing is copied. Before a photo moves, its
   QuickXorHash is checked against the DB, so a file that changed since the run isn't moved. A destination
   that exists already gets `_1`, `_2`, …, never overwritten.
-- The turns (P36) are written as the EXIF Orientation tag, a lossless change, on the moved photo.
+- Each kept photo's metadata (`metadata.jsonl`, metadata.py, P67) is written in one go, on the moved photo:
+  the title, description and tags, the people with their regions, and the turn (P36) as the EXIF Orientation.
+  The pixels stay as they are; the written copy is checked before it replaces the photo, and the photo as it
+  was is kept in `<session>/apply-originals/` for `--undo`. A plan without it (an older run) has only its
+  turns written.
 - If the final decision is to delete the archived photos, the photos this apply moved into
   `Archive/OrderMyPhotos/` are deleted afterwards, and only those.
 - Each step is a line in `<session>/apply.jsonl`, so what happened can be read back and the moves undone.
@@ -13,6 +17,7 @@ apply` (server-side moves by item id), which is still to build.
 
 import json
 import os
+import shutil
 import subprocess
 import time
 from pathlib import Path
@@ -113,8 +118,44 @@ def run(cfg, con, run_id: str):
                 archived.append(rel)
             moved += 1
             prog.done(m["from"])
-    turned = 0
-    for r in plan.get("rotations", []):
+    turned = written = failed = 0
+    mfile = cfg.bundle / "metadata.jsonl"
+    entries = [json.loads(line) for line in open(mfile, encoding="utf-8")] if mfile.exists() else []
+    if entries:
+        from . import metadata  # noqa: PLC0415
+
+        originals = state / "apply-originals"  # each photo as it was before its write, for --undo
+        originals.mkdir(exist_ok=True)
+        with metadata.ExifTool() as et, runtime.Progress(con, "apply.metadata", "plan", total=len(entries)) as prog:
+            for e in entries:
+                rel, id_ = placed.get(e["path"], (e["path"], hashes.get(e["from"])))
+                p = root / rel
+                if not p.is_file():
+                    prog.fail(rel, "not there")
+                    continue
+                h = quickxorhash_file(p).hex()
+                if id_ and h != id_ and h not in ours.get(id_, ()):
+                    prog.fail(rel, "changed since the run")
+                    note(op="skip", path=rel, why="metadata: changed")
+                    continue
+                tmp = p.with_name(p.name + ".omp-write")
+                try:
+                    res = metadata.write(et, p, tmp, e, run=run_id)
+                except Exception as x:  # noqa: BLE001 - one photo's failure isn't the apply's
+                    prog.fail(rel, f"metadata: {x}")
+                    note(op="skip", path=rel, why=f"metadata: {x}")
+                    failed += 1
+                    continue
+                if res["wrote"]:
+                    if not (originals / f"{h}{p.suffix.lower()}").exists():
+                        shutil.copy2(p, originals / f"{h}{p.suffix.lower()}")
+                    os.replace(tmp, p)
+                    note(op="meta", path=rel, id=id_, was=h, hash=quickxorhash_file(p).hex(), wrote=res["wrote"],
+                         kept=res["kept"], orientation=res.get("orientation"))
+                    written += 1
+                    turned += bool(res.get("orientation"))
+                prog.done(rel)
+    for r in plan.get("rotations", []) if not entries else []:  # an older plan: the turns alone
         rel, id_ = placed.get(r["path"], (r["path"], hashes.get(r["path"])))
         p = root / rel
         if p.is_file():
@@ -138,10 +179,10 @@ def run(cfg, con, run_id: str):
         while d != root and d.is_dir() and not any(d.iterdir()):
             d.rmdir()
             d = d.parent
-    note(op="end", moved=moved, skipped=skipped, turned=turned, deleted=deleted)
+    note(op="end", moved=moved, skipped=skipped, turned=turned, written=written, failed=failed, deleted=deleted)
     log.close()
-    print(f"apply: {moved} photos moved ({len(archived)} to {ARCHIVE}), {skipped} skipped, {turned} turned,"
-          f" {deleted} archived photos deleted, in {root}")
+    print(f"apply: {moved} photos moved ({len(archived)} to {ARCHIVE}), {skipped} skipped, {written} written"
+          f" ({turned} turned, {failed} failed), {deleted} archived photos deleted, in {root}")
 
 
 def undo(cfg):
@@ -155,6 +196,12 @@ def undo(cfg):
         p = Path(cfg.root) / e.get("path", "")
         if e["op"] == "turn" and e.get("after") and e["path"] not in gone and p.is_file() and set_orientation(p, e["before"]):
             log.write(json.dumps({"op": "unturn", "path": e["path"], "id": e.get("id"), "hash": quickxorhash_file(p).hex(),
+                                  "t": time.time()}) + "\n")
+        orig = state / "apply-originals" / f"{e.get('was')}{p.suffix.lower()}"
+        if (e["op"] == "meta" and e["path"] not in gone and p.is_file() and orig.is_file()
+                and quickxorhash_file(p).hex() == e["hash"]):  # as written, nobody changed it since: as it was
+            shutil.copy2(orig, p)
+            log.write(json.dumps({"op": "unmeta", "path": e["path"], "id": e.get("id"), "hash": e["was"],
                                   "t": time.time()}) + "\n")
     log.close()
     back = 0

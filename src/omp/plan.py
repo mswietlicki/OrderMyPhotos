@@ -9,6 +9,9 @@ as a list of moves in the bundle (`OrderMyPhotos/plan.json`).
 - A proposed turn (P36) is listed apart: on apply it's a lossless EXIF Orientation change, not a move.
 - So are the tags that come from a detector rather than a caption: nudity and full nudity (P53, which
   replaced P26's move to the album's ` PRIV` sibling). They're written with the photo's other metadata (S9).
+- `metadata.jsonl`, next to it: what goes into each kept photo's file, in one write (metadata.py, P67): the
+  caption's title, description and tags, the named people and animals with their regions, the detectors' tags
+  and the turn.
 
 Applying it is a move per photo, in place: nothing is copied (user, 2026-11-03: "do the moving in place as
 not to extend disk space"). For a test, `python3 -m omp.plan --links <library> <out>` builds the resulting
@@ -47,6 +50,7 @@ def run(cfg, con, run_id: str):
         taken[(folder, name.lower())] += 1
         return f"{folder}/{stem}_{k}{ext}" if k else f"{folder}/{name}"
 
+    kept = []  # the kept photos, for metadata.jsonl
     for path, id_, policy in con.execute("SELECT path, id, policy FROM file WHERE media='photo' ORDER BY path").fetchall():
         p = PurePosixPath(path)
         if policy in ("ignore", "people", "reference") or p.parts[0] == "OrderMyPhotos":
@@ -75,6 +79,16 @@ def run(cfg, con, run_id: str):
         if f.get("nudity") in TAGS and v == "keep":
             tag, pl = TAGS[f["nudity"]]
             tags.append({"path": dst or path, "tags": [tag], "pl": [pl], "why": "nudity detector"})
+        if v == "keep" and not (dst or path).startswith(ARCHIVE + "/"):
+            kept.append({"id": id_, "path": path, "dst": dst or path, "turn": f.get("rotate") or 0,
+                         "tags": [list(TAGS[f["nudity"]])] if f.get("nudity") in TAGS else []})
+    from . import metadata  # noqa: PLC0415
+
+    entries = metadata.plan(con, kept)
+    with open(cfg.bundle / "metadata.jsonl", "w", encoding="utf-8") as fh:
+        for e in entries:
+            fh.write(json.dumps(e, ensure_ascii=False) + "\n")
+    print(f"plan: metadata for {len(entries)} of {len(kept)} kept photos -> {cfg.bundle / 'metadata.jsonl'}")
     out = cfg.bundle / "plan.json"
     out.write_text(json.dumps({"run": run_id, "generated": datetime.now().isoformat(timespec="seconds"),
                                "counts": dict(counts), "moves": moves, "rotations": rotations, "tags": tags},
