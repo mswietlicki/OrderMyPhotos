@@ -216,16 +216,20 @@ def described(con) -> dict[str, str]:
     """Photo id -> how its people look, for its caption (P50): left to right, with the names people.py knows,
     for the faces the model is fairly sure about (P >= 0.5). "Jan smiling, Ola neutral, someone surprised"."""
     q = ("SELECT e.id, e.top, e.probs, f.box, {} FROM face_expr e JOIN face f ON f.fid = e.fid {}")
-    try:
-        rows = con.execute(q.format("p.short, p.owner", "LEFT JOIN person p ON p.pid = f.person")).fetchall()
+    try:  # only the names the user gave, as people.recognized (P67)
+        rows = con.execute(q.format("CASE WHEN p.source = 'user' THEN p.short END AS short, p.owner",
+                                    "LEFT JOIN person p ON p.pid = f.person")).fetchall()
     except Exception:  # noqa: BLE001 - no people stage yet
         rows = con.execute(q.format("NULL AS short, 0 AS owner", "")).fetchall()
+    from .people import owner_short  # noqa: PLC0415
+
+    mine = owner_short(con)
     by = {}
     for r in rows:
         if json.loads(r["probs"])[r["top"]] < 0.5:
             continue
         x0, _, x1, _ = json.loads(r["box"])
-        who = r["short"] or ("the owner" if r["owner"] else "someone")
+        who = r["short"] or ((mine or "the owner") if r["owner"] else "someone")
         by.setdefault(r["id"], []).append(((x0 + x1) / 2, who, WORDS[r["top"]]))
     out = {}
     for i, fs in by.items():

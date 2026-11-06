@@ -348,17 +348,33 @@ def run(cfg: Config, con, run_id: str):
           f" {len(ment)} album names read; {vlm.stats()}; {n_pets} animals; {page}; {dt:.0f} s")
 
 
+def owner_short(con):
+    """The owner's name as the user gave it (nickname, else first name), or None."""
+    try:
+        r = con.execute("SELECT short FROM person WHERE owner=1 AND source='user' AND short IS NOT NULL LIMIT 1").fetchone()
+    except Exception:  # noqa: BLE001 - no people stage yet
+        return None
+    return r[0] if r else None
+
+
 def recognized(con) -> dict[str, str]:
     """Photo id -> who it shows, for its caption (P40): the people by face, with where they are when there are
     several, and the named animals. "Jan (the owner, on the left), Ola (on the right); the cat Filemon"."""
+    # Only the names the user gave (source "user", P67): a People folder's or an album's name is only a
+    # suggestion on the People page (user, 2026-11-06: "want captions limited to the names you gave"). The
+    # owner's other clusters take the owner's name.
     by, out = defaultdict(list), {}
     try:
-        for r in con.execute("SELECT f.id, f.box, p.short, p.owner FROM face f JOIN person p ON p.pid=f.person"
-                             " WHERE p.short IS NOT NULL OR p.owner=1"):
-            x0, _, x1, _ = json.loads(r["box"])
-            by[r["id"]].append(((x0 + x1) / 2, r["short"], bool(r["owner"])))
+        rows = con.execute("SELECT f.id, f.box, p.short, p.owner, p.source FROM face f JOIN person p ON p.pid=f.person"
+                           " WHERE p.short IS NOT NULL OR p.owner=1").fetchall()
     except Exception:  # noqa: BLE001 - no people stage yet
         return {}
+    mine = owner_short(con)
+    for r in rows:
+        short = r["short"] if r["source"] == "user" else (mine if r["owner"] else None)
+        if short or r["owner"]:
+            x0, _, x1, _ = json.loads(r["box"])
+            by[r["id"]].append(((x0 + x1) / 2, short, bool(r["owner"])))
     for i, ps in by.items():
         ps = sorted({(n, o): (x, n, o) for x, n, o in ps}.values())
         parts = []
@@ -369,7 +385,7 @@ def recognized(con) -> dict[str, str]:
         out[i] = ", ".join(parts)
     try:
         for r in con.execute("SELECT DISTINCT m.id, p.short, p.kind FROM pet_member m JOIN pet p ON p.pid=m.pid"
-                             " WHERE p.short IS NOT NULL"):
+                             " WHERE p.short IS NOT NULL AND p.source='user'"):
             out[r["id"]] = "; ".join(s for s in (out.get(r["id"]), f"the {r['kind'] or 'animal'} {r['short']}") if s)
     except Exception:  # noqa: BLE001 - no pets yet
         pass
