@@ -1145,7 +1145,7 @@ The user asked whether all photos will be tagged with the people in them. They w
   - The sample album wrote "Akty" as a person into 5 photos. That's a People folder's name ("nudes"), which named a cluster of 4,352 faces. On the People page it was only a suggestion, but the person table keeps suggestions as names.
   - Now only clusters the user named (source "user") are written, and the owner's other clusters take the owner's name. The sample was written again with the user's names.
   - The captions do the same (user: "want captions limited to the names you gave"): `people.recognized()` and `faces.described()` leave a suggested name out. On the library, 25 of the 48,006 photos with names lost one.
-  - Album names and sorting (albums.py) still use the 5 suggested names (120 faces) left.
+  - So do album names and sorting (albums.py; user: "Yes, albums too"): the names in album titles, who is in each photo, the person folders and the owner's, the big faces that make a photo a person's, and the pets. On the library, the 5 clusters with names suggested from album names (120 faces) dropped out; the owner and the 5 named pets stayed.
 
 ## P68 — Same-name cards merged, and unnamed cards merged into the named person they surely are (2026-11-06, user, measured)
 
