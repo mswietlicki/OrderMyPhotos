@@ -225,7 +225,8 @@ function status() {
     + (DATA.unclustered ? ` · ${DATA.unclustered} more faces (small, unsure, or seen only once or twice) aren't shown` : "");
   $("petsub").textContent = DATA.pets.length ? `${roots.filter(c => c.pet).length} found, ${pets} named` : "none found";
   const seen = {};
-  for (const c of roots) { const w = who(st(c)).toLowerCase(); if (w) (seen[w] = seen[w] || []).push(c.id); }
+  const kin = (c, w) => (c.pet ? "a:" : "p:") + w;  // a person and an animal of the same name aren't the same
+  for (const c of roots) { const w = who(st(c)).toLowerCase(); if (w) (seen[kin(c, w)] = seen[kin(c, w)] || []).push(c.id); }
   $("known").innerHTML = [...new Set(roots.map(c => (st(c).name || "").trim()).filter(Boolean).concat(DATA.fb_names || []))]
     .map(n => `<option value="${esc(n)}">`).join("");
   for (const c of roots) {
@@ -236,7 +237,7 @@ function status() {
     el.classList.toggle("unknown", !w && !!s.unknown && !s.ignore);
     el.classList.toggle("sel", selected.has(c.id));
     el.querySelector(".pick").checked = selected.has(c.id);
-    const others = w ? seen[w].filter(i => i !== c.id) : [];
+    const others = w ? seen[kin(c, w)].filter(i => i !== c.id) : [];
     const same = el.querySelector(".same"), key = others.join(",");
     if (same.dataset.k !== key) {  // a merge link per card with the same name (P65); drawn again only when it changes
       same.dataset.k = key;
