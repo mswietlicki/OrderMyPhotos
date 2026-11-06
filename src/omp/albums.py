@@ -633,7 +633,9 @@ def run(cfg: Config, con, run_id: str, place_only: bool = False):
         clusters = defaultdict(set)
         for r in con.execute("SELECT f.id, f.person FROM face f JOIN person p ON p.pid=f.person WHERE p.owner=0"):
             clusters[r[0]].add(r[1])
-        short = {r[0]: r[1] for r in con.execute("SELECT pid, short FROM person WHERE short IS NOT NULL AND owner=0")}
+        # only the names the user gave (P67): a People folder's or an album's name is a suggestion on the People page
+        short = {r[0]: r[1] for r in con.execute("SELECT pid, short FROM person WHERE short IS NOT NULL AND owner=0"
+                                                 " AND source='user'")}
         days_of = defaultdict(set)
         for r in con.execute("SELECT f.person, p.taken_ts FROM face f JOIN photo p ON p.id=f.id WHERE f.person IS NOT NULL"):
             days_of[r[0]].add(int(r[1] // 86400))
@@ -754,12 +756,13 @@ def run(cfg: Config, con, run_id: str, place_only: bool = False):
     try:  # who is in each photo (S8): named people, without the owner
         who = defaultdict(set)
         for r in con.execute("SELECT f.id, p.short FROM face f JOIN person p ON p.pid=f.person"
-                             " WHERE p.short IS NOT NULL AND p.owner=0"):
+                             " WHERE p.short IS NOT NULL AND p.owner=0 AND p.source='user'"):
             who[r["id"]].add(r["short"])
     except Exception:  # noqa: BLE001 - no people stage yet
         who = {}
     try:  # and the pets the user named (P40): "<river> z Olą i Kotem"
-        for r in con.execute("SELECT m.id, p.short FROM pet_member m JOIN pet p ON p.pid=m.pid WHERE p.short IS NOT NULL"):
+        for r in con.execute("SELECT m.id, p.short FROM pet_member m JOIN pet p ON p.pid=m.pid WHERE p.short IS NOT NULL"
+                             " AND p.source='user'"):
             who.setdefault(r["id"], set()).add(r["short"])
     except Exception:  # noqa: BLE001 - no pets yet
         pass
@@ -801,7 +804,7 @@ def run(cfg: Config, con, run_id: str, place_only: bool = False):
             by_theme[m.group()].append(r["id"])
     try:
         ment = {r[0]: json.loads(r[1]) for r in con.execute("SELECT album, data FROM album_mention")}
-        named = [r[0] for r in con.execute("SELECT DISTINCT name FROM person WHERE name IS NOT NULL")]
+        named = [r[0] for r in con.execute("SELECT DISTINCT name FROM person WHERE name IS NOT NULL AND source='user'")]
     except Exception:  # noqa: BLE001 - no people stage yet
         ment, named = {}, []
     # An undated album named after a person ("Pictures/Albums/<first name>") is that person's folder. Faces
@@ -824,7 +827,7 @@ def run(cfg: Config, con, run_id: str, place_only: bool = False):
             person_albums[album] = first[m.group(1).lower()]
     persons = {name: f"Pictures/People/{name}" for name in named}  # person -> where photos of them go
     try:
-        owner = con.execute("SELECT name FROM person WHERE owner=1 AND name IS NOT NULL").fetchone()
+        owner = con.execute("SELECT name FROM person WHERE owner=1 AND name IS NOT NULL AND source='user'").fetchone()
     except Exception:  # noqa: BLE001 - no people stage yet
         owner = None
     owner_folder = f"Pictures/People/{owner[0]}" if owner else None
@@ -855,7 +858,7 @@ def run(cfg: Config, con, run_id: str, place_only: bool = False):
     big_face = defaultdict(list)
     try:
         for r in con.execute("SELECT f.id, f.size, p.name FROM face f JOIN person p ON p.pid=f.person"
-                             " WHERE p.name IS NOT NULL AND f.size >= ?", (PERSON_FACE,)):
+                             " WHERE p.name IS NOT NULL AND p.source='user' AND f.size >= ?", (PERSON_FACE,)):
             big_face[r["id"]].append((r["size"], r["name"]))
     except Exception:  # noqa: BLE001 - no people stage yet
         pass
