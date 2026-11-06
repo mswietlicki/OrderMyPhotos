@@ -1030,6 +1030,15 @@ The full run reached the People page with 3,921 people and 2,952 animal cards ov
   - Review, on s8 in a throwaway app instance: the 284-photo album drew 240 then 284 photos, each once. Keep/archive and the large view worked on a tile of the second batch.
 - **Not yet measured:** `placements()` for the whole library's review, which is recomputed after each change. Measure it once the run reaches the review.
 
+## P64 — Names suggested from the user's Facebook friends (2026-11-06, user, measured)
+
+The People page had 3,921 people to name. The user: "use Facebook to help me name all faces … compare with OneDrive faces, then add them as suggestions to People page".
+
+- **The friends.** The user's friends list and profile pictures were saved from the user's own signed-in browser, in the page (the pictures fetched there as files), with no password or token handled outside it. That gave 703 friends, a face in 529 of the pictures. They're kept in the session's folder on the server only (`facebook-friends.json`, mode 600). Friends' names and pictures never go in the repo or its docs.
+- **The match.** `scripts/facebook_suggestions.py` runs in the app's container. Each picture's largest face goes through the run's faces model (InsightFace buffalo_l) and is compared with each card's mean face. A card gets up to 3 friends at cosine ≥ 0.35 and within 0.08 of the nearest. The owner's cards get none, and nor does a friend whose picture's largest face is the owner's (a picture with them). The result is `suggestions-facebook.json`, tied to the clustering it was made from: after the people phase runs again, it's ignored until the script runs again.
+- **Suggestions only, never applied.** Of the 34 cards already named from People folders or album names, 12 matched a friend at ≥ 0.55, and 5 of them were the right person. Most of the others were a partner or a relative in a shared profile picture. So each card shows its friends with the picture and similarity, and marks a picture with several faces (👥). "Use" fills the full name, which the user can still change.
+- **On the page.** A Facebook tab lists the unnamed people with a suggestion, nearest first (622 of them). Every friend's name is in the name field's autocomplete, for the people the match missed.
+
 ## Open — for the user
 
 1. ~~**Language** of titles, descriptions and tags.~~ Resolved by P42: both languages; S11 reads English only.
