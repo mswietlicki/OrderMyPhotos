@@ -88,6 +88,7 @@
   #bigBar { height: 76px; } #bigInfo { flex: 1; min-width: 0; overflow: auto; padding: 10px 16px; }
   #bigInfo .muted { color: #98a2b3; font-size: 12px; } #bigInfo b.out { color: #ef6b5b; } #bigInfo b.in { color: #4cc38a; }
   #big kbd { border-color: #2c3038; }
+  .sentinel { grid-column: 1 / -1; padding: 12px; text-align: center; }
   @media (max-width: 420px) { .faces { grid-template-columns: repeat(4, 1fr); } .fields { grid-template-columns: 1fr; } }
 </style>
 </head>
@@ -96,6 +97,7 @@
   <b>People and pets</b>
   <div class="tabs" id="tabs"><button data-f="all" class="on">All</button><button data-f="todo">Unnamed</button><button data-f="hidden" id="hiddenTab">Hidden</button></div>
   <span class="muted" id="sub"></span>
+  <button id="rest" hidden title="After naming the people you know: the cards left without a name become strangers"></button>
   <span style="flex:1"></span>
   <span id="saved" class="muted"></span>
   <button class="primary" id="finished" title="Done naming: the run goes on with these names">Finished</button>
@@ -135,7 +137,15 @@ const topKey = c => c.faces.length ? c.faces[0].k : c.id;  // a card's state bel
 const st = c => state[c.id] || (state[c.id] = {top: topKey(c), name: "", nick: "", me: false, ignore: false, out: []});
 const who = s => (s.name || "").trim() || (s.nick || "").trim();
 const root = c => { let r = c; for (let n = 0; n < 99 && st(r).into && byId[st(r).into] && byId[st(r).into] !== r; n++) r = byId[st(r).into]; return r; };
-const members = r => cards.filter(c => root(c) === r);
+// root id -> its cards, made again after a merge or an unmerge (set to null): finding a card's members by going
+// through every card was ~47 million steps a save for the full library's 6,873 cards
+let groups = null;
+const regroup = () => { groups = new Map(); for (const c of cards) { const r = root(c).id; if (!groups.has(r)) groups.set(r, []); groups.get(r).push(c); } return groups; };
+const members = r => (groups || regroup()).get(r.id) || [r];
+const rootCards = () => [...(groups || regroup()).keys()].map(id => byId[id]);
+// the cards changed since the last save: only their faces' names are sent (all of them were, ~100k a save)
+const dirty = new Set();
+const touch = c => { dirty.add(c.id); for (const m of members(root(c))) dirty.add(m.id); };
 const facesOf = r => members(r).flatMap(c => c.faces);
 const photosOf = fs => new Set(fs.map(f => f.k.split(":")[1])).size;
 
@@ -147,10 +157,11 @@ function seed() {
                      unknown: (c.label || "").startsWith("?"), group: (c.label || "").startsWith("@") && c.label !== "@me" ? c.label : "",
                      out: c.faces.filter(f => dbLabels[f.k] === "").map(f => f.k)};
   }
+  groups = null;
 }
-function names() {  // per face (or animal box): who it is; "" = not them / not a person
+function names(list = cards) {  // per face (or animal box): who it is; "" = not them / not a person
   const out = {};
-  for (const c of cards) {
+  for (const c of list) {
     const r = root(c), s = st(r);
     // "@me": the owner without a name yet; "?P3": someone the user doesn't know (an animal not theirs), kept as
     // one anonymous person; "@P1": cards merged but not named yet, kept together
@@ -162,14 +173,21 @@ function names() {  // per face (or animal box): who it is; "" = not them / not 
   }
   return out;
 }
+const changed = s => (s.name || "").trim() || (s.nick || "").trim() || s.me || s.ignore || s.unknown || s.into || s.group || (s.out || []).length;
 async function put() {
   saveTimer = null;
+  const ids = [...dirty], list = ids.map(i => byId[i]).filter(Boolean);
+  dirty.clear();
+  // the state of the cards with something set (the rest are made again as they're shown), and the names of the
+  // changed cards' faces: the server changes only the faces it's sent (`keys`)
+  const kept = Object.fromEntries(Object.entries(state).filter(([, s]) => changed(s)));
   try {
     const r = await fetch("/api/people", {method: "PUT", headers: {"Content-Type": "application/json"},
-                                          body: JSON.stringify({state, names: names(), keys: cards.flatMap(c => c.faces.map(f => f.k))})});
+                                          body: JSON.stringify({state: kept, names: names(list), keys: list.flatMap(c => c.faces.map(f => f.k))})});
+    if (!r.ok) ids.forEach(i => dirty.add(i));
     $("saved").textContent = r.ok ? "Saved" : "Not saved: " + r.status; $("saved").className = r.ok ? "muted" : "err";
     return r.ok;
-  } catch (e) { $("saved").textContent = "Not saved: " + e.message; $("saved").className = "err"; return false; }
+  } catch (e) { ids.forEach(i => dirty.add(i)); $("saved").textContent = "Not saved: " + e.message; $("saved").className = "err"; return false; }
 }
 function save() {
   status();
@@ -178,8 +196,10 @@ function save() {
   saveTimer = setTimeout(put, 600);  // a short pause, so typing a name isn't a save per letter
 }
 
+const hiddenCard = c => { const s = st(c); return !!s.ignore || (!who(s) && !!s.unknown); };  // "Not a person", or a stranger
+const shownIn = (c, f) => f === "hidden" ? hiddenCard(c) : !hiddenCard(c) && !(f === "todo" && who(st(c)));
 function status() {
-  const roots = cards.filter(c => root(c) === c);
+  const roots = rootCards();
   const named = roots.filter(c => !c.pet && who(st(c))).length, pets = roots.filter(c => c.pet && who(st(c))).length;
   const unknown = roots.filter(c => !c.pet && !who(st(c)) && st(c).unknown).length;
   // P57: a card with no name that isn't marked "I don't know them" (or "Not a person") is someone you know
@@ -203,11 +223,12 @@ function status() {
     el.querySelector(".same").textContent = others.length ? `the same person as ${others.join(", ")}` : "";
     // marked "I don't know them" / "Not an animal of ours" or "Not a person": out of the way, under Hidden, where
     // the mark can still be undone
-    const off = !!s.ignore || (!w && !!s.unknown);
-    el.hidden = filter === "hidden" ? !off : off || (filter === "todo" && !!w);
+    el.hidden = !shownIn(c, filter);
   }
-  const hiddenN = roots.filter(c => st(c).ignore || (!who(st(c)) && st(c).unknown)).length;
+  const hiddenN = roots.filter(hiddenCard).length;
   $("hiddenTab").textContent = hiddenN ? `Hidden (${hiddenN})` : "Hidden";
+  $("rest").textContent = `Mark the ${nameless} unnamed as "I don't know them"`;
+  $("rest").hidden = !nameless;
   const n = selected.size, kinds = new Set([...selected].map(i => byId[i].pet));
   $("bar").hidden = !n;
   $("barsum").textContent = kinds.size > 1 ? "people and animals can't be merged together" : `${n} selected: ${[...selected].join(", ")}`;
@@ -228,9 +249,11 @@ function merge(list) {
     t.out = [...new Set([...(t.out || []), ...(s.out || [])])];
     s.into = into.id;
   }
+  groups = null;
+  touch(into);
   selected.clear();
   focusId = into.id;
-  save(); render();
+  save(); render(true);
 }
 
 function toggleOut(c, k) {
@@ -238,6 +261,7 @@ function toggleOut(c, k) {
   s.out = (s.out || []).includes(k) ? s.out.filter(x => x !== k) : [...(s.out || []), k];
   for (const b of document.querySelectorAll(`.faces button[data-k="${CSS.escape(k)}"]`)) b.classList.toggle("out", s.out.includes(k));
   if (big) bigInfo();
+  touch(c);
   save();
 }
 
@@ -275,40 +299,67 @@ function card(c) {
   const more = el.querySelector(".more");
   if (more) more.onclick = () => { const all = more.dataset.all !== "1"; draw(all); more.dataset.all = all ? "1" : ""; more.textContent = all ? "show fewer" : `show all ${fs.length}`; };
   el.querySelector(".pick").onchange = e => { e.target.checked ? selected.add(c.id) : selected.delete(c.id); status(); };
-  for (const b of el.querySelectorAll("[data-un]")) b.onclick = () => { delete st(byId[b.dataset.un]).into; save(); render(); };
+  for (const b of el.querySelectorAll("[data-un]")) b.onclick = () => {
+    const m = byId[b.dataset.un];
+    touch(m);  // the person it was part of, and itself
+    delete st(m).into; groups = null; touch(m); save(); render(true);
+  };
   for (const i of el.querySelectorAll("input[data-f]")) {
     const f = i.dataset.f;
     if (i.type === "checkbox") {
       i.checked = !!s[f];
       i.onchange = () => {
-        if (f === "me" && i.checked) for (const o of cards) if (o !== c && st(o).me) { st(o).me = false; const x = document.querySelector(`#c-${o.id} [data-f=me]`); if (x) x.checked = false; }
+        if (f === "me" && i.checked) for (const o of cards) if (o !== c && st(o).me) { st(o).me = false; touch(o); const x = document.querySelector(`#c-${o.id} [data-f=me]`); if (x) x.checked = false; }
         for (const [a, b] of [["me", "unknown"], ["unknown", "me"], ["unknown", "ignore"], ["ignore", "unknown"]])
           if (f === a && i.checked && s[b]) { s[b] = false; const x = el.querySelector(`[data-f=${b}]`); if (x) x.checked = false; }
-        s[f] = i.checked; save();
+        s[f] = i.checked; touch(c); save();
       };
     } else {
       i.value = s[f] || "";
-      i.oninput = () => { s[f] = i.value; save(); };
+      i.oninput = () => { s[f] = i.value; touch(c); save(); };
       i.onfocus = () => setFocus(c.id, false);
     }
   }
   const use = el.querySelector("[data-use]");
-  if (use) use.onclick = () => { s.nick = sug.short || sug.name; el.querySelector("[data-f=nick]").value = s.nick; use.parentElement.remove(); save(); };
+  if (use) use.onclick = () => { s.nick = sug.short || sug.name; el.querySelector("[data-f=nick]").value = s.nick; use.parentElement.remove(); touch(c); save(); };
   const me = el.querySelector("[data-me]");
-  if (me) me.onclick = () => { s.me = true; el.querySelector("[data-f=me]").checked = true; me.parentElement.remove(); save(); };
+  if (me) me.onclick = () => { s.me = true; el.querySelector("[data-f=me]").checked = true; me.parentElement.remove(); touch(c); save(); };
   el.onclick = e => { if (!["INPUT", "BUTTON", "LABEL"].includes(e.target.tagName)) setFocus(c.id); };
   return el;
 }
 
-function render() {
-  const P = $("people"), A = $("pets"), O = $("once");
-  P.innerHTML = A.innerHTML = O.innerHTML = "";
-  const roots = cards.filter(c => root(c) === c);
-  for (const c of roots) (!c.pet ? P : facesOf(c).length > 1 ? A : O).append(card(c));
-  const once = roots.filter(c => c.pet && facesOf(c).length === 1).length;
-  $("oncebox").hidden = !once;
-  $("oncesum").textContent = `${once} more animals, each seen in one photo`;
-  if (!DATA.people.length) P.innerHTML = `<p class="muted">No faces seen three times or more yet.</p>`;
+// The cards are drawn as they're scrolled to, BATCH at a time per section: the full library has ~6,900, and drawing
+// them all at once (with their faces) didn't load. `keep`: draw at least as many as before (after a merge, or the
+// large view), so the page stays where it was.
+const BATCH = 48;
+const lists = {}, drawn = {};
+const sentinels = new IntersectionObserver(es => { for (const e of es) if (e.isIntersecting) more(e.target.dataset.sec); }, {rootMargin: "800px"});
+function more(sec, n = BATCH) {
+  const box = $(sec), list = lists[sec] || [], from = drawn[sec] || 0, to = Math.min(list.length, from + n);
+  const end = box.querySelector(".sentinel");
+  if (end) { sentinels.unobserve(end); end.remove(); }
+  for (let k = from; k < to; k++) box.append(card(list[k]));
+  drawn[sec] = to;
+  if (to < list.length) {
+    const s = document.createElement("div");
+    s.className = "sentinel muted"; s.dataset.sec = sec; s.textContent = `${list.length - to} more…`;
+    box.append(s); sentinels.observe(s);
+  }
+  status();
+}
+function render(keep = false) {
+  const roots = rootCards(), before = keep ? {...drawn} : {};
+  const once = roots.filter(c => c.pet && facesOf(c).length === 1);
+  lists.people = roots.filter(c => !c.pet && shownIn(c, filter));
+  lists.pets = roots.filter(c => c.pet && facesOf(c).length > 1 && shownIn(c, filter));
+  lists.once = once.filter(c => shownIn(c, filter));
+  for (const sec of ["people", "pets", "once"]) {
+    $(sec).innerHTML = ""; drawn[sec] = 0;
+    if (sec !== "once" || $("oncebox").open) more(sec, Math.max(BATCH, before[sec] || 0));
+  }
+  $("oncebox").hidden = !once.length;
+  $("oncesum").textContent = `${once.length} more animals, each seen in one photo`;
+  if (!DATA.people.length) $("people").innerHTML = `<p class="muted">No faces seen three times or more yet.</p>`;
   status();
   setFocus(focusId && $("c-" + focusId) ? focusId : (shownCards()[0] || {}).dataset?.id, false);
 }
@@ -383,7 +434,7 @@ $("bigClose").onclick = () => $("big").close();
 $("bigPrev").onclick = () => { if (big && big.i > 0) { big.i--; showFace(); } };
 $("bigNext").onclick = () => { if (big && big.i < big.faces.length - 1) { big.i++; showFace(); } };
 $("bigBox").oncontextmenu = e => { e.preventDefault(); if (big) toggleOut(big.card, big.faces[big.i].k); };
-$("big").onclose = () => { big = null; render(); };
+$("big").onclose = () => { big = null; render(true); };
 window.addEventListener("resize", () => { if (big) showFace(); });
 
 document.addEventListener("keydown", e => {
@@ -407,7 +458,17 @@ document.addEventListener("keydown", e => {
   else if (e.key === "x") { selected.has(c.id) ? selected.delete(c.id) : selected.add(c.id); status(); }
 });
 
-for (const b of $("tabs").children) b.onclick = () => { filter = b.dataset.f; for (const x of $("tabs").children) x.classList.toggle("on", x === b); status(); };
+for (const b of $("tabs").children) b.onclick = () => { filter = b.dataset.f; for (const x of $("tabs").children) x.classList.toggle("on", x === b); render(); };
+$("oncebox").ontoggle = () => { if ($("oncebox").open && !drawn.once) more("once"); };
+// P57 makes a card left without a name someone you know; with thousands of cards, the ones not looked at would all
+// count. This marks them as strangers in one go, once the people you know are named.
+$("rest").onclick = () => {
+  const list = rootCards().filter(c => !c.pet && !who(st(c)) && !st(c).me && !st(c).unknown && !st(c).ignore);
+  if (!list.length || !confirm(`Mark the ${list.length} people cards without a name as "I don't know them"?\n\nThey move to Hidden, `
+    + "where each can be undone. Strangers aren't suggested again on later runs, and their photos aren't kept for them.")) return;
+  for (const c of list) { st(c).unknown = true; touch(c); }
+  save(); render(true);
+};
 $("merge").onclick = () => merge([...selected].map(i => byId[i]));
 // Finished: what's waiting to be saved is saved now, then the run goes on with these names.
 $("finished").onclick = async () => {

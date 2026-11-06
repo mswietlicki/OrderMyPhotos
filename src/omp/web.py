@@ -22,6 +22,7 @@ import time
 from pathlib import Path
 
 from fastapi import Body, FastAPI, HTTPException
+from fastapi.middleware.gzip import GZipMiddleware
 from fastapi.responses import FileResponse, HTMLResponse, PlainTextResponse
 
 from . import apply, review, sessions
@@ -358,6 +359,8 @@ async def lifespan(app):
 
 
 app = FastAPI(title="OrderMyPhotos", lifespan=lifespan)
+# gzip for the big JSON (the People page's cards: ~13 MB for the full library, mostly repeated keys and paths)
+app.add_middleware(GZipMiddleware, minimum_size=4096)
 app.include_router(review.router)
 review.current = lambda: runner.session
 

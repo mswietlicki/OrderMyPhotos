@@ -51,10 +51,15 @@ def page_data(cfg: Config, con, run_id: str, bundle: Path) -> dict:
         votes = Counter(said[k] for k in keys if said.get(k))
         return votes.most_common(1)[0][0] if votes else ""
 
+    # every face and animal box in one pass each: a query per card scanned the face table (no index on person)
+    # once per card, minutes for the full library's 3,921 people and 175k faces
+    faces_of: dict = {}
+    for f in con.execute("SELECT person, id, box, size, yaw FROM face WHERE person IS NOT NULL"):
+        faces_of.setdefault(f["person"], []).append(f)
     people = []
     for p in con.execute("SELECT pid, name, short, source, owner, faces, photos FROM person WHERE run=?"
                          " ORDER BY faces DESC", (run_id,)).fetchall():
-        fs = con.execute("SELECT id, box, size, yaw FROM face WHERE person=?", (p["pid"],)).fetchall()
+        fs = faces_of.get(p["pid"], [])
         fs = sorted(fs, key=lambda f: -f["size"] * (1 - min(abs(f["yaw"] or 0), 90) / 90))  # big and frontal first
         people.append({
             "id": f"P{p['pid']}", "name": p["name"], "short": p["short"], "source": p["source"], "owner": p["owner"],
@@ -63,9 +68,12 @@ def page_data(cfg: Config, con, run_id: str, bundle: Path) -> dict:
                       for f in fs]})
     pets = []
     try:
+        members_of: dict = {}
+        for m in con.execute("SELECT pid, id, box, size FROM pet_member ORDER BY size DESC"):
+            members_of.setdefault(m["pid"], []).append(m)
         for p in con.execute("SELECT pid, name, short, source, kind, photos FROM pet WHERE run=? ORDER BY boxes DESC",
                              (run_id,)).fetchall():
-            ms = con.execute("SELECT id, box, size FROM pet_member WHERE pid=? ORDER BY size DESC", (p["pid"],)).fetchall()
+            ms = members_of.get(p["pid"], [])
             pets.append({
                 "id": f"A{p['pid']}", "name": p["name"], "short": p["short"], "source": p["source"], "kind": p["kind"],
                 "photos": p["photos"], "label": label([f"pet:{m['id']}:{m['box']}" for m in ms]),

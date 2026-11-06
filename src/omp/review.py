@@ -325,9 +325,14 @@ def api_rename(key: str = Body(...), name: str = Body(...)):
     return {"key": key, "name": new_key}
 
 
+_cards_cache: dict = {}  # the last cards made, while the clustering they come from is the same
+
+
 @router.get("/api/people/cards")
 def api_people_cards():
-    """The People page's cards (people and animals with their faces), made from the session's DB."""
+    """The People page's cards (people and animals with their faces), made from the session's DB. Making them
+    reads every face (the full library: 175k faces in 3,921 people and 2,952 animals), so they're kept until the
+    clustering changes; only the names the user gave (`label`) are read again each time."""
     from .naming import page_data  # noqa: PLC0415
 
     s = _session()
@@ -336,12 +341,23 @@ def api_people_cards():
     try:
         if not _has(con, "person"):
             raise HTTPException(409, "no people yet: the phase that finds them hasn't run")
-        data = page_data(cfg, con, s.run_id, cfg.bundle)
+        key = (s.id, s.run_id, *con.execute("SELECT COUNT(*), MAX(pid), SUM(faces) FROM person WHERE run=?",
+                                             (s.run_id,)).fetchone(),
+               *(con.execute("SELECT COUNT(*), MAX(pid) FROM pet WHERE run=?", (s.run_id,)).fetchone()
+                 if _has(con, "pet") else ()))
+        if _cards_cache.get("key") != key:
+            data = page_data(cfg, con, s.run_id, cfg.bundle)
+            for c in data["people"] + data["pets"]:  # the crops, served from the bundle
+                for f in c["faces"]:
+                    f["src"] = "/library/OrderMyPhotos/" + f["src"]
+            _cards_cache.update(key=key, data=data)
+        data = _cards_cache["data"]
+        said = {r[0]: r[1] for r in con.execute("SELECT key, who FROM name_label")} if _has(con, "name_label") else {}
     finally:
         con.close()
-    for c in data["people"] + data["pets"]:  # the crops, served from the bundle
-        for f in c["faces"]:
-            f["src"] = "/library/OrderMyPhotos/" + f["src"]
+    for c in data["people"] + data["pets"]:  # who the user said most of a card's faces are, "" if nobody
+        votes = Counter(said[f["k"]] for f in c["faces"] if said.get(f["k"]))
+        c["label"] = votes.most_common(1)[0][0] if votes else ""
     return data
 
 
