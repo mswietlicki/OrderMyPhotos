@@ -139,6 +139,9 @@ if (typeof OMP === "undefined") { location.replace("/#/people"); throw new Error
 const $ = id => document.getElementById(id);
 const esc = s => String(s ?? "").replace(/[&<>"]/g, ch => ({"&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;"}[ch]));
 let DATA = null, cards = [], byId = {}, state = {}, dbLabels = {}, filter = "all", focusId = null, saveTimer = null;
+// the saved state this page started from (or last saved); a save over a newer one is refused (409, P69), and the
+// page then stops saving until it's reloaded, so it can't undo what another tab, device or script saved
+let version = null, stale = false;
 let big = null;  // the large view: {card, faces, i}
 const selected = new Set();
 const topKey = c => c.faces.length ? c.faces[0].k : c.id;  // a card's state belongs to its cluster, not to its number
@@ -184,6 +187,7 @@ function names(list = cards) {  // per face (or animal box): who it is; "" = not
 const changed = s => (s.name || "").trim() || (s.nick || "").trim() || s.me || s.ignore || s.unknown || s.into || s.group || (s.out || []).length;
 async function put() {
   saveTimer = null;
+  if (stale) return false;
   const ids = [...dirty], list = ids.map(i => byId[i]).filter(Boolean);
   dirty.clear();
   // the state of the cards with something set (the rest are made again as they're shown), and the names of the
@@ -191,13 +195,23 @@ async function put() {
   const kept = Object.fromEntries(Object.entries(state).filter(([, s]) => changed(s)));
   try {
     const r = await fetch("/api/people", {method: "PUT", headers: {"Content-Type": "application/json"},
-                                          body: JSON.stringify({state: kept, names: names(list), keys: list.flatMap(c => c.faces.map(f => f.k))})});
+                                          body: JSON.stringify({state: kept, names: names(list), keys: list.flatMap(c => c.faces.map(f => f.k)), version})});
+    if (r.status === 409) { staleNow(); return false; }
     if (!r.ok) ids.forEach(i => dirty.add(i));
+    else version = (await r.json()).version;
     $("saved").textContent = r.ok ? "Saved" : "Not saved: " + r.status; $("saved").className = r.ok ? "muted" : "err";
     return r.ok;
   } catch (e) { ids.forEach(i => dirty.add(i)); $("saved").textContent = "Not saved: " + e.message; $("saved").className = "err"; return false; }
 }
+function staleNow() {
+  stale = true;
+  $("saved").className = "err";
+  $("saved").innerHTML = `Not saved: changed in another tab or device since this page was loaded. <button id="reloadNow">Reload</button>`
+    + ` then make your last change again`;
+  $("reloadNow").onclick = () => location.reload();
+}
 function save() {
+  if (stale) { status(); return; }
   status();
   $("saved").textContent = "Saving…"; $("saved").className = "muted";
   clearTimeout(saveTimer);
@@ -626,7 +640,7 @@ $("mergeids").onkeydown = e => { if (e.key === "Enter") mergeIds(); };
   try {
     const [d, saved] = await Promise.all([fetch("/api/people/cards").then(r => r.ok ? r.json() : r.json().then(x => Promise.reject(new Error(x.detail || r.status)))),
                                           fetch("/api/people").then(r => r.json())]);
-    DATA = d; state = saved.state || {}; dbLabels = saved.labels || {};
+    DATA = d; state = saved.state || {}; dbLabels = saved.labels || {}; version = saved.version || null;
     cards = [...DATA.people.map(c => ({...c, pet: false})), ...DATA.pets.map(c => ({...c, pet: true}))];
     byId = Object.fromEntries(cards.map(c => [c.id, c]));
     seed();

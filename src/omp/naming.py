@@ -225,7 +225,7 @@ function names() {  // per face (or animal box): who it is, for the import; "" =
   }
   return out;
 }
-let saveTimer = null;
+let saveTimer = null, version = null, stale = false;  // P69: a save over a newer state is refused
 function save() {
   status();
   if (!inApp) {
@@ -233,13 +233,16 @@ function save() {
     return;
   }
   const btn = document.getElementById("exp");
+  if (stale) return;
   btn.textContent = "Saving…";
   clearTimeout(saveTimer);
   saveTimer = setTimeout(async () => {  // a short pause, so typing a name isn't a save per letter
     try {
       const r = await fetch("/api/people", {method: "PUT", headers: {"Content-Type": "application/json"},
-                                            body: JSON.stringify({state, names: names(), keys: cards.flatMap(c => c.faces.map(f => f.k))})});
-      btn.textContent = r.ok ? "Saved" : "Not saved: " + r.status;
+                                            body: JSON.stringify({state, names: names(), keys: cards.flatMap(c => c.faces.map(f => f.k)), version})});
+      if (r.ok) version = (await r.json()).version;
+      if (r.status === 409) stale = true;
+      btn.textContent = r.ok ? "Saved" : r.status === 409 ? "Not saved: changed elsewhere, reload the page" : "Not saved: " + r.status;
     } catch (e) { btn.textContent = "Not saved: " + e.message; }
   }, 600);
 }
@@ -376,7 +379,7 @@ document.getElementById("exp").onclick = () => {
     btn.textContent = "Loading…"; btn.disabled = true;
     try {
       const r = await fetch("/api/people");
-      if (r.ok) { const d = await r.json(); state = d.state || {}; dbLabels = d.labels || {}; }
+      if (r.ok) { const d = await r.json(); state = d.state || {}; dbLabels = d.labels || {}; version = d.version || null; }
       btn.textContent = "Saved";
     }
     catch (e) { btn.textContent = "Not loaded: " + e.message; }

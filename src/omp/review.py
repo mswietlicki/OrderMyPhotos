@@ -15,8 +15,10 @@ stays confirmed. A photo's place is worked out the same way here, in the sorting
 the reviewer's latest word on it wins.
 """
 
+import hashlib
 import json
 import sqlite3
+import threading
 import time
 from collections import Counter, defaultdict
 from pathlib import Path, PurePosixPath
@@ -382,10 +384,22 @@ def _facebook(s, key) -> dict:
     return {"cards": cards, "names": d.get("names", [])}
 
 
+_people_lock = threading.Lock()  # a save's check of the version and its write, one at a time
+
+
+def _people_version(path: Path) -> str:
+    """Which saved state a page started from: its content's hash, so a state written by anything (another tab or
+    device, a script, a restored backup) is a new version."""
+    try:
+        return hashlib.sha1(path.read_bytes()).hexdigest()[:16]
+    except FileNotFoundError:
+        return "none"
+
+
 @router.get("/api/people")
 def api_people_get():
-    """The People page's state (names, nicknames, merges, faces taken out) as the page last saved it, and the
-    names per face in the DB, from which a page with no saved state starts (an earlier import)."""
+    """The People page's state (names, nicknames, merges, faces taken out) as the page last saved it, its version,
+    and the names per face in the DB, from which a page with no saved state starts (an earlier import)."""
     s = _session()
     path = s.dir / "people.json"
     labels = {}
@@ -396,30 +410,42 @@ def api_people_get():
         con.close()
     except HTTPException:
         pass
-    return {"state": json.loads(path.read_text(encoding="utf-8")) if path.exists() else None, "labels": labels}
+    with _people_lock:
+        version = _people_version(path)
+        saved = json.loads(path.read_text(encoding="utf-8")) if path.exists() else None
+    return {"state": saved, "version": version, "labels": labels}
 
 
 @router.put("/api/people")
-def api_people_put(state: dict = Body(...), names: dict = Body(...), keys: list = Body(...)):
+def api_people_put(state: dict = Body(...), names: dict = Body(...), keys: list = Body(...), version: str | None = Body(None)):
     """Saved on every change: the page's state, and the names per face, so the next run of `people` uses them.
     Only the faces the page shows (`keys`) change: one without a name now loses its old one, and the faces it
-    doesn't show keep theirs."""
+    doesn't show keep theirs.
+
+    The page sends its whole state, so a page loaded before another save (another tab or device, a script) would
+    undo that save. `version` is the state the page started from (or last saved): when the state is newer, nothing
+    is saved and the answer is 409, and the page asks to be reloaded (P69). A page without a version (loaded before
+    this) gets 409 too."""
     from .people import SCHEMA as PEOPLE_SCHEMA  # noqa: PLC0415
 
     s = _session()
-    tmp = s.dir / "people.json.tmp"
-    tmp.write_text(json.dumps(state, ensure_ascii=False), encoding="utf-8")
-    tmp.replace(s.dir / "people.json")
-    con = connect(s, write=True)
-    with con:
-        con.executescript(PEOPLE_SCHEMA)
-        gone = [k for k in keys if k not in names]
-        con.executemany("DELETE FROM name_label WHERE key=?", [(k,) for k in gone])
-        con.executemany("INSERT OR REPLACE INTO name_label(key, who, name, nick, owner, source) VALUES (?,?,?,?,?,?)",
-                        [(k, v.get("who") or "", v.get("name") or None, v.get("nick") or None, int(bool(v.get("owner"))),
-                          f"people-page:{s.id}") for k, v in names.items()])
-    con.close()
-    return {"saved": len(names)}
+    path = s.dir / "people.json"
+    with _people_lock:
+        if version != _people_version(path):
+            raise HTTPException(409, "The People page was changed elsewhere (another tab or device): reload it to see the changes")
+        tmp = s.dir / "people.json.tmp"
+        tmp.write_text(json.dumps(state, ensure_ascii=False), encoding="utf-8")
+        tmp.replace(path)
+        con = connect(s, write=True)
+        with con:
+            con.executescript(PEOPLE_SCHEMA)
+            gone = [k for k in keys if k not in names]
+            con.executemany("DELETE FROM name_label WHERE key=?", [(k,) for k in gone])
+            con.executemany("INSERT OR REPLACE INTO name_label(key, who, name, nick, owner, source) VALUES (?,?,?,?,?,?)",
+                            [(k, v.get("who") or "", v.get("name") or None, v.get("nick") or None, int(bool(v.get("owner"))),
+                              f"people-page:{s.id}") for k, v in names.items()])
+        con.close()
+        return {"saved": len(names), "version": _people_version(path)}
 
 
 @router.post("/api/review/unit/dismantle")
