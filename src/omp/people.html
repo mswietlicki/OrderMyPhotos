@@ -214,6 +214,27 @@ function fbOf(c) {
   for (const m of members(c)) for (const f of m.fb || []) if (!by[f.name] || by[f.name].cos < f.cos) by[f.name] = f;
   return Object.values(by).sort((a, b) => b.cos - a.cos).slice(0, 3);
 }
+let sameName = {};  // the cards of each name, by kind; counted by status()
+const kin = (c, w) => (c.pet ? "a:" : "p:") + w;  // a person and an animal of the same name aren't the same
+function paint(c, el) {  // a drawn card's marks; an emptied one (far off-screen, P66) keeps only its classes
+  const s = st(c), w = who(s).toLowerCase();
+  el.classList.toggle("done", !!w && !s.ignore);
+  el.classList.toggle("ignored", !!s.ignore);
+  el.classList.toggle("unknown", !w && !!s.unknown && !s.ignore);
+  el.classList.toggle("sel", selected.has(c.id));
+  // marked "I don't know them" / "Not an animal of ours" or "Not a person": out of the way, under Hidden, where
+  // the mark can still be undone
+  el.hidden = !shownIn(c, filter);
+  if (el.classList.contains("off")) return;
+  el.querySelector(".pick").checked = selected.has(c.id);
+  const others = w ? (sameName[kin(c, w)] || []).filter(i => i !== c.id) : [];
+  const same = el.querySelector(".same"), key = others.join(",");
+  if (same.dataset.k !== key) {  // a merge link per card with the same name (P65); drawn again only when it changes
+    same.dataset.k = key;
+    same.innerHTML = others.length ? `the same person as ${others.map(i => `<button data-same="${i}" title="merge ${c.id} and ${i}">${i}</button>`).join(", ")}`
+      + (others.length > 1 ? ` · <button data-same="${key}" title="merge ${c.id} with all of them">merge all</button>` : "") : "";
+  }
+}
 function status() {
   const roots = rootCards();
   const named = roots.filter(c => !c.pet && who(st(c))).length, pets = roots.filter(c => c.pet && who(st(c))).length;
@@ -224,30 +245,11 @@ function status() {
     + (unknown ? `, ${unknown} not known` : "")
     + (DATA.unclustered ? ` · ${DATA.unclustered} more faces (small, unsure, or seen only once or twice) aren't shown` : "");
   $("petsub").textContent = DATA.pets.length ? `${roots.filter(c => c.pet).length} found, ${pets} named` : "none found";
-  const seen = {};
-  const kin = (c, w) => (c.pet ? "a:" : "p:") + w;  // a person and an animal of the same name aren't the same
-  for (const c of roots) { const w = who(st(c)).toLowerCase(); if (w) (seen[kin(c, w)] = seen[kin(c, w)] || []).push(c.id); }
+  sameName = {};
+  for (const c of roots) { const w = who(st(c)).toLowerCase(); if (w) (sameName[kin(c, w)] = sameName[kin(c, w)] || []).push(c.id); }
   $("known").innerHTML = [...new Set(roots.map(c => (st(c).name || "").trim()).filter(Boolean).concat(DATA.fb_names || []))]
     .map(n => `<option value="${esc(n)}">`).join("");
-  for (const c of roots) {
-    const el = $("c-" + c.id), s = st(c), w = who(s).toLowerCase();
-    if (!el) continue;
-    el.classList.toggle("done", !!w && !s.ignore);
-    el.classList.toggle("ignored", !!s.ignore);
-    el.classList.toggle("unknown", !w && !!s.unknown && !s.ignore);
-    el.classList.toggle("sel", selected.has(c.id));
-    el.querySelector(".pick").checked = selected.has(c.id);
-    const others = w ? seen[kin(c, w)].filter(i => i !== c.id) : [];
-    const same = el.querySelector(".same"), key = others.join(",");
-    if (same.dataset.k !== key) {  // a merge link per card with the same name (P65); drawn again only when it changes
-      same.dataset.k = key;
-      same.innerHTML = others.length ? `the same person as ${others.map(i => `<button data-same="${i}" title="merge ${c.id} and ${i}">${i}</button>`).join(", ")}`
-        + (others.length > 1 ? ` · <button data-same="${key}" title="merge ${c.id} with all of them">merge all</button>` : "") : "";
-    }
-    // marked "I don't know them" / "Not an animal of ours" or "Not a person": out of the way, under Hidden, where
-    // the mark can still be undone
-    el.hidden = !shownIn(c, filter);
-  }
+  for (const c of roots) { const el = $("c-" + c.id); if (el) paint(c, el); }
   const hiddenN = roots.filter(hiddenCard).length;
   $("hiddenTab").textContent = hiddenN ? `Hidden (${hiddenN})` : "Hidden";
   const fbN = roots.filter(c => !c.pet && shownIn(c, "fb")).length;
@@ -356,9 +358,15 @@ function mergeField(c, input) {
   };
 }
 
-function card(c) {
-  const s = st(c), el = document.createElement("div"), fs = facesOf(c), parts = members(c).filter(m => m !== c);
+function card(c) {  // the card's box: filled now, emptied while it's far off-screen (P66)
+  const el = document.createElement("div");
   el.className = "card"; el.id = "c-" + c.id; el.dataset.id = c.id;
+  fill(c, el);
+  near.observe(el);
+  return el;
+}
+function fill(c, el) {
+  const s = st(c), fs = facesOf(c), parts = members(c).filter(m => m !== c);
   const sug = parts.concat([c]).find(m => m.name && m.source !== "user") || {}, owner = parts.concat([c]).some(m => m.owner);
   const hint = !who(s) && s.unknown ? "" : !who(s) && sug.name ? `<span class="hint">suggested: ${esc(sug.name)} (${sug.source === "album-names" ? "from album names"
     : sug.source === "people-folder" ? "from a People folder" : esc(sug.source || "")}) <button data-use>use</button></span>` :
@@ -430,6 +438,23 @@ function card(c) {
   const me = el.querySelector("[data-me]");
   if (me) me.onclick = () => { s.me = true; el.querySelector("[data-f=me]").checked = true; me.parentElement.remove(); touch(c); save(); };
   el.onclick = e => { if (!["INPUT", "BUTTON", "LABEL"].includes(e.target.tagName)) setFocus(c.id); };
+}
+
+// Cards far off-screen are emptied, keeping their size, and filled again as they come near (P66): the full library
+// has ~6,900 cards of up to 12 faces, and every card scrolled past stayed drawn, its faces in the browser's memory.
+const near = new IntersectionObserver(es => {
+  const off = [], on = [];
+  for (const e of es) {
+    const el = e.target;
+    if (e.isIntersecting) on.push(el);
+    else if (!el.classList.contains("off") && el.offsetHeight && !el.contains(document.activeElement)) off.push([el, el.offsetHeight]);
+  }
+  for (const [el, h] of off) { el.style.height = h + "px"; el.replaceChildren(); el.classList.add("off"); }
+  for (const el of on) wake(el);
+}, {rootMargin: "2500px 0px"});
+function wake(el) {  // an emptied card filled again; returns it
+  const c = el && byId[el.dataset.id];
+  if (c && el.classList.contains("off")) { el.classList.remove("off"); el.style.height = ""; fill(c, el); paint(c, el); }
   return el;
 }
 
@@ -462,6 +487,7 @@ function render(keep = false) {
   else lists.people = namedFirst(lists.people);  // drawn again on a tab, a merge or the large view, not while typing
   lists.pets = namedFirst(roots.filter(c => c.pet && facesOf(c).length > 1 && shownIn(c, filter)));
   lists.once = once.filter(c => shownIn(c, filter));
+  near.disconnect();
   for (const sec of ["people", "pets", "once"]) {
     $(sec).innerHTML = ""; drawn[sec] = 0;
     if (sec !== "once" || $("oncebox").open) more(sec, Math.max(BATCH, before[sec] || 0));
@@ -479,7 +505,7 @@ function setFocus(id, scroll = true) {
   focusId = id;
   for (const el of document.querySelectorAll(".card.focus")) el.classList.remove("focus");
   const el = id && $("c-" + id);
-  if (el) { el.classList.add("focus"); if (scroll) el.scrollIntoView({block: "nearest"}); }
+  if (el) { wake(el).classList.add("focus"); if (scroll) el.scrollIntoView({block: "nearest"}); }
 }
 function step(dir) {
   const tiles = shownCards();
@@ -562,10 +588,10 @@ document.addEventListener("keydown", e => {
   const arrow = {ArrowRight: "right", ArrowLeft: "left", ArrowDown: "down", ArrowUp: "up"}[e.key];
   if (arrow) { e.preventDefault(); step(arrow); }
   else if (!c) return;
-  else if (e.key === "Enter") { e.preventDefault(); $("c-" + c.id).querySelector("[data-f=name]").focus(); }
+  else if (e.key === "Enter") { e.preventDefault(); wake($("c-" + c.id)).querySelector("[data-f=name]").focus(); }
   else if (e.key === "z") openBig(c, 0);
   else if (e.key === "x") { selected.has(c.id) ? selected.delete(c.id) : selected.add(c.id); status(); }
-  else if (e.key === "m") { e.preventDefault(); $("c-" + c.id).querySelector("[data-merge]").focus(); }
+  else if (e.key === "m") { e.preventDefault(); wake($("c-" + c.id)).querySelector("[data-merge]").focus(); }
 });
 
 for (const b of $("tabs").children) b.onclick = () => { filter = b.dataset.f; for (const x of $("tabs").children) x.classList.toggle("on", x === b); render(); };

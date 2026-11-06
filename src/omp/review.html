@@ -231,7 +231,17 @@ function section(list) {
 // A big album or folder (the library has folders of thousands) is drawn TILES at a time, the rest as it's scrolled
 // to or with "Show more"; a burst is never split.
 const TILES = 240;
-const lazy = new IntersectionObserver(es => { for (const e of es) if (e.isIntersecting) e.target.click(); }, {rootMargin: "1200px"});
+// the list scrolls inside #main on a wide screen, the page itself on a narrow one
+const area = getComputedStyle($("main")).overflowY === "auto" ? $("main") : null;
+const lazy = new IntersectionObserver(es => { for (const e of es) if (e.isIntersecting) e.target.click(); }, {root: area, rootMargin: "1200px"});
+// Tiles far off-screen let go of their thumbnails and take them again as they come near (P66): scrolled through,
+// a folder of thousands kept every one of them in the browser's memory.
+const thumbs = new IntersectionObserver(es => {
+  for (const e of es) for (const img of e.target.querySelectorAll("img")) {
+    if (e.isIntersecting) { if (img.dataset.src) { img.src = img.dataset.src; delete img.dataset.src; } }
+    else if (img.getAttribute("src")) { img.dataset.src = img.getAttribute("src"); img.removeAttribute("src"); }
+  }
+}, {root: area, rootMargin: "3000px 0px"});
 function fill(grid, list) { grid._items = section(list); grid._at = 0; grow(grid); }
 function grow(grid) {
   const items = grid._items, parts = [];
@@ -239,7 +249,9 @@ function grow(grid) {
   while (k < items.length && n < TILES) { parts.push(items[k][0]); n += items[k][1]; k++; }
   const old = grid.querySelector(":scope > .more");
   if (old) { lazy.unobserve(old); old.remove(); }
+  const at = grid.children.length;
   grid.insertAdjacentHTML("beforeend", parts.join(""));
+  for (const el of [...grid.children].slice(at)) thumbs.observe(el);
   grid._at = k;
   if (k < items.length) {
     const left = items.slice(k).reduce((a, it) => a + it[1], 0), b = document.createElement("button");
@@ -269,6 +281,7 @@ function unitActs() {
 function drawUnit() {
   unitActs();
   idx = new Map(photos.map((p, i) => [p, i]));
+  thumbs.disconnect();  // the last album's tiles are let go
   const u = cur, fresh = photos.filter(p => p.state !== "confirmed"), done = photos.filter(p => p.state === "confirmed");
   const nameOnly = u.kind === "album" && /^\d{4}-\d{2}-\d{2} /.test(u.name) ? u.name.slice(11) : u.name;
   $("main").innerHTML = `<div class="head">
