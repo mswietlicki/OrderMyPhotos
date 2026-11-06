@@ -1132,7 +1132,15 @@ The user asked whether all photos will be tagged with the people in them. They w
   - Every field read back as written. The image data hash was unchanged, and so were the motion photo's 3.7 MB video and the MPO's second image. No other tag was lost, and the file dates were kept.
   - A HEIC came out 13 KB smaller: exiftool packed its media data. Its image data hash was the same.
   - A test set's apply (a move, a turn, three photos written) undid to the exact original bytes. Applied twice, the second apply wrote nothing.
-- **Not built yet:** the OneDrive side. `mimir-onedrive apply` still skips turns and tags. Uploading each written photo once (PUT content to the same item) is the next step. Three things to measure first: what OneDrive's versions cost in quota, whether its search reads embedded keywords, and Mimir's disk. The next pull would download every written photo again, while the snapshot taken before the apply keeps the old ones.
+- **The OneDrive side** (the same day, user: "Yes, build it"): `mimir-onedrive apply --metadata` (mimir D30).
+  - It writes each entry with a root-owned copy of this module on Mimir's host, uploads the photo once to the same item, and puts the written copy into the mirror, so the next pull doesn't download it again.
+  - The write changes the photo's QuickXorHash, which is its id here and in the catalog. So the omp namespace keeps the hash from before (`XMP-omp:Original`), and the apply counts a photo it wrote as unchanged.
+  - **A sample album** (9 photos of 2016, 6.2 MB): all written and uploaded. The item IDs were the same, the version before was kept, and downloaded again each photo held its regions, names and keywords.
+  - **Still to see before the library's write** (~450 GB of kept photos):
+    - whether OneDrive's versions count against its storage, with 58.6 GiB of 1,039 GiB free. After the sample the used bytes didn't change;
+    - whether OneDrive's search finds the names: Graph's search fails on this account, so the user tries it in OneDrive;
+    - room on Mimir's disk for the old copies, which the mirror's snapshots keep.
+  - **Still to build:** a later run's inventory should read `Original`, so a written photo keeps its id, analysis and catalog outcome.
 
 ## P68 — Same-name cards merged, and unnamed cards merged into the named person they surely are (2026-11-06, user, measured)
 

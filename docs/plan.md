@@ -59,7 +59,7 @@ Run s1 (2026-11-03) did a first pass of every stage below on the B50 and the res
 ## Phase 5 — Write-back trial on the real OneDrive (sample)
 
 - [x] `mimir-onedrive apply <plan>` (P56): snapshot, hash-checked server-side `moveto` through one rclone rcd, no overwrites (`_1`, `_2`), the archive, deletes when the final decision says so, the Graph item `description`, an op log, dry run, resume and undo. Tested end to end on a throwaway OneDrive folder (2026-11-05)
-- [ ] `PUT content` to the same item, for the one metadata write per file (with the turns and tags the plan already lists)
+- [x] An upload to the same item, for the one metadata write per file, with the turns and tags (P67, mimir D30: `mimir-onedrive apply --metadata`; a sample album of 9 photos, 2026-11-06)
 - [ ] What shows up where: embedded title, description and keywords in OneDrive web/mobile search, Windows Explorer and Immich. The Graph item `description` is written and read back (P56), but rclone says Microsoft no longer supports it. **You:** check whether OneDrive web or mobile shows a written description, or finds it in search
 - [ ] **You: two-way sync test** (P8, P30): move and delete throwaway photos in the cloud copy of the Samsung Gallery folder, and watch the phone. Step by step in mimir's `docs/runbooks/04-onedrive.md` ("The two-way sync test"). Until it's recorded on Mimir, `mimir-onedrive apply` refuses plans that move photos out of the gallery
 - [x] The archive layout, plus restore as one move back (`mimir-onedrive apply --undo`, P56)
