@@ -1168,6 +1168,27 @@ The People page saves its whole state (names, merges, faces taken out) on every 
   - the right version saved, and an identical state kept its version;
   - on the page, a refused save showed Reload, the next change sent nothing, and Reload loaded the saved state.
 
+## P70 — Unnamed people grouped with each other, and with the named, when the faces surely agree (2026-11-06, user, measured)
+
+After P68, 2,544 people were still unnamed, many of them one person on several cards. The user: "compare all of them [with the] named ones and to each other and merge them if it makes sense."
+
+- **Steps** (`scripts/people_merge.py`):
+  - same names;
+  - unnamed → named;
+  - unnamed with each other;
+  - the new groups → named.
+- **The new step groups unnamed people by average linkage** of their mean faces at cosine ≥ G. Each pair of cards in a group must be near on average, so a chain of look-alikes doesn't join.
+- **Two people seen in the same photo are never merged**, since a person appears in a photo only once. In practice it changed little: the errors left aren't siblings seen together.
+- **Calibration on the user's own names.**
+  - Into a named person, at 0.55 and 0.15 nearer than anyone else: 861 of 867 found the right person (99.3%). At 0.60 it was 725 of 728, with 140 fewer merges.
+  - Unnamed with each other: the named people's cards were grouped as if unnamed. At 0.50, 13 of 613 joins went into another person's group (2.1%); at 0.60, 5 of 334 (1.5%); at 0.45, 19 of 756 (2.5%).
+- **Applied: 0.55/0.15 into named, 0.50 with each other.** A wrong join into a named person would give a stranger's photos a name, so that step stays strict. A wrong join of two unnamed cards stays unnamed, shows when the card is named, and can be undone on it.
+  - 61 people joined named ones; 287 cards grouped in 230 groups (188 pairs, the largest 6); 3 groups then joined named ones.
+  - Unnamed went from 2,544 to 2,193.
+  - A second pass on the bigger groups would merge ~51 more. It wasn't run, because the calibration covers one pass.
+- **Most of the rest are people seen a few times.** Of the 2,544, 1,637 had at most 5 faces, and 920 were in at most 3 photos: guests and passers-by. Faces can't fold these together; "Mark the N unnamed as 'I don't know them'" (P57) is for them, once the people the user knows are named.
+- **Saved through the page's own save,** with the state's version (P69): had anything saved meanwhile, nothing would have been. The state before is in `people.json.before-merge-<time>`.
+
 ## Open — for the user
 
 1. ~~**Language** of titles, descriptions and tags.~~ Resolved by P42: both languages; S11 reads English only.
