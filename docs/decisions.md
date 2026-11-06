@@ -1069,6 +1069,33 @@ The user: the site needs to unload what it holds, to perform better. Drawn as th
   - Review, the 68,562-photo "(not sorted)" folder scrolled through 5,040 tiles: 40 thumbnails held, against 5,040.
 - **Not done:** a merge still draws every card that was drawn before, and only then empties the far ones. Drawing the far ones as boxes would need their heights first.
 
+## P67 — The metadata goes into the files, with the people: one write per kept photo (2026-11-06, user)
+
+The user asked whether all photos will be tagged with the people in them. They weren't yet: the write was still to build (design.md S9). The user said to build it.
+
+- **metadata.py:** the plan writes `metadata.jsonl` next to `plan.json`, one entry for each kept photo with something to write (1.7 s for the full library). The writer puts an entry into a new file, with one exiftool kept open (`-stay_open`). It checks the new file, and only then may the new file replace the photo.
+- **What's written** (design.md S9's table):
+  - the caption's Polish title (XMP-dc:Title, XPTitle);
+  - the description, Polish then English (XMP-dc:Description, ImageDescription, IPTC Caption-Abstract);
+  - flat keywords, each tag's Polish label and the names (XMP-dc:Subject, IPTC Keywords; never XPKeywords);
+  - hierarchical keywords, the vocabulary's English paths, `People/<name>` and `Pets/<name>` (lr:HierarchicalSubject with "|", digiKam:TagsList with "/");
+  - MWG regions: a Face region for each named face, a Pet region for each named animal;
+  - the turn, as the EXIF Orientation;
+  - CreatorTool, and the omp namespace (`exiftool.config`) with what was written.
+- **Names:** a person's full name, else the nickname. The owner's clusters take the owner's name. People the user didn't name aren't written.
+- **Regions are on the stored pixels**, as MWG has it (before the EXIF Orientation). The faces were found on upright previews, so their boxes are turned back by the photo's orientation, and a turn written as the Orientation then leaves them right. Whether Immich and digiKam read them so on turned photos is still to see: some tools don't follow MWG there.
+- **The user's metadata stays:**
+  - a title or description of the user's is kept. v1's is replaced, and so is ours, unless the user changed it since (the omp namespace keeps what was written);
+  - keywords: the user's stay, v1's go, and ours from a write before are replaced;
+  - regions of someone else's are kept, and ours aren't written. No photo in the library has any today.
+- **Written once:** a photo whose metadata is there already isn't written again, nor uploaded. The turn is stored as the Orientation it gives, so a second write doesn't turn the photo twice.
+- **Formats:** JPEG, MPO, HEIC, PNG, WebP and TIFF; not GIF (148 in the library) or raw CR2 (34). IPTC goes only into JPEG, MPO and TIFF. HEIC isn't turned: viewers turn it by its own `irot` box, so the Orientation could turn it twice or not at all.
+- **Checked** on copies of library photos in the app container, with test captions: a JPEG upright and turned, one with Orientation 6, a Samsung motion photo, a HEIC, a PNG, an MPO, one with v1's keywords and one with a user's title.
+  - Every field read back as written. The image data hash was unchanged, and so were the motion photo's 3.7 MB video and the MPO's second image. No other tag was lost, and the file dates were kept.
+  - A HEIC came out 13 KB smaller: exiftool packed its media data. Its image data hash was the same.
+  - A test set's apply (a move, a turn, three photos written) undid to the exact original bytes. Applied twice, the second apply wrote nothing.
+- **Not built yet:** the OneDrive side. `mimir-onedrive apply` still skips turns and tags. Uploading each written photo once (PUT content to the same item) is the next step. Three things to measure first: what OneDrive's versions cost in quota, whether its search reads embedded keywords, and Mimir's disk. The next pull would download every written photo again, while the snapshot taken before the apply keeps the old ones.
+
 ## Open — for the user
 
 1. ~~**Language** of titles, descriptions and tags.~~ Resolved by P42: both languages; S11 reads English only.

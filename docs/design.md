@@ -380,7 +380,7 @@ The page itself:
 
   The next pull brings the result back into the mirror.
 - **Archive layout:** a single root outside the albums, for example `Archive/OrderMyPhotos/<original path>`. Restoring is a move back, and albums stay clean (v1 put `_archived/` inside every album). Deleting from the archive is a separate, explicit plan, and OneDrive's recycle bin adds 30 more days.
-- **Metadata goes in once per file.** Titles, descriptions, tags, people and rating are written together with exiftool 13.x after captions and names are final. Only the metadata segments change; pixels are not re-encoded. Each file is then re-uploaded once to the same item (`PUT /items/{id}/content` keeps the ID and version history): ~0.5 TB for all photos kept, network-bound, spread over days. Sidecars don't work here, because OneDrive and Windows never read them (P5). Fields written, so that Windows, OneDrive, Immich and digiKam all agree:
+- **Metadata goes in once per file** (P67: built for the plan, `metadata.jsonl` and metadata.py, and for a test set's apply; the upload to OneDrive is still to build). Titles, descriptions, tags, people and rating are written together with exiftool 13.x after captions and names are final. Only the metadata segments change; pixels are not re-encoded. Each file is then re-uploaded once to the same item (`PUT /items/{id}/content` keeps the ID and version history): ~0.5 TB for all photos kept, network-bound, spread over days. Sidecars don't work here, because OneDrive and Windows never read them (P5). Fields written, so that Windows, OneDrive, Immich and digiKam all agree:
 
   | What | Fields |
   |---|---|
