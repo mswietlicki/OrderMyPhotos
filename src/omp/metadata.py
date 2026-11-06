@@ -18,7 +18,9 @@ The fields, so that Windows, OneDrive, Immich and digiKam agree (design.md S9's 
   stored image's coordinates, as MWG has it (before the EXIF Orientation is applied); the boxes were found on
   upright previews, so they're turned back. A turn written as the Orientation then leaves them right;
 - **the turn** (P36): the EXIF Orientation;
-- **provenance:** XMP-xmp:CreatorTool, and the omp namespace (exiftool.config) with what was written.
+- **provenance:** XMP-xmp:CreatorTool, and the omp namespace (exiftool.config) with what was written. It
+  also keeps the photo's QuickXorHash from before the first write (`Original`): the write changes the hash,
+  which OrderMyPhotos and the catalog use as the photo's id.
 
 What the user wrote stays (design.md "Provenance of metadata"):
 - a title or description of the user's (the inventory's provenance "user") is kept; one that v1 wrote, or that
@@ -355,6 +357,8 @@ def changes(tags: dict, e: dict, run: str = "") -> tuple[dict, list[str], dict]:
         new |= {"XMP-xmp:CreatorTool": TOOL, "XMP-omp:Version": VERSION}
         if run:
             new["XMP-omp:Run"] = run
+        if e.get("id") and not tags.get("XMP-omp:Original"):  # a write changes the hash, which is the photo's id
+            new["XMP-omp:Original"] = e["id"]
     return new, extra, note
 
 
