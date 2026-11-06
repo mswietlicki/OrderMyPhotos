@@ -36,6 +36,9 @@
   .id { font: 600 12px ui-monospace, monospace; background: var(--soft); border-radius: 4px; padding: 1px 6px; }
   .meta, .hint, .same, .merged { font-size: 12px; color: var(--muted); } .same { color: var(--accent); }
   .hint button, .merged button { font-size: 12px; padding: 0 6px; }
+  .fb { display: flex; flex-wrap: wrap; gap: 4px 6px; align-items: center; font-size: 12px; color: var(--muted); }
+  .fb button { display: inline-flex; align-items: center; gap: 5px; font-size: 12px; padding: 2px 8px 2px 2px; border-radius: 999px; }
+  .fb img { width: 30px; height: 30px; border-radius: 50%; object-fit: cover; display: block; }
   .faces { display: grid; grid-template-columns: repeat(6, 1fr); gap: 4px; }
   .faces button { padding: 0; border: 0; border-radius: 6px; overflow: hidden; position: relative; aspect-ratio: 1; background: #000; cursor: zoom-in; }
   .faces img { width: 100%; height: 100%; object-fit: cover; display: block; }
@@ -95,7 +98,7 @@
 <body>
 <header>
   <b>People and pets</b>
-  <div class="tabs" id="tabs"><button data-f="all" class="on">All</button><button data-f="todo">Unnamed</button><button data-f="hidden" id="hiddenTab">Hidden</button></div>
+  <div class="tabs" id="tabs"><button data-f="all" class="on">All</button><button data-f="todo">Unnamed</button><button data-f="fb" id="fbTab" hidden title="Unnamed people whose face is near a Facebook friend's profile picture, the nearest first">Facebook</button><button data-f="hidden" id="hiddenTab">Hidden</button></div>
   <span class="muted" id="sub"></span>
   <button id="rest" hidden title="After naming the people you know: the cards left without a name become strangers"></button>
   <span style="flex:1"></span>
@@ -197,7 +200,15 @@ function save() {
 }
 
 const hiddenCard = c => { const s = st(c); return !!s.ignore || (!who(s) && !!s.unknown); };  // "Not a person", or a stranger
-const shownIn = (c, f) => f === "hidden" ? hiddenCard(c) : !hiddenCard(c) && !(f === "todo" && who(st(c)));
+const shownIn = (c, f) => f === "hidden" ? hiddenCard(c) : !hiddenCard(c) && !(f === "todo" && who(st(c)))
+  && !(f === "fb" && (who(st(c)) || !fbOf(c).length));
+// Facebook friends whose profile picture's face is near this person's (P64), the nearest first: a merged person's
+// from all its cards. Suggestions only: a couple's picture can name the partner.
+function fbOf(c) {
+  const by = {};
+  for (const m of members(c)) for (const f of m.fb || []) if (!by[f.name] || by[f.name].cos < f.cos) by[f.name] = f;
+  return Object.values(by).sort((a, b) => b.cos - a.cos).slice(0, 3);
+}
 function status() {
   const roots = rootCards();
   const named = roots.filter(c => !c.pet && who(st(c))).length, pets = roots.filter(c => c.pet && who(st(c))).length;
@@ -210,7 +221,8 @@ function status() {
   $("petsub").textContent = DATA.pets.length ? `${roots.filter(c => c.pet).length} found, ${pets} named` : "none found";
   const seen = {};
   for (const c of roots) { const w = who(st(c)).toLowerCase(); if (w) (seen[w] = seen[w] || []).push(c.id); }
-  $("known").innerHTML = [...new Set(roots.map(c => (st(c).name || "").trim()).filter(Boolean))].map(n => `<option value="${esc(n)}">`).join("");
+  $("known").innerHTML = [...new Set(roots.map(c => (st(c).name || "").trim()).filter(Boolean).concat(DATA.fb_names || []))]
+    .map(n => `<option value="${esc(n)}">`).join("");
   for (const c of roots) {
     const el = $("c-" + c.id), s = st(c), w = who(s).toLowerCase();
     if (!el) continue;
@@ -227,6 +239,9 @@ function status() {
   }
   const hiddenN = roots.filter(hiddenCard).length;
   $("hiddenTab").textContent = hiddenN ? `Hidden (${hiddenN})` : "Hidden";
+  const fbN = roots.filter(c => !c.pet && shownIn(c, "fb")).length;
+  $("fbTab").textContent = `Facebook (${fbN})`;
+  $("fbTab").hidden = !fbN && filter !== "fb";
   $("rest").textContent = `Mark the ${nameless} unnamed as "I don't know them"`;
   $("rest").hidden = !nameless;
   const n = selected.size, kinds = new Set([...selected].map(i => byId[i].pet));
@@ -272,9 +287,13 @@ function card(c) {
   const hint = !who(s) && s.unknown ? "" : !who(s) && sug.name ? `<span class="hint">suggested: ${esc(sug.name)} (${sug.source === "album-names" ? "from album names"
     : sug.source === "people-folder" ? "from a People folder" : esc(sug.source || "")}) <button data-use>use</button></span>` :
     !who(s) && !s.me && owner ? `<span class="hint">probably you (from the front camera) <button data-me>yes, me</button></span>` : "";
+  const fb = c.pet || who(s) || s.me || s.unknown || s.ignore ? [] : fbOf(c);
+  const fbLine = fb.length ? `<div class="fb">Facebook:${fb.map((f, i) => `<button data-fb="${i}" title="use this name${f.faces
+    ? ` · their picture has ${f.faces} faces: it may show someone else` : ""}"><img src="${esc(f.pic)}" alt="" loading="lazy">${esc(f.name)}
+    ${Math.round(f.cos * 100)}%${f.faces ? " 👥" : ""}</button>`).join("")}</div>` : "";
   el.innerHTML = `<div class="top"><input type="checkbox" class="pick" title="select to merge (X)">
     <span class="id">${c.id}</span><span class="meta">${fs.length} ${c.pet ? esc(c.kind || "animal") + (fs.length > 1 ? "s" : "") : "faces"} in ${photosOf(fs)} photos</span>
-    <span class="same"></span></div>${hint}
+    <span class="same"></span></div>${hint}${fbLine}
     ${parts.length ? `<div class="merged">merged: ${parts.map(m => `<button data-un="${m.id}" title="take ${m.id} out again">${m.id} ✕</button>`).join("")}</div>` : ""}
     <div class="faces"></div>${fs.length > DATA.shown ? `<button class="more">show all ${fs.length}</button>` : ""}
     <div class="fields"><label>${c.pet ? "Name" : "Full name"}<input type="text" data-f="name" list="known" autocomplete="off" placeholder="${c.pet ? "Filemon" : "Anna Kowalska"}"></label>
@@ -322,6 +341,10 @@ function card(c) {
   }
   const use = el.querySelector("[data-use]");
   if (use) use.onclick = () => { s.nick = sug.short || sug.name; el.querySelector("[data-f=nick]").value = s.nick; use.parentElement.remove(); touch(c); save(); };
+  for (const b of el.querySelectorAll("[data-fb]")) b.onclick = () => {
+    s.name = fb[+b.dataset.fb].name; el.querySelector("[data-f=name]").value = s.name;
+    b.parentElement.remove(); touch(c); save(); status();
+  };
   const me = el.querySelector("[data-me]");
   if (me) me.onclick = () => { s.me = true; el.querySelector("[data-f=me]").checked = true; me.parentElement.remove(); touch(c); save(); };
   el.onclick = e => { if (!["INPUT", "BUTTON", "LABEL"].includes(e.target.tagName)) setFocus(c.id); };
@@ -352,6 +375,7 @@ function render(keep = false) {
   const roots = rootCards(), before = keep ? {...drawn} : {};
   const once = roots.filter(c => c.pet && facesOf(c).length === 1);
   lists.people = roots.filter(c => !c.pet && shownIn(c, filter));
+  if (filter === "fb") lists.people.sort((a, b) => fbOf(b)[0].cos - fbOf(a)[0].cos);
   lists.pets = roots.filter(c => c.pet && facesOf(c).length > 1 && shownIn(c, filter));
   lists.once = once.filter(c => shownIn(c, filter));
   for (const sec of ["people", "pets", "once"]) {

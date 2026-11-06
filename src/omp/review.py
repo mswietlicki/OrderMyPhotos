@@ -358,7 +358,28 @@ def api_people_cards():
     for c in data["people"] + data["pets"]:  # who the user said most of a card's faces are, "" if nobody
         votes = Counter(said[f["k"]] for f in c["faces"] if said.get(f["k"]))
         c["label"] = votes.most_common(1)[0][0] if votes else ""
+    fb = _facebook(s, key)
+    for c in data["people"]:
+        c["fb"] = fb["cards"].get(c["id"], [])
+    data["fb_names"] = fb["names"]
     return data
+
+
+def _facebook(s, key) -> dict:
+    """Names suggested from the user's Facebook friends (P64): `suggestions-facebook.json` in the session's folder,
+    made outside the app (on the server; the friends' names and pictures never go in the repo). Per card, up to 3
+    friends whose profile picture's face is near the card's, with the similarity; and every friend's name, for
+    typing. Only used for the clustering it was made from (the run, and its people's count, last id and faces)."""
+    path = s.dir / "suggestions-facebook.json"
+    none = {"cards": {}, "names": []}
+    try:
+        d = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return none
+    if d.get("run") != s.run_id or list(d.get("people") or []) != list(key[2:5]):
+        return none
+    cards = {cid: [{**m, "pic": "/library/OrderMyPhotos/" + m["pic"]} for m in ms] for cid, ms in d.get("cards", {}).items()}
+    return {"cards": cards, "names": d.get("names", [])}
 
 
 @router.get("/api/people")
