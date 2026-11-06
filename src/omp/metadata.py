@@ -98,12 +98,15 @@ def plan(con, kept: list[dict]) -> list[dict]:
         captions[i] = json.loads(data)
     photo = {r[0]: (r[1], json.loads(r[2] or "{}")) for r in con.execute("SELECT id, orientation, meta FROM photo")}
     people, pets = defaultdict(list), defaultdict(list)
+    # Only the names the user gave on the People page (source "user"). A People folder's or an album's name is
+    # only a suggestion there: a People folder "Akty" ("nudes") named a cluster of 4,352 faces, and the sample
+    # wrote it into photos as a person. The owner's other clusters take the owner's name, when the user gave it.
     try:
-        rows = con.execute("SELECT f.id, f.box, p.name, p.short, p.owner FROM face f JOIN person p ON p.pid=f.person"
-                           " WHERE p.name IS NOT NULL OR p.short IS NOT NULL OR p.owner=1").fetchall()
-        owner = next((clean(r[2] or r[3]) for r in rows if r[4] and (r[2] or r[3])), "")  # the owner's clusters
-        for i, box, name, short, is_owner in rows:
-            n = clean(name or short) or (owner if is_owner else "")
+        rows = con.execute("SELECT f.id, f.box, p.name, p.short, p.owner, p.source FROM face f JOIN person p ON p.pid=f.person"
+                           " WHERE p.source='user' OR p.owner=1").fetchall()
+        owner = next((clean(r[2] or r[3]) for r in rows if r[4] and r[5] == "user" and (r[2] or r[3])), "")
+        for i, box, name, short, is_owner, source in rows:
+            n = (clean(name or short) if source == "user" else "") or (owner if is_owner else "")
             if n:
                 people[i].append((n, json.loads(box)))
     except Exception:  # noqa: BLE001 - no people stage yet
@@ -111,7 +114,7 @@ def plan(con, kept: list[dict]) -> list[dict]:
     try:
         for i, box, name, short, kind in con.execute(
                 "SELECT m.id, m.box, p.name, p.short, p.kind FROM pet_member m JOIN pet p ON p.pid=m.pid"
-                " WHERE p.name IS NOT NULL OR p.short IS NOT NULL"):
+                " WHERE p.source='user' AND (p.name IS NOT NULL OR p.short IS NOT NULL)"):
             pets[i].append((clean(name or short), kind or "animal", json.loads(box)))
     except Exception:  # noqa: BLE001 - no pets yet
         pass
