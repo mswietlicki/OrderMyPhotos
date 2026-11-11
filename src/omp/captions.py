@@ -23,6 +23,7 @@ VERSION = "caption@1"
 EMBED_MODEL = "qwen3-embedding-4b"
 MAP_MIN = 0.80           # Qwen3-Embedding cosine (tag vs. one label or synonym) to map a free tag
 SIGLIP_KEEP = 0.35       # a mapped tag must beat this share of the vocabulary on SigLIP similarity
+SUMMARY_CHARS = 100_000  # P72: captions in one album summary, ~23k tokens; Qwen's context is 64k tokens
 
 CATEGORIES = ["none", "documents", "receipts", "labels", "specs", "screens", "home", "to_remember", "maps_topos",
               "food", "shopping", "memes"]
@@ -299,8 +300,16 @@ def run(cfg: Config, con, run_id: str):
         of = hashlib.sha1("\n".join(descs).encode()).hexdigest()
         if had.get(album) == of:
             continue
+        # P72: a big album is summarized from a sample of its captions, since all of them don't fit in the context
+        shown, size = [], 0
+        for t in descs:  # in caption id (hash) order, so the first ones are a random sample
+            size += len(t) + 3
+            if size > SUMMARY_CHARS:
+                break
+            shown.append(t)
+        which = "its photos" if len(shown) == len(descs) else f"{len(shown)} of its {len(descs)} photos, picked at random"
         d = vlm._post({"messages": [{"role": "system", "content": SYSTEM}, {"role": "user", "content":
-            f'Album "{album_title(album)}". Captions of its photos:\n- ' + "\n- ".join(descs) +
+            f'Album "{album_title(album)}". Captions of {which}:\n- ' + "\n- ".join(shown) +
             "\n\nWrite a 2-3 sentence summary of the album in Polish, then the same in English, as JSON with keys"
             ' "pl" and "en". Plain and concrete; name each kind of moment, place, person and animal the photos'
             " show, most common first."}], "max_tokens": 400, "temperature": 0,
@@ -311,6 +320,7 @@ def run(cfg: Config, con, run_id: str):
             continue
         con.execute("INSERT OR REPLACE INTO album_context(album, source, trusted, text) VALUES (?,?,0,?)",
                     (album, f"v2 summary {VERSION}", text))
+        con.commit()  # one at a time: a failure later doesn't throw away the summaries written before it
     con.commit()
     dt_total = time.perf_counter() - t0
     log_timing(con, "captions", run_id, len(todo), dt_total, "4090 qwen3.8-27b")
