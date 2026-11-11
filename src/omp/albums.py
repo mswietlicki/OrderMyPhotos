@@ -1239,6 +1239,8 @@ def run(cfg: Config, con, run_id: str, place_only: bool = False):
         """P(yes) that this group is part of the event of `album` (the library's or a new one), whose photos are
         `rows`. Asked with what both sides show and when, and whether a person is in both (P39: a one-line
         description of the album left the night before a trip at 0.5)."""
+        if not rs or not rows:  # P72: nothing to compare with (a place known only from a look-alike)
+            return 0.0
         mine, theirs = faces_of(rs), faces_of(rows)
         if strangers(rs, theirs):
             return 0.0
@@ -1490,8 +1492,9 @@ def run(cfg: Config, con, run_id: str, place_only: bool = False):
             rs = d[0]
             if kind == "album":
                 return part_of(rs, t, album_rows[t], evidence) if album_rows.get(t) else 0.0
-            if kind == "new":
-                return part_of(rs, t, held[t], evidence)
+            if kind == "new":  # .get: held is a defaultdict, and an empty entry would be offered as a new album
+                rows = held.get(t) or album_rows.get(t)
+                return part_of(rs, t, rows, evidence) if rows else 0.0
             group = describe(rs, d[1], d[3])[1]
             ev = f"\n{evidence}\n" if evidence else ""
             if kind == "own":
