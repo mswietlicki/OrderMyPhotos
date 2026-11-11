@@ -1216,6 +1216,12 @@ After P70, 2,169 people were still unnamed. The user: "try to use different tool
 - **The strangers that matched a named person:** 15 of 68 at these thresholds, 13 of them the same named person. That's that person on cards marked differently, not a face that draws everyone: no more than 2 unnamed people joined her.
 - **The first run of the embedding ran Mimir out of memory.** Its loader decoded all 20,000 previews ahead of the GPU: 60 GB, swapping, SSH unresponsive for ~3 minutes, then the kernel killed it, and nothing else. It now keeps at most 32 decoded photos ahead, and runs with an 8 GB memory limit and no network.
 
+## P72 — A big album is summarized from a sample of its captions (2026-11-11, found in the whole library's run)
+
+- **What failed:** the captions stage ends with one summary per album, written from all of its captions in one prompt. The library's largest album has 15,527 captions: 2.4 million characters, a 564k-token prompt against Qwen's 64k context. llama.cpp refused it (HTTP 400), the phase failed, and its retries failed the same way for 13 hours. Three more albums were over the limit, with 1,500–3,900 photos each.
+- **Now:** an album's summary reads at most 100,000 characters of its captions, about 23k tokens. Captions are taken in caption-id order, which is a hash, so a cut gives a random sample, and the same one every run. The prompt says so ("N of its M photos, picked at random"). A few hundred captions are plenty for 2–3 sentences, and the summary still names the most common moments first.
+- **Each summary is committed as it's written.** Before, they were committed only at the end, so every failed retry had thrown away the summaries before the big album (~12 minutes of work each time).
+
 ## Open — for the user
 
 1. ~~**Language** of titles, descriptions and tags.~~ Resolved by P42: both languages; S11 reads English only.
