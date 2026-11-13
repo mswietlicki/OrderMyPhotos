@@ -537,7 +537,7 @@ Every number is shown before anything is approved.
 
   Start runs the server's phases and stops where the reviewer is needed.
 - **The review:** every album and folder, existing or new, is one unit with the photos it will hold.
-  - In it the reviewer keeps or archives, takes photos out, moves them, renames, dismantles or confirms.
+  - In it the reviewer keeps or archives, takes photos out, moves them, renames, dismantles, archives it whole (P73) or confirms.
   - Confirmed photos are pinned, and the sorting never moves them again.
   - Photos taken out are sorted again, and only what's new is reviewed then.
 - **What it shows:**

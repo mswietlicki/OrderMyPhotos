@@ -185,7 +185,7 @@ function drawUnits() {
                                        && (!q || u.key.toLowerCase().includes(q) || u.name.toLowerCase().includes(q)));
   $("units").innerHTML = shownUnits.map(u => `<div class="unit ${cur && cur.key === u.key ? "sel" : ""}" data-k="${esc(u.key)}">
     <div class="t"><span class="dot ${u.state}"></span>${esc(u.name)}</div>
-    <div class="s">${u.kind}${u.new ? " · new" : ""} · ${u.n} photos${u.open && u.state === "open" ? ` · ${u.open} to check` : ""}${u.unsure ? ` · ${u.unsure} unsure` : ""}${u.out ? ` · ${u.out} out` : ""}</div></div>`).join("")
+    <div class="s">${u.kind}${u.new ? " · new" : ""} · ${u.n} photos${u.archived ? " · archived" : ""}${u.open && u.state === "open" ? ` · ${u.open} to check` : ""}${u.unsure ? ` · ${u.unsure} unsure` : ""}${u.out ? ` · ${u.out} out` : ""}</div></div>`).join("")
     || `<p class="muted" style="padding: 0 12px">${filter === "open" ? "Nothing left to review here." : "None."}</p>`;
   for (const el of $("units").children) if (el.dataset.k) el.onclick = () => openUnit(el.dataset.k, true);
 }
@@ -272,12 +272,13 @@ function summary() {
     + (fresh && fresh < photos.length ? ` · ${fresh} to check` : "");
 }
 
-// Confirm / Review again and Dismantle act on the open album or folder; they sit in the header, next to Finished
+// Confirm / Review again, Archive all and Dismantle act on the open album or folder; they sit in the header, next to Finished
 function unitActs() {
   const u = cur;
   $("unitActs").innerHTML = !u ? "" : (u.state === "open"
       ? `<button class="primary" onclick="__v.confirmUnit()" title="Confirm this album or folder (Ctrl+Enter)">Confirm</button>`
-      : `<button onclick="__v.reopen()" title="Open this album or folder for review again">Review again</button>`)
+      : `<button onclick="__v.reopen()" title="Open this album or folder for review again${u.archived ? ", its photos kept or archived as before Archive all" : ""}">Review again</button>`)
+    + (u.state !== "dismantled" && !u.archived ? `<button class="danger" onclick="__v.archiveUnit()" title="Archive every photo in it, and sort nothing into it any more">Archive all</button>` : "")
     + (u.state !== "dismantled" ? `<button class="danger" onclick="__v.dismantle()" title="Sort all its photos again">Dismantle</button>` : "");
   revHeight();
 }
@@ -291,7 +292,7 @@ function drawUnit() {
   $("main").innerHTML = `<div class="head">
       <input class="name" id="uname" value="${esc(nameOnly)}" title="Rename" ${u.state === "dismantled" ? "disabled" : ""}>
       <span class="tag">${u.kind}${u.new ? ", new" : ""}</span>
-      ${u.state === "dismantled" ? `<span class="tag">dismantled</span>` : ""}
+      ${u.state === "dismantled" ? `<span class="tag">dismantled</span>` : ""}${u.archived ? `<span class="tag">archived</span>` : ""}
       <span style="flex:1"></span>
       <span id="saved" class="muted"></span>
     </div>
@@ -450,13 +451,20 @@ function burstPanel(p) {
   if (cur) cur.scrollIntoView({block: "nearest"});
 }
 
+async function nextOpen() {  // after a unit is done: the next one to review
+  await loadUnits();
+  const next = units.find(u => u.state === "open");
+  if (next) openUnit(next.key); else { cur = null; unitActs(); $("main").innerHTML = `<p><b>All albums and folders are confirmed.</b> Go back to <a href="#/">Progress</a> and press <i>Done, go on</i>.</p>`; drawUnits(); }
+}
 async function confirmUnit() {
-  try {
-    await api("/api/review/unit/confirm", {key: cur.key});
-    await loadUnits();
-    const next = units.find(u => u.state === "open");
-    if (next) openUnit(next.key); else { cur = null; unitActs(); $("main").innerHTML = `<p><b>All albums and folders are confirmed.</b> Go back to <a href="#/">Progress</a> and press <i>Done, go on</i>.</p>`; drawUnits(); }
-  } catch (e) { saved(false, e.message); }
+  try { await api("/api/review/unit/confirm", {key: cur.key}); await nextOpen(); } catch (e) { saved(false, e.message); }
+}
+// Archive all (P73): every photo here archived and pinned, the unit confirmed; Review again undoes it
+async function archiveUnit() {
+  const n = photos.filter(p => p.state !== "out").length;
+  if (!confirm(`Archive all ${n} photos of "${cur.name}"? They go to Archive/OrderMyPhotos/ when the plan is applied, and nothing is sorted here any more. Review again undoes it.`)) return;
+  $("saved").textContent = "Archiving…"; $("saved").className = "muted";  // a big folder takes a while
+  try { await api("/api/review/unit/archive", {key: cur.key}); await nextOpen(); } catch (e) { saved(false, e.message); }
 }
 async function dismantle() {
   if (!confirm(`Dismantle "${cur.name}"? All ${photos.length} photos are sorted again, and nothing goes here any more.`)) return;
@@ -543,7 +551,7 @@ async function finish() {
 }
 
 // what the inline buttons call (they run outside this view's scope)
-window.__v = {confirmUnit, reopen, dismantle, doMove, finish, closeMove: () => $("moveDlg").close()};
+window.__v = {confirmUnit, archiveUnit, reopen, dismantle, doMove, finish, closeMove: () => $("moveDlg").close()};
 if (OMP.route.final) showFinal();
 else loadUnits().then(() => {
   if (!OMP.route.unit && !units.some(u => u.state === "open") && units.length) {  // all confirmed: show them all

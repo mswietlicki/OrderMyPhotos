@@ -425,11 +425,13 @@ def run(cfg: Config, con, run_id: str, place_only: bool = False):
             if kind == "place":
                 placed.add(i)
     pinned = set(moved)  # its own name: `moved` is reused as a counter further down
-    # Albums and folders the reviewer dismantled: no photo goes there any more.
+    # Albums and folders the reviewer dismantled or archived whole (P73): no photo goes there any more.
     try:
-        dismantled = {r[0] for r in con.execute("SELECT key FROM review_unit WHERE status='dismantled'")}
+        closed_units = con.execute("SELECT key, status FROM review_unit WHERE status IN ('dismantled', 'archived')").fetchall()
     except Exception:  # noqa: BLE001 - no review yet
-        dismantled = set()
+        closed_units = []
+    closed = {k for k, _ in closed_units}
+    dismantled = {k for k, st in closed_units if st == "dismantled"}  # its photos make no new album either
     cull = [dict(r) for r in con.execute(
         "SELECT p.id, p.taken_ts, p.taken_local, p.lat, p.lon, MIN(f.path) AS path FROM photo p JOIN file f ON f.id=p.id"
         " WHERE f.policy='cull' GROUP BY p.id ORDER BY p.taken_ts") if r["id"] in taken_out or r["id"] in moved]
@@ -626,7 +628,7 @@ def run(cfg: Config, con, run_id: str, place_only: bool = False):
         return (t or "").removesuffix(" PRIV").removesuffix(f"/{DOCS_FOLDER}")
 
     def banned_of(rs):
-        return {unit_of(taken_out[r["id"]]) for r in rs if r["id"] in taken_out} | dismantled
+        return {unit_of(taken_out[r["id"]]) for r in rs if r["id"] in taken_out} | closed
 
     sessions = sessions_of(rest, burst_of)
     try:  # face clusters (S8) other than the owner's, and the names album names use
@@ -1655,7 +1657,7 @@ def run(cfg: Config, con, run_id: str, place_only: bool = False):
     for rs, away, banned, messenger, d0, kind, target, name, why, alts in decisions:
         # Whatever step made it a new album: never one the reviewer dismantled or took these photos out of
         if kind == "new_album" and (unit_of(target) in banned or any(r["id"] in from_dismantled for r in rs)):
-            kind, target, why = "folder", other_of(rs[0]["taken_ts"]), "the album they were in was dismantled in review"
+            kind, target, why = "folder", other_of(rs[0]["taken_ts"]), "the album was dismantled or archived in review, or they were taken out of it"
         counts[kind] += 1
         if messenger or kind in ("folder", "new_folder"):
             target = other_of(rs[0]["taken_ts"]) if messenger and kind in ("album", "new_album") else target

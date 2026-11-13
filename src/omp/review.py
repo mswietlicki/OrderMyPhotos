@@ -8,6 +8,7 @@ review looks the same from any device or browser. The reviewer can, per unit:
 - take a photo out (`out`): it's sorted again by the `resort` phase, never back into this unit;
 - move a photo to another album or folder by hand (`move`);
 - rename the unit, or dismantle it: all its photos are taken out, and nothing is sorted into it again;
+- archive it whole (P73): every photo in it is archived and pinned there, and nothing is sorted into it again;
 - confirm it (`place`): every photo in it is pinned there, and later sorting rounds don't touch it.
 
 After a resort, the units that received photos are open again, showing only what's new; what was confirmed
@@ -32,12 +33,13 @@ current = lambda: None  # noqa: E731 - set by web.py: the active session
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS review_unit (
   key TEXT PRIMARY KEY,            -- the album or folder path the unit stands for
-  status TEXT NOT NULL,            -- confirmed | dismantled
+  status TEXT NOT NULL,            -- confirmed | dismantled | archived (Archive all, P73)
   name TEXT,                       -- its new path, when the reviewer renamed it
   round INTEGER, updated REAL
 );
 """
 SUBS = (" PRIV", "/Dokumenty")     # an album's private and documents parts are reviewed with it (P24, P26)
+ARCHIVE_ALL = ":archive-all"       # the source of the verdicts Archive all wrote, so Review again can undo them
 _cache: dict = {"key": None}
 
 
@@ -154,12 +156,13 @@ def placements(session) -> dict:
         out[key] = {"key": key, "name": PurePosixPath(st.get("name") or key).name,
                     "kind": "album" if key.startswith("Pictures/Albums/") else "folder",
                     "new": key not in existing, "n": c["n"], "keep": c["keep"], "archive": c["archive"],
-                    "open": c["open"], "confirmed": c["confirmed"], "out": c["out"], "unsure": c["unsure"], "state": state}
+                    "open": c["open"], "confirmed": c["confirmed"], "out": c["out"], "unsure": c["unsure"], "state": state,
+                    "archived": st.get("status") == "archived"}
     for key, st in status.items():  # a dismantled unit stays listed, empty, until its photos have new places
         if st["status"] == "dismantled" and key not in out:
             out[key] = {"key": key, "name": PurePosixPath(key).name, "kind": "album" if key.startswith("Pictures/Albums/")
                         else "folder", "new": key not in existing, "n": 0, "keep": 0, "archive": 0, "open": 0,
-                        "confirmed": 0, "out": 0, "unsure": 0, "state": "dismantled"}
+                        "confirmed": 0, "out": 0, "unsure": 0, "state": "dismantled", "archived": False}
     data = {"photos": photos, "units": out}
     _cache.update(key=(db, stamp), data=data)
     return data
@@ -463,18 +466,63 @@ def api_dismantle(key: str = Body(..., embed=True)):
     return {"out": len(members), "pending": pending(s)}
 
 
+@router.post("/api/review/unit/archive")
+def api_archive(key: str = Body(..., embed=True)):
+    """Archive all (P73; user: "I need an option to archive whole album with all photos"): every photo in the
+    unit but the ones taken out is archived and pinned there, and the unit is confirmed. With the plan they go to
+    `Archive/OrderMyPhotos/`, and nothing is sorted into the unit any more (albums.py bans it, as a dismantled one).
+    Review again gives each photo back the verdict it had before, unless it was changed since."""
+    s = _session()
+    members = [p for p in placements(s)["photos"].values() if p["unit"] == key and p["state"] != "out"]
+    if not members:
+        raise HTTPException(404, "no photos in this unit")
+    con = connect(s, write=True)
+    draft = (con.execute("SELECT name FROM review_unit WHERE key=?", (key,)).fetchone() or [None])[0]
+    src = f"review:{s.id}:{_round(s)}"
+    with con:
+        _labels(con, [(p["id"], "verdict", "archive") for p in members], src + ARCHIVE_ALL)
+        _labels(con, [(p["id"], "place", (draft or key) + p["sub"]) for p in members], src)
+        con.execute("INSERT OR REPLACE INTO review_unit(key, status, name, round, updated) VALUES (?,?,?,?,?)",
+                    (key, "archived", draft, _round(s), time.time()))
+    con.close()
+    return {"archived": len(members), "pending": pending(s)}
+
+
+def _before_archive_all(con, members) -> list:
+    """The verdicts Archive all replaced, for the photos still archived by it: each one's verdict before it
+    (the reviewer's, else the pipeline's)."""
+    labels = defaultdict(list)
+    ids = [p["id"] for p in members]
+    for chunk in (ids[i:i + 500] for i in range(0, len(ids), 500)):
+        q = ",".join("?" * len(chunk))
+        for r in con.execute(f"SELECT id, value, source FROM label WHERE kind='verdict' AND id IN ({q}) ORDER BY lid", chunk):
+            labels[r["id"]].append((r["value"], r["source"] or ""))
+    rows = []
+    for p in members:
+        vs = labels.get(p["id"])
+        if vs and vs[-1][1].endswith(ARCHIVE_ALL):
+            before = next((v for v, src in reversed(vs) if not src.endswith(ARCHIVE_ALL)), None)
+            rows.append((p["id"], "verdict", before or p["pipeline"] or "keep"))
+    return rows
+
+
 @router.post("/api/review/unit/reopen")
 def api_reopen(key: str = Body(..., embed=True)):
-    """Review a confirmed or dismantled unit again: its photos become open, as the sorting left them."""
+    """Review a confirmed, dismantled or archived unit again: its photos become open, as the sorting left them.
+    An archived one's photos get back the verdicts they had before Archive all."""
     s = _session()
     d = placements(s)
+    members = [p for p in d["photos"].values() if p["unit"] == key]
     con = connect(s, write=True)
+    status = (con.execute("SELECT status FROM review_unit WHERE key=?", (key,)).fetchone() or [None])[0]
+    verdicts = _before_archive_all(con, members) if status == "archived" else []
     with con:
-        _labels(con, [(p["id"], "place", "") for p in d["photos"].values() if p["unit"] == key and p["state"] == "confirmed"],
-                f"review:{s.id}:{_round(s)}:reopen")
+        src = f"review:{s.id}:{_round(s)}:reopen"
+        _labels(con, verdicts, src)
+        _labels(con, [(p["id"], "place", "") for p in members if p["state"] == "confirmed"], src)
         con.execute("DELETE FROM review_unit WHERE key=?", (key,))
     con.close()
-    return {"pending": pending(s)}
+    return {"pending": pending(s), "verdicts_back": len(verdicts)}
 
 
 @router.get("/api/photo/{id_}/{size}")

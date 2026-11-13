@@ -92,7 +92,7 @@ Run s1 (2026-11-03) did a first pass of every stage below on the B50 and the res
 - [x] Face clustering per connected component, so a whole library's faces fit in memory (P43)
 - [x] `omp serve`: start and pause, the pipeline as a supervised child that resumes after a crash or reboot, progress, steps, skipped photos, timings, machine resources, results, a label API (P44)
 - [x] Runs from a clone of this repo on Mimir (`compose.yaml`, `deploy/`); tested on a copy of s6: redeploy, pause, `kill -9`
-- [x] The review in the app (P47): a wizard over sessions (a root folder each, one at a time), phases that stop for the reviewer, every album and folder one review unit (keep/archive, out, move, rename, dismantle, confirm), a resort loop that leaves confirmed photos alone, the People page saving to the app, the final decision
+- [x] The review in the app (P47): a wizard over sessions (a root folder each, one at a time), phases that stop for the reviewer, every album and folder one review unit (keep/archive, out, move, rename, dismantle, archive all (P73), confirm), a resort loop that leaves confirmed photos alone, the People page saving to the app, the final decision
 - [x] The People page in the app's style (`/people`): a face's photo full screen with the person's faces on the right, right-click takes a face out, saved at once (P47)
 - [x] Apply the plan to a test session's copy after the final decision: moves, turns, deleting the archived photos if decided, a log and undo (P48)
 - [x] Apply the plan on OneDrive: `mimir-onedrive apply` (S9, P56), server-side moves, the archive, deletes when the final decision says so; plans carry each move's hash and the captions for the item descriptions
