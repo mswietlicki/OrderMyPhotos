@@ -1234,6 +1234,21 @@ After P70, 2,169 people were still unnamed. The user: "try to use different tool
 - **Review again undoes it:** each photo gets back the verdict it had before Archive all (the reviewer's last, else the pipeline's). A photo whose verdict was changed after Archive all keeps that one. The verdicts Archive all writes have their own source (`…:archive-all`), so the undo can tell them apart.
 - **Tested** against a copy of the whole library's session DB, in the app's container. That covered a 4-photo album (a verdict from before, a photo taken out, one kept by hand after) and a 2,344-photo folder. Archive all and Review again take as long as Confirm, 12–25 s on the whole library, most of it in working out every photo's place again (P63).
 
+## P74 — One placements() at a time: the status polls ran the app out of memory (2026-11-13, found measuring the review page)
+
+- **What happened:** opening the review page on the whole library took 65 s, then showed an empty page. At 13:06:45 the kernel killed the app's Python process, at 59.6 GB of Mimir's 60 GB, and Docker restarted it.
+- **Why:**
+  - `placements()` works out every photo's unit and state. It's cached until the DB changes. On the whole library (150,237 photos, 2,360 units), working it out again takes ~15 s and ~7 GB.
+  - Every request that came while the cache was stale started its own computation. During the review, the page's status poll (every 3 s) needs it too, for the counts of units left.
+  - So after a change, the polls piled up computations. Each one slowed the others down, so more piled up: about 20 ran at once.
+  - The page then got an error with no message (HTTP/2 has no status text) and showed nothing.
+- **Now:**
+  - One computation at a time: the other callers wait for it and take its result. On a copy of the session DB, 20 callers at once took 15.5 s and 6.7 GB in all.
+  - The status poll takes the last result while a new one is made: 18 ms instead of a 15 s wait.
+  - Until the new result replaces the old one, both are in memory: about 20 GB at peak.
+  - The page says when the albums didn't load, and to reload.
+- **Measured after the fix,** in Chrome on the LAN, with the cache warm: the album list in 0.11 s, the first album's data in 0.08 s, its first 74 thumbnails by 1.5 s (111 ms each). After a change, the next album still waits ~15 s for the recompute. Making it incremental is the next step (P63).
+
 ## Open — for the user
 
 1. ~~**Language** of titles, descriptions and tags.~~ Resolved by P42: both languages; S11 reads English only.
