@@ -152,7 +152,7 @@ let units = [], targets = [], targetOf = {}, filter = "open", cur = null, photos
 
 async function api(path, body) {
   const r = await fetch(path, body === undefined ? {} : {method: "POST", headers: {"Content-Type": "application/json"}, body: JSON.stringify(body)});
-  if (!r.ok) throw new Error((await r.json().catch(() => ({}))).detail || r.statusText);
+  if (!r.ok) throw new Error((await r.json().catch(() => ({}))).detail || r.statusText || `the server answered ${r.status}`);  // HTTP/2 has no status text
   return r.json();
 }
 function saved(ok, msg) {
@@ -561,7 +561,7 @@ else loadUnits().then(() => {
   }
   const key = OMP.route.unit || (units.find(u => u.state === "open") || units[0] || {}).key;
   if (key) openUnit(key);
-}).catch(e => { $("main").innerHTML = `<p>${esc(e.message)}</p>`; });
+}).catch(e => { $("main").innerHTML = `<p>The albums and folders didn't load: ${esc(e.message)}. Reload the page to try again.</p>`; });
 </script>
 </body>
 </html>

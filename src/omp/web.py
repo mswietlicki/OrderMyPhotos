@@ -326,7 +326,8 @@ def status() -> dict:
     can_apply, why_not = apply.appliable(Path(s.root))
     if not can_apply:
         phases[PHASE["apply"]] |= {"state": "skipped" if cur >= PHASE["apply"] else "pending", "about": why_not}
-    pending = review.pending(s) if runner.phase["key"] in ("review", "resort", "plan", "final") else None
+    # polled every 3 s: while the review's placements are worked out again, the last ones will do (P74)
+    pending = review.pending(s, stale_ok=True) if runner.phase["key"] in ("review", "resort", "plan", "final") else None
     out.update({
         "session": {"id": s.id, "name": s.name, "root": s.root, "library_index": s.library_index,
                     "keep_duplicates": s.keep_duplicates, "created": s.created,

@@ -41,6 +41,10 @@ CREATE TABLE IF NOT EXISTS review_unit (
 SUBS = (" PRIV", "/Dokumenty")     # an album's private and documents parts are reviewed with it (P24, P26)
 ARCHIVE_ALL = ":archive-all"       # the source of the verdicts Archive all wrote, so Review again can undo them
 _cache: dict = {"key": None}
+# One placements() at a time (P74): on the whole library one takes ~15 s and ~3 GB, and every request that came
+# while the DB had changed started its own. The page polls the status every 3 s, so they piled up: 20 at once
+# used 60 GB, and the kernel killed the app (2026-11-13).
+_placing = threading.Lock()
 
 
 def base(target: str) -> tuple[str, str]:
@@ -66,12 +70,27 @@ def _has(con, table) -> bool:
     return con.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name=?", (table,)).fetchone() is not None
 
 
-def placements(session) -> dict:
-    """Every photo's unit, part, state and verdict, recomputed only when the DB changes."""
+def _stamp(db: Path) -> tuple:
+    return tuple(p.stat().st_mtime_ns if p.exists() else 0 for p in (db, db.with_name(db.name + "-wal")))
+
+
+def placements(session, stale_ok=False) -> dict:
+    """Every photo's unit, part, state and verdict, recomputed only when the DB changes, by one caller at a time:
+    the others wait for it and take its result. `stale_ok`: while it's being recomputed, the last result will do
+    (the status the page polls)."""
     db = session.config().db
-    stamp = tuple(p.stat().st_mtime_ns if p.exists() else 0 for p in (db, db.with_name(db.name + "-wal")))
-    if _cache["key"] == (db, stamp):
+    if _cache["key"] == (db, _stamp(db)):
         return _cache["data"]
+    if stale_ok and _placing.locked() and _cache["key"] and _cache["key"][0] == db:
+        return _cache["data"]
+    with _placing:
+        stamp = _stamp(db)  # before reading: a change made while it reads makes the next call read again
+        if _cache["key"] == (db, stamp):
+            return _cache["data"]  # made while this one waited
+        return _placements(session, db, stamp)
+
+
+def _placements(session, db, stamp) -> dict:
     con = connect(session)
     run = session.run_id
     files = {}
@@ -168,10 +187,10 @@ def placements(session) -> dict:
     return data
 
 
-def pending(session) -> dict:
+def pending(session, stale_ok=False) -> dict:
     """What stands between the review and the plan: units still open, photos waiting to be sorted again."""
     try:
-        d = placements(session)
+        d = placements(session, stale_ok)
     except HTTPException:
         return {"units": 0, "unconfirmed": 0, "to_sort": 0}
     units = [u for u in d["units"].values() if u["state"] != "dismantled"]
