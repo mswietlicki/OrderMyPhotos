@@ -1223,6 +1223,17 @@ After P70, 2,169 people were still unnamed. The user: "try to use different tool
 - **Each summary is committed as it's written.** Before, they were committed only at the end, so every failed retry had thrown away the summaries before the big album (~12 minutes of work each time).
 - **The second failure of the same phase** came at the sure-first rounds (P45), after the events had been decided. A group's look-alikes were in a new album with no photos held for it yet, and `part_of` took `min()` of the album's empty photo list. Every retry failed the same way, from 21:27. `part_of` now answers 0 when either side is empty, and `score` reads `held` with `.get`, falling back to the library album's photos. Before, `held[t]` (a defaultdict) also left an empty entry behind, which the next group was offered as a new album.
 
+## P73 — Archive all: a whole album or folder archived in one step (2026-11-13, user)
+
+- **What the user asked for:** "I need an option to archive whole album with all photos." It came up while spot-checking the whole library's new albums: 791 of the 1,632 the sort proposed (8,862 photos) were made because pass 1 picked "a new album", though the sure-first loop's "is this an event?" scored below 0.5 for each group in them. Archiving one photo at a time doesn't scale to that.
+- **Archive all** is a button next to Confirm and Dismantle on the review page:
+  - Every photo in the unit gets an `archive` verdict and a `place` label, so it's pinned there, as with Confirm. The photos taken out of it are left alone.
+  - The unit is `archived` in `review_unit` and counts as confirmed. The list and its header say "archived".
+  - With the plan, its photos go to `Archive/OrderMyPhotos/<their path>`, as any archived photo. An existing album's folder is left empty.
+- **Nothing is sorted into it any more.** The sorting bans an archived unit for every photo, as a dismantled one (P47). Unlike a dismantled album, the photos taken out of it may still make a new album.
+- **Review again undoes it:** each photo gets back the verdict it had before Archive all (the reviewer's last, else the pipeline's). A photo whose verdict was changed after Archive all keeps that one. The verdicts Archive all writes have their own source (`…:archive-all`), so the undo can tell them apart.
+- **Tested** against a copy of the whole library's session DB, in the app's container. That covered a 4-photo album (a verdict from before, a photo taken out, one kept by hand after) and a 2,344-photo folder. Archive all and Review again take as long as Confirm, 12–25 s on the whole library, most of it in working out every photo's place again (P63).
+
 ## Open — for the user
 
 1. ~~**Language** of titles, descriptions and tags.~~ Resolved by P42: both languages; S11 reads English only.
