@@ -41,10 +41,22 @@ CREATE TABLE IF NOT EXISTS review_unit (
 SUBS = (" PRIV", "/Dokumenty")     # an album's private and documents parts are reviewed with it (P24, P26)
 ARCHIVE_ALL = ":archive-all"       # the source of the verdicts Archive all wrote, so Review again can undo them
 _cache: dict = {"key": None}
-# One placements() at a time (P74): on the whole library one takes ~15 s and ~3 GB, and every request that came
+# One placements() at a time (P74): on the whole library one took ~15 s and ~7 GB (1.6 s and 0.3 GB since P75), and every request that came
 # while the DB had changed started its own. The page polls the status every 3 s, so they piled up: 20 at once
 # used 60 GB, and the kernel killed the app (2026-11-13).
 _placing = threading.Lock()
+# What placements are made from, apart from the review's labels (P75): read once, then only the labels added since
+# are read, and only their photos worked out again. Read in full again when a pipeline process starts or ends
+# (`forget`, from web.py), while one runs (`writer_alive`), or when the tables it's read from changed in any other
+# way (`_fingerprint`: a script, a restored backup). Labels are only ever added, never changed or deleted.
+_inputs: dict = {"b": None}
+_generation = [0]
+writer_alive = lambda: False  # noqa: E731 - set by web.py: a pipeline process is running
+
+
+def forget():
+    """A pipeline process started or ended: what placements are made from is read again in full."""
+    _generation[0] += 1
 
 
 def base(target: str) -> tuple[str, str]:
@@ -90,77 +102,134 @@ def placements(session, stale_ok=False) -> dict:
         return _placements(session, db, stamp)
 
 
-def _placements(session, db, stamp) -> dict:
-    con = connect(session)
-    run = session.run_id
-    files = {}
-    for r in con.execute("SELECT id, MIN(path) AS path, MIN(album) AS album, MIN(policy) AS policy FROM file"
-                         " WHERE media='photo' AND policy IN ('cull', 'describe', 'unsorted') GROUP BY id"):
-        files[r["id"]] = dict(r)
-    dec = {r["id"]: r for r in con.execute(
-        "SELECT id, gid, verdict, rank, tier, features FROM decision WHERE run=?", (run,))} if _has(con, "decision") else {}
-    verdict, word = {}, {}
-    for r in con.execute("SELECT id, kind, value FROM label WHERE kind IN ('verdict', 'out', 'move', 'place') ORDER BY lid"):
-        if r["kind"] == "verdict":
-            verdict[r["id"]] = "archive" if r["value"] == "bad" else r["value"]
-        else:
-            word[r["id"]] = (r["kind"], r["value"])
-    prop = {}
+REVIEW_KINDS = ('verdict', 'out', 'move', 'place')  # the labels placements follow
+
+
+def _fingerprint(con, run) -> tuple:
+    """The tables placements are read from, apart from the labels, as counts and last ids: a few ms."""
+    one = lambda sql, *a: tuple(con.execute(sql, a).fetchone())  # noqa: E731
+    return (one("SELECT max(pid), count(*) FROM proposal WHERE run=?", run) if _has(con, "proposal") else None,
+            one("SELECT count(*) FROM proposal_member") if _has(con, "proposal_member") else None,
+            one("SELECT max(rowid), count(*) FROM decision") if _has(con, "decision") else None,
+            one("SELECT max(rowid), count(*) FROM file"),
+            one("SELECT max(gid), count(*) FROM grp") if _has(con, "grp") else None)
+
+
+def _read_inputs(con, run) -> dict:
+    """Everything a photo's place is made from but the labels, each piece read once: a proposal's data is parsed
+    once, not once per photo in it (P75: 77k parses of the big albums' data took most of the 16 s), and SQLite
+    takes the few features needed out of each decision's JSON."""
+    files = {r[0]: (r[1], r[2], r[3]) for r in con.execute(
+        "SELECT id, MIN(path), MIN(album), MIN(policy) FROM file"
+        " WHERE media='photo' AND policy IN ('cull', 'describe', 'unsorted') GROUP BY id")}
+    dec = {}  # id -> (gid, verdict, rank, tier, place, rotate, nudity, archived before or kept elsewhere)
+    if _has(con, "decision"):
+        for r in con.execute(
+                "SELECT id, gid, verdict, rank, tier, json_extract(f, '$.place'), json_extract(f, '$.rotate'),"
+                " json_extract(f, '$.nudity'), json_extract(f, '$.archived_before'), json_extract(f, '$.library_copy')"
+                " FROM (SELECT *, nullif(features, '') AS f FROM decision WHERE run=?)", (run,)):
+            dec[r[0]] = (*r[1:8], bool(r[8] or r[9]))
+    props, prop = {}, {}  # pid -> (action, target, moved by hand, why, reasons, unsure); photo -> its pid
     if _has(con, "proposal"):
-        for r in con.execute("SELECT m.id, p.pid, p.action, p.target, p.data FROM proposal p JOIN proposal_member m"
-                             " ON m.pid=p.pid WHERE p.run=? AND p.action IN ('add', 'create', 'theme', 'copy')", (run,)):
-            prop[r["id"]] = r
-    status = {r["key"]: dict(r) for r in con.execute("SELECT * FROM review_unit")} if _has(con, "review_unit") else {}
+        for pid, action, target, data in con.execute("SELECT pid, action, target, data FROM proposal WHERE run=?"
+                                                     " AND action IN ('add', 'create', 'theme', 'copy')", (run,)):
+            d = json.loads(data or "{}")
+            props[pid] = (action, target, bool(d.get("moved")), d.get("why", ""), d.get("reasons") or {}, d.get("unsure") or {})
+        for i, pid in con.execute("SELECT m.id, p.pid FROM proposal p JOIN proposal_member m ON m.pid=p.pid"
+                                  " WHERE p.run=? AND p.action IN ('add', 'create', 'theme', 'copy')", (run,)):
+            prop[i] = pid
     from .db import exact_copies
 
-    exact = exact_copies(con, run) if _has(con, "grp") else {}
-    con.close()
+    return {"files": files, "dec": dec, "props": props, "prop": prop,
+            "exact": exact_copies(con, run) if _has(con, "grp") else {},
+            "existing": {a for _, a, policy in files.values() if policy in ("cull", "describe")},
+            "verdict": {}, "word": {}, "lid": 0, "photos": {}}
 
-    photos = {}
-    for i, f in files.items():
-        d = dec.get(i)
-        feat = json.loads(d["features"] or "{}") if d else {}
-        pr = prop.get(i)
-        own = f["album"] if f["policy"] in ("cull", "describe") else None
-        kind, value = word.get(i, (None, ""))
-        if pr is not None and pr["action"] == "copy" and kind not in ("move", "place"):
-            continue  # an exact copy of a photo in an album: archived as a copy, nothing to review
-        if i in exact and kind != "move":  # a confirmed album's "place" labels don't count, only a move by hand
-            continue  # the same pixels as a photo that's kept, saved again: archived, nothing to review (P54)
-        if (feat.get("archived_before") or feat.get("library_copy")) and kind != "move":
-            continue  # archived in an earlier session, or kept in another storage (P58)
-        state, target = "open", None
-        if kind in ("move", "place") and value and not value.startswith("new:"):
-            target, state = value, "confirmed"
-        elif kind == "move" and value.startswith("new:"):  # a new album named by hand: made by the next sort
-            if pr is not None and pr["action"] == "create" and json.loads(pr["data"] or "{}").get("moved"):
-                target = pr["target"]
-            else:
-                target, state = (pr["target"] if pr is not None else own) or "(not sorted)", "out"
-        elif kind == "out" and value:
-            if pr is not None and base(pr["target"])[0] != base(value)[0]:
-                target = pr["target"]          # sorted again: open in its new unit
-            else:
-                target, state = value, "out"   # waiting for the resort
-        if target is None:
-            target = pr["target"] if pr is not None else (feat.get("place") or own) if own else None
-        if target is None:
-            target = "(not sorted)"
-        unit, sub = base(target)
-        if state == "confirmed" and own and unit == own:
-            sub = base(feat.get("place") or own)[1]
-        why, unsure = "", None
-        if pr is not None and target == pr["target"]:
-            data = json.loads(pr["data"] or "{}")
-            why = (data.get("reasons") or {}).get(i) or data.get("why", "")
-            unsure = (data.get("unsure") or {}).get(i)
-        photos[i] = {"id": i, "path": f["path"], "unit": unit, "sub": sub, "state": state,
-                     "incoming": own != unit, "verdict": verdict.get(i) or (d["verdict"] if d else "keep"),
-                     "pipeline": d["verdict"] if d else None, "gid": d["gid"] if d else None,
-                     "best": bool(d and d["rank"] == 1), "tier": d["tier"] if d else None,
-                     "rotate": feat.get("rotate") or 0, "nudity": feat.get("nudity"), "why": why, "unsure": unsure}
+
+def _read_labels(con, b) -> set:
+    """The review's labels added since the last read, into `b`; the photos they're about."""
+    changed = set()
+    for lid, i, kind, value in con.execute(f"SELECT lid, id, kind, value FROM label WHERE lid > ? AND kind IN {REVIEW_KINDS}"
+                                           " ORDER BY lid", (b["lid"],)):
+        if kind == "verdict":
+            b["verdict"][i] = "archive" if value == "bad" else value
+        else:
+            b["word"][i] = (kind, value)
+        changed.add(i)
+        b["lid"] = lid
+    return changed
+
+
+def _photo(i, b) -> dict | None:
+    """A photo's unit, part, state and verdict; None when it isn't reviewed."""
+    path, album, policy = b["files"][i]
+    d = b["dec"].get(i)
+    pid = b["prop"].get(i)
+    pr = b["props"][pid] if pid is not None else None
+    own = album if policy in ("cull", "describe") else None
+    kind, value = b["word"].get(i, (None, ""))
+    if pr is not None and pr[0] == "copy" and kind not in ("move", "place"):
+        return None  # an exact copy of a photo in an album: archived as a copy, nothing to review
+    if i in b["exact"] and kind != "move":  # a confirmed album's "place" labels don't count, only a move by hand
+        return None  # the same pixels as a photo that's kept, saved again: archived, nothing to review (P54)
+    if d and d[7] and kind != "move":
+        return None  # archived in an earlier session, or kept in another storage (P58)
+    place = d[4] if d else None
+    state, target = "open", None
+    if kind in ("move", "place") and value and not value.startswith("new:"):
+        target, state = value, "confirmed"
+    elif kind == "move" and value.startswith("new:"):  # a new album named by hand: made by the next sort
+        if pr is not None and pr[0] == "create" and pr[2]:
+            target = pr[1]
+        else:
+            target, state = (pr[1] if pr is not None else own) or "(not sorted)", "out"
+    elif kind == "out" and value:
+        if pr is not None and base(pr[1])[0] != base(value)[0]:
+            target = pr[1]                     # sorted again: open in its new unit
+        else:
+            target, state = value, "out"       # waiting for the resort
+    if target is None:
+        target = pr[1] if pr is not None else (place or own) if own else None
+    if target is None:
+        target = "(not sorted)"
+    unit, sub = base(target)
+    if state == "confirmed" and own and unit == own:
+        sub = base(place or own)[1]
+    why, unsure = "", None
+    if pr is not None and target == pr[1]:
+        why, unsure = pr[4].get(i) or pr[3], pr[5].get(i)
+    return {"id": i, "path": path, "unit": unit, "sub": sub, "state": state,
+            "incoming": own != unit, "verdict": b["verdict"].get(i) or (d[1] if d else "keep"),
+            "pipeline": d[1] if d else None, "gid": d[0] if d else None,
+            "best": bool(d and d[2] == 1), "tier": d[3] if d else None,
+            "rotate": (d[5] if d else None) or 0, "nudity": d[6] if d else None, "why": why, "unsure": unsure}
+
+
+def _placements(session, db, stamp) -> dict:
+    con = connect(session)
+    try:
+        run = session.run_id
+        key = (db, run, _fingerprint(con, run), _generation[0])
+        b = _inputs["b"]
+        if b is None or b["key"] != key or writer_alive():  # in full
+            b = _read_inputs(con, run)
+            _read_labels(con, b)
+            photos = {i: p for i in b["files"] if (p := _photo(i, b)) is not None}
+        else:  # only the photos with new labels; a new dict, so a reader of the last one isn't disturbed
+            photos = dict(b["photos"])
+            for i in _read_labels(con, b):
+                p = _photo(i, b) if i in b["files"] else None
+                if p is None:
+                    photos.pop(i, None)
+                else:
+                    photos[i] = p
+        b.update(key=key, photos=photos)
+        _inputs["b"] = b
+        status = {r["key"]: dict(r) for r in con.execute("SELECT * FROM review_unit")} if _has(con, "review_unit") else {}
+    finally:
+        con.close()
     units = defaultdict(lambda: Counter())
-    existing = {f["album"] for f in files.values() if f["policy"] in ("cull", "describe")}
+    existing = b["existing"]
     for p in photos.values():
         c = units[p["unit"]]
         c["n"] += 1
@@ -219,7 +288,7 @@ def api_unit(key: str):
     d = placements(s)
     if key not in d["units"]:
         raise HTTPException(404, "no such album or folder")
-    members = [p for p in d["photos"].values() if p["unit"] == key]
+    members = [dict(p) for p in d["photos"].values() if p["unit"] == key]  # copies: the cached ones are kept (P75)
     con = connect(s)
     ids = [p["id"] for p in members]
     meta, caps = {}, {}

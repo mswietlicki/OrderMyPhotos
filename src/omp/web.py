@@ -176,10 +176,12 @@ class Runner:
                                      stdout=log, stderr=subprocess.STDOUT, env=os.environ | self.session.env(),
                                      cwd="/tmp" if os.name != "nt" else None)
         log.close()
+        review.forget()  # it writes to the DB: the review reads it in full again (P75)
         self.control.update(started=time.time(), pid=self.proc.pid)
         self.save()
 
     def _ended(self, code: int):
+        review.forget()
         c = self.control
         c["history"] = (c["history"] + [{"phase": self.phase["key"], "started": c.get("started"), "ended": time.time(),
                                           "exit": code}])[-50:]
@@ -364,6 +366,7 @@ app = FastAPI(title="OrderMyPhotos", lifespan=lifespan)
 app.add_middleware(GZipMiddleware, minimum_size=4096)
 app.include_router(review.router)
 review.current = lambda: runner.session
+review.writer_alive = runner.alive  # while a phase runs, the review reads the DB in full (P75)
 
 
 @app.get("/favicon.svg")
