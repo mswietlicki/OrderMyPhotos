@@ -1247,7 +1247,39 @@ After P70, 2,169 people were still unnamed. The user: "try to use different tool
   - The status poll takes the last result while a new one is made: 18 ms instead of a 15 s wait.
   - Until the new result replaces the old one, both are in memory: about 20 GB at peak.
   - The page says when the albums didn't load, and to reload.
-- **Measured after the fix,** in Chrome on the LAN, with the cache warm: the album list in 0.11 s, the first album's data in 0.08 s, its first 74 thumbnails by 1.5 s (111 ms each). After a change, the next album still waits ~15 s for the recompute. Making it incremental is the next step (P63).
+- **Measured after the fix,** in Chrome on the LAN, with the cache warm: the album list in 0.11 s, the first album's data in 0.08 s, its first 74 thumbnails by 1.5 s (111 ms each). After a change, the next album still waits ~15 s for the recompute. Making it incremental is the next step (P63). Done in P75.
+
+## P75 — The review's placements in 1.6 s, and after a change only its photos again (2026-11-13, user: "Yes, do it")
+
+- **Where the 16 s went** (profiled on a copy of the whole library's session DB):
+  - 8.6 s parsing JSON, 227k times. Each photo's `features` were parsed, and so was its proposal's whole `data`, once for every photo in the proposal. A big album's data, with its reasons and unsure notes for every photo, was parsed thousands of times.
+  - 6.4 s reading rows and building the records.
+- **Now:**
+  - Each proposal's data is parsed once.
+  - SQLite takes the five features needed out of the decisions' JSON (`json_extract`).
+  - The other inputs (files, decisions, proposals, exact copies) are kept, and so are the labels read so far.
+  - After a review change, only the labels added since are read, and only their photos are worked out again. The units are counted again from the photos, ~0.1 s.
+- **When it's all read again:**
+  - a pipeline process starts or ends (the runner calls `review.forget()`), or one is running;
+  - the other tables' counts and last ids changed: a script, a restored backup.
+  - Labels are only ever added, never changed or deleted, so reading the new ones is enough.
+- **Measured on a copy of the session DB:**
+
+  | | Old | New |
+  |---|---|---|
+  | Full read | 14.3 s | 1.6 s |
+  | Memory at peak | 6.7 GB | 0.27 GB |
+  | After a review change | — | 0.16–0.73 s, with the change itself |
+
+  - The result is identical to the old code's for all 150,237 photos and 2,360 units, before and after the test's changes.
+  - After each of 11 kinds of change, the incremental result equals a full read. The changes: keep/archive, out, back, move to an album, move to a new album, confirm, Archive all, Review again, dismantle, rename, an imported `bad` verdict.
+  - A proposal changed by hand made it read everything again, as it should.
+- **In Chrome on the LAN, after deploying:**
+  - the album list in 0.25 s, the first album drawn by 0.56 s;
+  - each next album opened and drawn in ~0.3 s;
+  - thumbnails 50 ms each.
+  - The first status after a restart, with nothing cached, takes 2.7 s.
+- **`api_unit` copies the photos** it adds captions and dates to. Before, it added them to the cached records, which now live much longer.
 
 ## Open — for the user
 
